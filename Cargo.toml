@@ -12,7 +12,9 @@ authors = ["Авторы raycat"]
 publish = false
 
 [workspace.dependencies]
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 anyhow = "1"
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 brotli-decompressor = "5"
 clap = { version = "4.6", default-features = false, features = [
   "std",
