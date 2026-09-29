@@ -12,6 +12,8 @@ authors = ["Авторы raycat"]
 publish = false
 
 [workspace.dependencies]
+anyhow = "1"
+brotli-decompressor = "5"
 clap = { version = "4.6", default-features = false, features = [
   "std",
   "derive",
@@ -21,8 +23,14 @@ clap = { version = "4.6", default-features = false, features = [
   "color",
   "wrap_help",
 ] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+libc = "0.2"
+ring = "0.17"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+ruzstd = { version = "0.9", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+webpki-roots = "1"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
