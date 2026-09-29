@@ -223,9 +223,10 @@ fn tags_are_numbered_and_chains_are_rewritten() {
 fn node_outbounds_resolve_names_with_the_builtin_dns_only() {
     let config = build(proxy_mode()).config;
 
-    for tag in MAIN_TAGS
-        .iter()
-        .chain(&["node-001-x-fragment", "node-002-x-hop", "node-004-x-relay"])
+    for tag in
+        MAIN_TAGS
+            .iter()
+            .chain(&["node-001-x-fragment", "node-002-x-hop", "node-004-x-relay"])
     {
         let sockopt = &outbound(&config, tag)["streamSettings"]["sockopt"];
         assert_eq!(sockopt["domainStrategy"], "UseIPv4", "{tag}");
@@ -242,15 +243,12 @@ fn node_outbounds_resolve_names_with_the_builtin_dns_only() {
 fn gateway_marks_own_sockets() {
     let config = build(gateway_mode()).config;
 
-    for tag in MAIN_TAGS
-        .iter()
-        .chain(&[
-            "node-001-x-fragment",
-            "node-002-x-hop",
-            "node-004-x-relay",
-            "direct",
-        ])
-    {
+    for tag in MAIN_TAGS.iter().chain(&[
+        "node-001-x-fragment",
+        "node-002-x-hop",
+        "node-004-x-relay",
+        "direct",
+    ]) {
         let sockopt = &outbound(&config, tag)["streamSettings"]["sockopt"];
         assert_eq!(sockopt["mark"], 255, "{tag}");
     }
@@ -421,7 +419,10 @@ fn service_outbounds_follow_the_nodes() {
         .iter()
         .filter(|o| o["tag"] == "direct")
         .count();
-    assert_eq!(freedom, 1, "неиспользуемый freedom из узла не попадает в конфиг");
+    assert_eq!(
+        freedom, 1,
+        "неиспользуемый freedom из узла не попадает в конфиг"
+    );
 }
 
 #[test]
