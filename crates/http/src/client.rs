@@ -63,14 +63,15 @@ impl Client {
         };
         let mut head = format!("{} {} HTTP/1.1\r\n", req.method, req.target);
         for (name, value) in req.headers {
-            head.push_str(&format!("{name}: {value}\r\n"));
+            head.extend([name.as_str(), ": ", value.as_str(), "\r\n"]);
         }
         let has_length = req
             .headers
             .iter()
             .any(|(k, _)| k.eq_ignore_ascii_case("content-length"));
         if !req.body.is_empty() && !has_length {
-            head.push_str(&format!("Content-Length: {}\r\n", req.body.len()));
+            let len = req.body.len().to_string();
+            head.extend(["Content-Length: ", len.as_str(), "\r\n"]);
         }
         head.push_str("\r\n");
         let mut wire = head.into_bytes();
@@ -83,13 +84,12 @@ impl Client {
     }
 
     fn connect(&self, url: &Url, deadline: Instant) -> Result<(Inner, Option<IpAddr>)> {
-        let (tcp, peer) = match &self.proxy {
-            Some(proxy) => (self.tunnel(proxy, &url.host, url.port, deadline)?, None),
-            None => {
-                let tcp = self.dial(&url.host, url.port, deadline)?;
-                let peer = tcp.peer_addr().ok().map(|a| a.ip());
-                (tcp, peer)
-            }
+        let (tcp, peer) = if let Some(proxy) = &self.proxy {
+            (self.tunnel(proxy, &url.host, url.port, deadline)?, None)
+        } else {
+            let tcp = self.dial(&url.host, url.port, deadline)?;
+            let peer = tcp.peer_addr().ok().map(|a| a.ip());
+            (tcp, peer)
         };
         if url.scheme == Scheme::Http {
             return Ok((Inner::Tcp(tcp), peer));

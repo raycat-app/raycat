@@ -1,6 +1,8 @@
 //! Абсолютные ссылки `http(s)://`: разбор, разрешение `Location` при редиректах,
 //! IDN в punycode, маскировка для логов.
 
+use std::fmt::Write as _;
+
 use anyhow::{Result, anyhow, bail};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,7 +267,8 @@ fn to_ascii_domain(host: &str) -> Option<String> {
         .then(|| labels.join("."))
 }
 
-/// Кодировщик punycode (RFC 3492, п. 6.3).
+/// Кодировщик punycode (RFC 3492, п. 6.3); короткие имена переменных взяты из RFC.
+#[allow(clippy::many_single_char_names)]
 fn punycode(input: &str) -> Option<String> {
     const BASE: u32 = 36;
     const T_MIN: u32 = 1;
@@ -340,7 +343,7 @@ fn encode_target(target: &str) -> String {
         if (0x21..0x7f).contains(&b) {
             out.push(char::from(b));
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            let _ = write!(out, "%{b:02X}");
         }
     }
     out
