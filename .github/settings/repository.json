@@ -1,0 +1,21 @@
+{
+  "description": "Серверный клиент VPN-подписок: шлюз и прокси для хоста и Docker-контейнеров",
+  "homepage": "",
+  "has_issues": true,
+  "has_discussions": true,
+  "has_projects": false,
+  "has_wiki": false,
+  "allow_squash_merge": true,
+  "allow_merge_commit": false,
+  "allow_rebase_merge": false,
+  "squash_merge_commit_title": "PR_TITLE",
+  "squash_merge_commit_message": "PR_BODY",
+  "allow_auto_merge": true,
+  "allow_update_branch": true,
+  "delete_branch_on_merge": true,
+  "web_commit_signoff_required": false,
+  "security_and_analysis": {
+    "secret_scanning": { "status": "enabled" },
+    "secret_scanning_push_protection": { "status": "enabled" }
+  }
+}

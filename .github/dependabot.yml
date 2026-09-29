@@ -1,0 +1,51 @@
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Moscow
+    cooldown:
+      default-days: 7
+    groups:
+      crates:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    labels: [зависимости]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Moscow
+    cooldown:
+      default-days: 7
+    labels: [зависимости]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Moscow
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    labels: [зависимости]
+    commit-message:
+      prefix: chore
+      include: scope

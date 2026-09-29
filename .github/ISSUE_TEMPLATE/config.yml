@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Вопрос по настройке
+    url: https://github.com/raycat-app/raycat/discussions
+    about: Вопросы и обсуждения — в Discussions.
+  - name: Уязвимость
+    url: https://github.com/raycat-app/raycat/security/advisories/new
+    about: Сообщите приватно, не публикуя детали в issue.

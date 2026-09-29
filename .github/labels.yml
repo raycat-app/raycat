@@ -1,0 +1,45 @@
+- name: ошибка
+  color: d73a4a
+  description: Что-то работает не так, как описано
+- name: улучшение
+  color: a2eeef
+  description: Новая возможность или доработка
+- name: документация
+  color: 0075ca
+  description: README, сайт документации, комментарии
+- name: вопрос
+  color: d876e3
+  description: Нужна помощь или уточнение
+- name: эмуляция
+  color: fbca04
+  description: Профили клиентов (Happ, INCY), захваты запросов
+- name: подписки
+  color: c5def5
+  description: Панели провайдеров, форматы, заголовки
+- name: сеть
+  color: 1d76db
+  description: Шлюз, перехват трафика, kill switch, DNS
+- name: ci
+  color: ededed
+  description: GitHub Actions, сборка, релизы
+- name: зависимости
+  color: 0366d6
+  description: Обновления зависимостей (Dependabot)
+- name: безопасность
+  color: b60205
+  description: Уязвимости и защита
+- name: стоп-релиз
+  color: 000000
+  description: Не продвигать сборки из dev в stable, пока метка висит на открытом issue
+- name: хороший первый issue
+  color: 7057ff
+  description: Подходит для первого вклада
+- name: нужна помощь
+  color: 008672
+  description: Приветствуется помощь сообщества
+- name: дубликат
+  color: cfd3d7
+  description: Такой issue или PR уже есть
+- name: не будет сделано
+  color: ffffff
+  description: Не планируется
