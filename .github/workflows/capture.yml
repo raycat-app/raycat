@@ -61,14 +61,9 @@ jobs:
           ARCH: ${{ matrix.arch }}
           CAPTURE_DATE: ${{ matrix.date }}
         run: |
-          if ($env:CAPTURE_DATE) {
-            Stop-Service w32time -ErrorAction SilentlyContinue
-            Set-Date -Date $env:CAPTURE_DATE
-            "часы переведены: $(Get-Date -Format o)"
-          }
           $server = Start-Process python -ArgumentList ".github/capture/capture_server.py", "--host", "127.0.0.1", "--port", "18080", "--out", "captures" -PassThru -RedirectStandardOutput server.log
           Start-Sleep 2
-          ./.github/capture/windows.ps1 -Installer "setup-Happ.$env:ARCH.exe" -Link "happ://add/http://127.0.0.1:18080/sub/capture-windows" -Out captures
+          ./.github/capture/windows.ps1 -Installer "setup-Happ.$env:ARCH.exe" -Link "happ://add/http://127.0.0.1:18080/sub/capture-windows" -Out captures -Date $env:CAPTURE_DATE
           Stop-Process $server -Force
           Get-Content server.log
           Copy-Item server.log captures/

@@ -6,7 +6,8 @@ param(
     [Parameter(Mandatory)] [string] $Installer,
     [Parameter(Mandatory)] [string] $Link,
     [string] $Out = "captures",
-    [string] $ExeName = "Happ.exe"
+    [string] $ExeName = "Happ.exe",
+    [string] $Date = ""
 )
 $ErrorActionPreference = "Continue"
 New-Item -ItemType Directory -Force $Out | Out-Null
@@ -65,8 +66,18 @@ if (-not $app) { "приложение не найдено после устан
 (Get-Item $app).VersionInfo | Format-List | Out-File "$Out\version.txt"
 
 # Ссылки открываются через обработчик протокола, найденный exe может быть вспомогательным.
+if ($Date) {
+    # Службы синхронизации времени возвращают часы за секунды, поэтому отключаем обе.
+    foreach ($name in "w32time", "vmictimesync") {
+        Stop-Service $name -Force -ErrorAction SilentlyContinue
+        Set-Service $name -StartupType Disabled -ErrorAction SilentlyContinue
+    }
+    Set-Date -Date $Date | Out-Null
+}
+"before link: $([DateTime]::UtcNow.ToString('o'))" | Out-File -Encoding utf8 "$Out\clock.txt"
 Start-Process $Link
 Start-Sleep 25
+"after wait: $([DateTime]::UtcNow.ToString('o'))" | Out-File -Append -Encoding utf8 "$Out\clock.txt"
 Save-Screen "protocol"
 Get-Process | Where-Object { $_.Path -eq $app } | Stop-Process -Force
 Get-ChildItem $Out
