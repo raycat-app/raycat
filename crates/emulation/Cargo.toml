@@ -1,0 +1,20 @@
+[package]
+name = "raycat-emulation"
+description = "Эмуляция клиентов подписок: точные заголовки запроса и идентификатор устройства по профилям-данным"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+raycat-http.workspace = true
+ring.workspace = true
+serde.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true

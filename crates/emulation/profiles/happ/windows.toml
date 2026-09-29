@@ -1,0 +1,66 @@
+app = "happ"
+platform = "windows"
+version = "4.3.0"
+marker = "moscow-day-parity"
+user_agent = "Happ/{app_version}/{os}/{build}{marker}{tail}"
+
+[device]
+os = "Windows"
+os_version = "11_10.0.26100"
+model = "{hostname}_{cpu}"
+hwid = "windows-machine-guid"
+locale = "qt-windows"
+
+[builds.x64]
+build = "2609151455"
+tail = "03"
+cpu = "x86_64"
+
+[builds.arm64]
+build = "2609151502"
+tail = "03"
+cpu = "arm64"
+
+[[headers]]
+name = "Host"
+value = "{host}"
+
+[[headers]]
+name = "User-Agent"
+value = "{user_agent}"
+
+[[headers]]
+name = "X-App-Version"
+value = "{app_version}"
+
+[[headers]]
+name = "X-Device-Locale"
+value = "{device_locale}"
+
+[[headers]]
+name = "X-Device-Os"
+value = "{os}"
+
+[[headers]]
+name = "X-Device-Model"
+value = "{model}"
+
+[[headers]]
+name = "X-Hwid"
+value = "{hwid}"
+
+[[headers]]
+name = "X-Ver-Os"
+value = "{os_version}"
+
+[[headers]]
+name = "Connection"
+value = "Keep-Alive"
+
+[[headers]]
+name = "Accept-Encoding"
+value = "gzip, deflate"
+
+[[headers]]
+name = "Accept-Language"
+value = "{accept_language}"
