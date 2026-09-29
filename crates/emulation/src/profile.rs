@@ -312,8 +312,8 @@ fn validate_headers(raw: Vec<RawHeader>) -> Result<Vec<(String, Template)>> {
         {
             bail!("заголовок {} задан дважды", header.name);
         }
-        let value = Template::parse(&header.value)
-            .with_context(|| format!("заголовок {}", header.name))?;
+        let value =
+            Template::parse(&header.value).with_context(|| format!("заголовок {}", header.name))?;
         headers.push((header.name, value));
     }
     if !headers
@@ -335,9 +335,9 @@ fn non_empty(field: &str, value: &str) -> Result<()> {
 /// Имя заголовка по RFC 9110: `token`.
 fn is_token(name: &str) -> bool {
     !name.is_empty()
-        && name.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b)
-        })
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
 }
 
 pub(crate) struct Source {
@@ -374,7 +374,8 @@ pub(crate) fn find(app: &str, platform: Platform) -> Result<Profile> {
             available.join(", ")
         );
     };
-    Profile::parse(source.text).with_context(|| format!("профиль {}/{}", source.app, source.platform))
+    Profile::parse(source.text)
+        .with_context(|| format!("профиль {}/{}", source.app, source.platform))
 }
 
 #[cfg(test)]
@@ -499,7 +500,10 @@ value = "{accept_language}"
         assert!(error_of(&VALID.replace("moscow-day-parity", "x")).contains("маркера"));
         assert!(error_of(&VALID.replace("windows-machine-guid", "x")).contains("HWID"));
         assert!(error_of(&VALID.replace("qt-windows", "x")).contains("локали"));
-        assert!(error_of(&VALID.replace("platform = \"windows\"", "platform = \"ios\"")).contains("платформа"));
+        assert!(
+            error_of(&VALID.replace("platform = \"windows\"", "platform = \"ios\""))
+                .contains("платформа")
+        );
         assert!(error_of(&VALID.replace("[builds.x64]", "[builds.mips]")).contains("mips"));
         assert!(Profile::parse(&VALID.replace("version =", "versoin =")).is_err());
         assert!(Profile::parse("").is_err());

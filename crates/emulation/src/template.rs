@@ -183,9 +183,15 @@ mod tests {
     fn renders_text_and_substitutions() {
         let template = Template::parse("Happ/{app_version}/{os}/{build}{marker}{tail}").unwrap();
         assert_eq!(template.render(&values()), "Happ/1.2.3/Windows/100507");
-        assert_eq!(Template::parse("gzip, deflate").unwrap().render(&values()), "gzip, deflate");
+        assert_eq!(
+            Template::parse("gzip, deflate").unwrap().render(&values()),
+            "gzip, deflate"
+        );
         assert_eq!(Template::parse("").unwrap().render(&values()), "");
-        assert_eq!(Template::parse("{host}").unwrap().render(&values()), "example.com");
+        assert_eq!(
+            Template::parse("{host}").unwrap().render(&values()),
+            "example.com"
+        );
     }
 
     #[test]

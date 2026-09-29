@@ -165,7 +165,10 @@ mod tests {
             machine_id_from_seed("seed"),
             sha256_hex(b"raycat device seed\0seed")[..32]
         );
-        assert_eq!(Device::from_seed("seed").machine_id, machine_id_from_seed("seed"));
+        assert_eq!(
+            Device::from_seed("seed").machine_id,
+            machine_id_from_seed("seed")
+        );
     }
 
     #[test]
@@ -182,7 +185,10 @@ mod tests {
 
     #[test]
     fn windows_machine_guid_is_deterministic_per_machine() {
-        assert_eq!(windows_machine_guid(MACHINE_ID), windows_machine_guid(MACHINE_ID));
+        assert_eq!(
+            windows_machine_guid(MACHINE_ID),
+            windows_machine_guid(MACHINE_ID)
+        );
         assert_ne!(
             windows_machine_guid(MACHINE_ID),
             windows_machine_guid("11112222333344445555666677778888")
@@ -200,7 +206,10 @@ mod tests {
                 .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
         );
         assert_eq!(name, windows_computer_name(MACHINE_ID));
-        assert_ne!(name, windows_computer_name("11112222333344445555666677778888"));
+        assert_ne!(
+            name,
+            windows_computer_name("11112222333344445555666677778888")
+        );
     }
 
     #[test]
@@ -233,7 +242,10 @@ mod tests {
             HwidAlgorithm::from_name("windows-machine-guid"),
             Some(HwidAlgorithm::WindowsMachineGuid)
         );
-        assert_eq!(HwidAlgorithm::from_name("android-id"), Some(HwidAlgorithm::AndroidId));
+        assert_eq!(
+            HwidAlgorithm::from_name("android-id"),
+            Some(HwidAlgorithm::AndroidId)
+        );
         assert_eq!(HwidAlgorithm::from_name("raw"), None);
         assert_eq!(
             HwidAlgorithm::AndroidId.derive(MACHINE_ID),

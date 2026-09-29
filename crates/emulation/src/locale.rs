@@ -49,7 +49,10 @@ impl LocaleRule {
 }
 
 fn android_language(locale: &str) -> String {
-    let language = locale.split(['_', '-', '.', '@']).next().unwrap_or_default();
+    let language = locale
+        .split(['_', '-', '.', '@'])
+        .next()
+        .unwrap_or_default();
     match language.to_ascii_lowercase().as_str() {
         "" | "c" | "posix" => "en".to_owned(),
         other => other.to_owned(),
@@ -158,7 +161,10 @@ mod tests {
 
     #[test]
     fn rule_names_round_trip() {
-        assert_eq!(LocaleRule::from_name("qt-windows"), Some(LocaleRule::QtWindows));
+        assert_eq!(
+            LocaleRule::from_name("qt-windows"),
+            Some(LocaleRule::QtWindows)
+        );
         assert_eq!(LocaleRule::from_name("android"), Some(LocaleRule::Android));
         assert_eq!(LocaleRule::from_name("linux"), None);
     }

@@ -108,7 +108,9 @@ impl Emulation {
     /// User-Agent в момент `unix` (секунды Unix): маркер Happ меняется по суткам.
     pub fn user_agent(&self, unix: u64) -> String {
         let marker = self.marker(unix);
-        self.profile.user_agent.render(&self.values("", "", &marker))
+        self.profile
+            .user_agent
+            .render(&self.values("", "", &marker))
     }
 
     /// Заголовки запроса подписки в порядке и регистре приложения.
@@ -240,7 +242,10 @@ mod tests {
             x64.user_agent(EVEN_DAY),
             "Happ/4.6.0/Android/17903218884031681667"
         );
-        assert_eq!(x64.user_agent(ODD_DAY), "Happ/4.6.0/Android/17903218884031681567");
+        assert_eq!(
+            x64.user_agent(ODD_DAY),
+            "Happ/4.6.0/Android/17903218884031681567"
+        );
         assert_eq!(x64.headers(&url(), EVEN_DAY), arm.headers(&url(), EVEN_DAY));
     }
 
@@ -251,9 +256,15 @@ mod tests {
         assert_eq!(info.hwid, device::windows_machine_guid(MACHINE_ID));
         assert_eq!(info.os, "Windows");
         assert_eq!(info.os_version, "11_10.0.26100");
-        assert_eq!(info.model, format!("{}_x86_64", windows_computer_name(MACHINE_ID)));
+        assert_eq!(
+            info.model,
+            format!("{}_x86_64", windows_computer_name(MACHINE_ID))
+        );
         let arm = emulation(Platform::Windows, Arch::Arm64, &device).device_info();
-        assert_eq!(arm.model, format!("{}_arm64", windows_computer_name(MACHINE_ID)));
+        assert_eq!(
+            arm.model,
+            format!("{}_arm64", windows_computer_name(MACHINE_ID))
+        );
         assert_eq!(arm.hwid, info.hwid);
     }
 
@@ -294,7 +305,11 @@ mod tests {
     fn same_seed_gives_the_same_device_on_every_request() {
         let device = Device::from_seed("home server");
         let a = emulation(Platform::Windows, Arch::X64, &device);
-        let b = emulation(Platform::Windows, Arch::X64, &Device::from_seed("home server"));
+        let b = emulation(
+            Platform::Windows,
+            Arch::X64,
+            &Device::from_seed("home server"),
+        );
         assert_eq!(a.headers(&url(), EVEN_DAY), b.headers(&url(), EVEN_DAY));
         assert_eq!(a.headers(&url(), EVEN_DAY), a.headers(&url(), EVEN_DAY));
         let other = emulation(Platform::Windows, Arch::X64, &Device::from_seed("another"));
@@ -386,7 +401,12 @@ mod tests {
     fn errors_are_understandable() {
         let device = Device::from_machine_id(MACHINE_ID);
         let unknown = Emulation::new("incy", Platform::Android, Arch::X64, &device);
-        assert!(unknown.unwrap_err().to_string().contains("нет профиля incy/android"));
+        assert!(
+            unknown
+                .unwrap_err()
+                .to_string()
+                .contains("нет профиля incy/android")
+        );
         let empty = Emulation::new("happ", Platform::Windows, Arch::X64, &Device::default());
         assert!(empty.unwrap_err().to_string().contains("machine_id"));
         let blank = Device {
