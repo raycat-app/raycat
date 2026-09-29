@@ -48,6 +48,10 @@ pub(crate) fn compile_node(number: usize, node: &Node, mark: Option<u32>) -> Opt
         kept.push((new_tag, outbound));
     }
 
+    if kept.is_empty() {
+        return None;
+    }
+
     let mut outbounds = Vec::with_capacity(kept.len());
     let mut hosts = Vec::new();
     for (tag, outbound) in kept {
@@ -237,19 +241,15 @@ mod tests {
 
     #[test]
     fn dangling_chain_reference_drops_the_node() {
-        let node = node(vec![
-            json!({"tag": "proxy", "protocol": "vless",
-                   "streamSettings": {"sockopt": {"dialerProxy": "gone"}}}),
-        ]);
+        let node = node(vec![json!({"tag": "proxy", "protocol": "vless",
+                   "streamSettings": {"sockopt": {"dialerProxy": "gone"}}})]);
         assert!(compile_node(1, &node, None).is_none());
     }
 
     #[test]
     fn non_string_dialer_proxy_drops_the_node() {
-        let node = node(vec![
-            json!({"tag": "proxy", "protocol": "vless",
-                   "streamSettings": {"sockopt": {"dialerProxy": 5}}}),
-        ]);
+        let node = node(vec![json!({"tag": "proxy", "protocol": "vless",
+                   "streamSettings": {"sockopt": {"dialerProxy": 5}}})]);
         assert!(compile_node(1, &node, None).is_none());
     }
 

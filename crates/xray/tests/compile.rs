@@ -106,7 +106,10 @@ fn subscriptions() -> Vec<Subscription> {
         Subscription {
             id: "main".to_owned(),
             nodes: vec![
-                node("Узел 1", vec![vless_reality("proxy", "reality.example.com")]),
+                node(
+                    "Узел 1",
+                    vec![vless_reality("proxy", "reality.example.com")],
+                ),
                 node("Узел 2", vless_xhttp_through_hop()),
             ],
         },
@@ -196,7 +199,10 @@ fn tags_are_numbered_and_chains_are_rewritten() {
 fn node_outbounds_resolve_names_with_the_builtin_dns_only() {
     let config = build(proxy_mode()).config;
 
-    for tag in MAIN_TAGS.iter().chain(&["node-002-x-hop", "node-004-x-relay"]) {
+    for tag in MAIN_TAGS
+        .iter()
+        .chain(&["node-002-x-hop", "node-004-x-relay"])
+    {
         let sockopt = &outbound(&config, tag)["streamSettings"]["sockopt"];
         assert_eq!(sockopt["domainStrategy"], "UseIPv4", "{tag}");
         assert!(sockopt.get("mark").is_none(), "{tag}");
@@ -312,7 +318,10 @@ fn custom_probe_settings_are_used() {
     settings.probe.interval = Duration::from_millis(400);
     let config = compile(&subscriptions(), &settings).unwrap().config;
 
-    assert_eq!(config["observatory"]["probeUrl"], "https://example.com/health");
+    assert_eq!(
+        config["observatory"]["probeUrl"],
+        "https://example.com/health"
+    );
     assert_eq!(config["observatory"]["probeInterval"], "1s");
 }
 
@@ -504,8 +513,14 @@ fn unusable_nodes_are_skipped_and_numbering_stays_contiguous() {
         id: "s".to_owned(),
         nodes: vec![
             node("пустой", Vec::new()),
-            node("служебный", vec![json!({"tag": "direct", "protocol": "freedom"})]),
-            node("хороший", vec![vless_reality("proxy", "reality.example.com")]),
+            node(
+                "служебный",
+                vec![json!({"tag": "direct", "protocol": "freedom"})],
+            ),
+            node(
+                "хороший",
+                vec![vless_reality("proxy", "reality.example.com")],
+            ),
         ],
     }];
     let compiled = compile(&subs, &Settings::new(proxy_mode(), 10085)).unwrap();
@@ -526,7 +541,10 @@ fn no_usable_nodes_is_an_error() {
         id: "s".to_owned(),
         nodes: vec![node("пустой", Vec::new())],
     }];
-    assert_eq!(compile(&subs, &settings).unwrap_err(), CompileError::NoNodes);
+    assert_eq!(
+        compile(&subs, &settings).unwrap_err(),
+        CompileError::NoNodes
+    );
 }
 
 #[test]
