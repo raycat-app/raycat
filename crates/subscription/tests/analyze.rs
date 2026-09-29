@@ -241,7 +241,7 @@ fn garbage_never_panics() {
 fn encrypt(plain: &[u8], key: &[u8; 16]) -> (String, String) {
     let cipher = Aes128Gcm::new_from_slice(key).unwrap();
     let sealed = cipher
-        .encrypt(&Nonce::<U12>::from(*b"kkkkkkkkkkkk"), plain)
+        .encrypt(&Nonce::<U12>::from(std::array::from_fn::<u8, 12, _>(|_| b'k')), plain)
         .unwrap();
     let (data, tag) = sealed.split_at(sealed.len() - 16);
     (STANDARD.encode(data), STANDARD.encode(tag))
@@ -261,7 +261,7 @@ fn encrypted_response() {
     assert!(decrypted.problem.is_none(), "{:?}", decrypted.problem);
     assert_eq!(decrypted.nodes.len(), 4);
 
-    let wrong = analyze_with_key(200, &response, body.as_bytes(), &[9; 16]);
+    let wrong = analyze_with_key(200, &response, body.as_bytes(), &key.map(|byte| byte ^ 1));
     assert!(matches!(wrong.problem, Some(Problem::Encrypted(_))));
 }
 
