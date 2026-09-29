@@ -9,7 +9,9 @@ pub fn redact(url: &str) -> String {
     };
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let (authority, target) = rest.split_at(end);
-    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
     let path = target.split(['?', '#']).next().unwrap_or("");
     format!("{scheme}://{host}/…{}", tail(path.trim_matches('/')))
 }
@@ -73,9 +75,18 @@ mod tests {
             redact("https://user:pass@sub.example.com:8443/token/abcd/#frag"),
             "https://sub.example.com:8443/…abcd"
         );
-        assert_eq!(redact("https://sub.example.com"), "https://sub.example.com/…");
-        assert_eq!(redact("https://sub.example.com/"), "https://sub.example.com/…");
-        assert_eq!(redact("https://sub.example.com/ab"), "https://sub.example.com/…ab");
+        assert_eq!(
+            redact("https://sub.example.com"),
+            "https://sub.example.com/…"
+        );
+        assert_eq!(
+            redact("https://sub.example.com/"),
+            "https://sub.example.com/…"
+        );
+        assert_eq!(
+            redact("https://sub.example.com/ab"),
+            "https://sub.example.com/…ab"
+        );
         assert_eq!(redact("no scheme at all 1234"), "…1234");
         assert_eq!(redact(""), "…");
     }

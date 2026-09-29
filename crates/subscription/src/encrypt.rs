@@ -66,16 +66,15 @@ mod tests {
 
     fn encrypt(plain: &[u8], key: &[u8; 16]) -> (String, String) {
         let cipher = Aes128Gcm::new_from_slice(key).unwrap();
-        let sealed = cipher
-            .encrypt(&Nonce::<U12>::from(NONCE), plain)
-            .unwrap();
+        let sealed = cipher.encrypt(&Nonce::<U12>::from(NONCE), plain).unwrap();
         let (data, tag) = sealed.split_at(sealed.len() - TAG_LEN);
         (STANDARD.encode(data), STANDARD.encode(tag))
     }
 
     #[test]
     fn round_trip() {
-        let plain = "vless://00000000-0000-0000-0000-000000000000@a.example.com:443#Узел".as_bytes();
+        let plain =
+            "vless://00000000-0000-0000-0000-000000000000@a.example.com:443#Узел".as_bytes();
         let (body, tag) = encrypt(plain, &KEY);
         assert_eq!(decrypt_body(body.as_bytes(), &tag, &KEY).unwrap(), plain);
     }
@@ -88,9 +87,15 @@ mod tests {
         let raw_tag = STANDARD.decode(&tag).unwrap();
         let url_body = URL_SAFE_NO_PAD.encode(&raw_body);
         let url_tag = URL_SAFE_NO_PAD.encode(&raw_tag);
-        assert_eq!(decrypt_body(url_body.as_bytes(), &url_tag, &KEY).unwrap(), plain);
+        assert_eq!(
+            decrypt_body(url_body.as_bytes(), &url_tag, &KEY).unwrap(),
+            plain
+        );
         let wrapped = format!("{}\r\n{}\r\n", &body[..4], &body[4..]);
-        assert_eq!(decrypt_body(wrapped.as_bytes(), &format!(" {tag} "), &KEY).unwrap(), plain);
+        assert_eq!(
+            decrypt_body(wrapped.as_bytes(), &format!(" {tag} "), &KEY).unwrap(),
+            plain
+        );
     }
 
     #[test]
@@ -98,17 +103,32 @@ mod tests {
         let (body, tag) = encrypt(b"secret", &KEY);
         let mut wrong_key = KEY;
         wrong_key[0] ^= 1;
-        assert_eq!(decrypt_body(body.as_bytes(), &tag, &wrong_key), Err(DecryptError::Verify));
+        assert_eq!(
+            decrypt_body(body.as_bytes(), &tag, &wrong_key),
+            Err(DecryptError::Verify)
+        );
 
         let mut damaged = STANDARD.decode(&body).unwrap();
         damaged[0] ^= 1;
         let damaged = STANDARD.encode(damaged);
-        assert_eq!(decrypt_body(damaged.as_bytes(), &tag, &KEY), Err(DecryptError::Verify));
+        assert_eq!(
+            decrypt_body(damaged.as_bytes(), &tag, &KEY),
+            Err(DecryptError::Verify)
+        );
 
         assert_eq!(decrypt_body(b"!!!", &tag, &KEY), Err(DecryptError::Body));
-        assert_eq!(decrypt_body(&[0xff, 0xfe], &tag, &KEY), Err(DecryptError::Body));
+        assert_eq!(
+            decrypt_body(&[0xff, 0xfe], &tag, &KEY),
+            Err(DecryptError::Body)
+        );
         assert_eq!(decrypt_body(b"", &tag, &KEY), Err(DecryptError::Body));
-        assert_eq!(decrypt_body(body.as_bytes(), "AAAA", &KEY), Err(DecryptError::Tag));
-        assert_eq!(decrypt_body(body.as_bytes(), "", &KEY), Err(DecryptError::Tag));
+        assert_eq!(
+            decrypt_body(body.as_bytes(), "AAAA", &KEY),
+            Err(DecryptError::Tag)
+        );
+        assert_eq!(
+            decrypt_body(body.as_bytes(), "", &KEY),
+            Err(DecryptError::Tag)
+        );
     }
 }

@@ -248,7 +248,12 @@ fn vmess_legacy(rest: &str, head: &str, warnings: &mut Vec<String>) -> Result<Bu
         params.extend(path.map(|path| ("path".to_owned(), path)));
         params.extend(header_type.map(|kind| ("headerType".to_owned(), kind)));
     }
-    for (source, target) in [("host", "host"), ("sni", "sni"), ("alpn", "alpn"), ("fp", "fp")] {
+    for (source, target) in [
+        ("host", "host"),
+        ("sni", "sni"),
+        ("alpn", "alpn"),
+        ("fp", "fp"),
+    ] {
         params.extend(field(source).map(|value| (target.to_owned(), value)));
     }
 
@@ -276,15 +281,14 @@ fn shadowsocks(rest: &str) -> Result<Built, String> {
         return Err("плагины shadowsocks xray не поддерживает".to_owned());
     }
     let location = location.trim_end_matches('/');
-    let (method, password, authority) = if let Some((userinfo, authority)) =
-        location.rsplit_once('@')
-    {
-        let (method, password) = ss_credentials(userinfo)?;
-        let authority = authority.split('/').next().unwrap_or("");
-        (method, password, authority.to_owned())
-    } else {
-        ss_legacy(location)?
-    };
+    let (method, password, authority) =
+        if let Some((userinfo, authority)) = location.rsplit_once('@') {
+            let (method, password) = ss_credentials(userinfo)?;
+            let authority = authority.split('/').next().unwrap_or("");
+            (method, password, authority.to_owned())
+        } else {
+            ss_legacy(location)?
+        };
     ss_built(&method, &password, &authority, fragment)
 }
 
@@ -317,7 +321,12 @@ fn ss_credentials(userinfo: &str) -> Result<(String, String), String> {
         .ok_or_else(|| "в ссылке ss нет пароля".to_owned())
 }
 
-fn ss_built(method: &str, password: &str, authority: &str, fragment: &str) -> Result<Built, String> {
+fn ss_built(
+    method: &str,
+    password: &str,
+    authority: &str,
+    fragment: &str,
+) -> Result<Built, String> {
     if method.is_empty() {
         return Err("в ссылке ss нет метода шифрования".to_owned());
     }
@@ -354,7 +363,11 @@ fn hysteria2(rest: &str, warnings: &mut Vec<String>) -> Result<Built, String> {
         parse_port(main_spec.split([',', '-']).next().unwrap_or(""))?
     };
     let hop = mport.or_else(|| main_spec.contains([',', '-']).then_some(main_spec));
-    if hop.is_some_and(|ports| !ports.chars().all(|c| c.is_ascii_digit() || c == ',' || c == '-')) {
+    if hop.is_some_and(|ports| {
+        !ports
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == ',' || c == '-')
+    }) {
         return Err("некорректный список портов".to_owned());
     }
 
@@ -422,7 +435,10 @@ fn stream_settings(
         "xhttp" | "splithttp" => "xhttp",
         "httpupgrade" => "httpupgrade",
         other => {
-            return Err(format!("транспорт «{}» не поддерживается", clean(other, 32)));
+            return Err(format!(
+                "транспорт «{}» не поддерживается",
+                clean(other, 32)
+            ));
         }
     };
     let security = param(query, "security").unwrap_or(default_security);
@@ -507,7 +523,9 @@ fn raw_settings(
     match param(query, "headerType") {
         None | Some("none") => None,
         Some("http") => {
-            let hosts: Vec<&str> = host.map(|list| list.split(',').map(str::trim).collect()).unwrap_or_default();
+            let hosts: Vec<&str> = host
+                .map(|list| list.split(',').map(str::trim).collect())
+                .unwrap_or_default();
             let header = json!({
                 "type": "http",
                 "request": {"path": [path], "headers": {"Host": hosts}},
@@ -515,7 +533,10 @@ fn raw_settings(
             Some(("rawSettings", json!({"header": header})))
         }
         Some(other) => {
-            warnings.push(format!("headerType «{}» не поддерживается", clean(other, 32)));
+            warnings.push(format!(
+                "headerType «{}» не поддерживается",
+                clean(other, 32)
+            ));
             None
         }
     }
@@ -615,7 +636,10 @@ mod tests {
 
     #[test]
     fn vless_reality_needs_a_key() {
-        let error = parse(&format!("vless://{UUID}@a.example.com:443?security=reality")).err();
+        let error = parse(&format!(
+            "vless://{UUID}@a.example.com:443?security=reality"
+        ))
+        .err();
         assert!(error.unwrap().contains("pbk"));
     }
 
@@ -668,9 +692,15 @@ mod tests {
 
     #[test]
     fn broken_xhttp_extra_is_a_warning() {
-        let parsed = parsed(&format!("vless://{UUID}@x.example.com:443?type=xhttp&extra=nope"));
+        let parsed = parsed(&format!(
+            "vless://{UUID}@x.example.com:443?type=xhttp&extra=nope"
+        ));
         assert_eq!(parsed.warnings.len(), 1);
-        assert!(parsed.node.outbounds[0]["streamSettings"]["xhttpSettings"].get("extra").is_none());
+        assert!(
+            parsed.node.outbounds[0]["streamSettings"]["xhttpSettings"]
+                .get("extra")
+                .is_none()
+        );
     }
 
     #[test]
@@ -688,27 +718,41 @@ mod tests {
         let header = &ob["streamSettings"]["rawSettings"]["header"];
         assert_eq!(header["type"], "http");
         assert_eq!(header["request"]["path"], json!(["/p"]));
-        assert_eq!(header["request"]["headers"]["Host"], json!(["a.example.com", "b.example.com"]));
+        assert_eq!(
+            header["request"]["headers"]["Host"],
+            json!(["a.example.com", "b.example.com"])
+        );
     }
 
     #[test]
     fn finalmask_parameter() {
         let mask = "%7B%22tcp%22%3A%5B%7B%22type%22%3A%22header-custom%22%7D%5D%7D";
         let ob = outbound_of(&format!("vless://{UUID}@m.example.com:443?fm={mask}"));
-        assert_eq!(ob["streamSettings"]["finalmask"]["tcp"][0]["type"], "header-custom");
+        assert_eq!(
+            ob["streamSettings"]["finalmask"]["tcp"][0]["type"],
+            "header-custom"
+        );
     }
 
     #[test]
     fn vless_ipv6_and_default_name() {
         let parsed = parsed(&format!("vless://{UUID}@[2001:db8::1]:8443?security=none"));
         assert_eq!(parsed.node.name, "2001:db8::1:8443");
-        assert_eq!(parsed.node.outbounds[0]["settings"]["address"], "2001:db8::1");
+        assert_eq!(
+            parsed.node.outbounds[0]["settings"]["address"],
+            "2001:db8::1"
+        );
     }
 
     #[test]
     fn insecure_tls_is_reported() {
-        let parsed = parsed(&format!("vless://{UUID}@i.example.com:443?security=tls&allowInsecure=1"));
-        assert_eq!(parsed.node.outbounds[0]["streamSettings"]["tlsSettings"]["allowInsecure"], true);
+        let parsed = parsed(&format!(
+            "vless://{UUID}@i.example.com:443?security=tls&allowInsecure=1"
+        ));
+        assert_eq!(
+            parsed.node.outbounds[0]["streamSettings"]["tlsSettings"]["allowInsecure"],
+            true
+        );
         assert_eq!(parsed.warnings.len(), 1);
     }
 
@@ -774,7 +818,10 @@ mod tests {
         let ob = &parsed.node.outbounds[0];
         assert_eq!(ob["settings"]["security"], "auto");
         assert_eq!(ob["streamSettings"]["security"], "none");
-        assert_eq!(ob["streamSettings"]["grpcSettings"]["serviceName"], "service");
+        assert_eq!(
+            ob["streamSettings"]["grpcSettings"]["serviceName"],
+            "service"
+        );
         assert_eq!(ob["streamSettings"]["grpcSettings"]["multiMode"], true);
     }
 
@@ -786,7 +833,12 @@ mod tests {
         assert_eq!(ob["settings"]["security"], "aes-128-gcm");
         assert_eq!(ob["streamSettings"]["security"], "tls");
         assert_eq!(ob["streamSettings"]["wsSettings"]["path"], "/v");
-        assert_eq!(parsed(&format!("vmess://{UUID}@v.example.com:443#Std")).node.name, "Std");
+        assert_eq!(
+            parsed(&format!("vmess://{UUID}@v.example.com:443#Std"))
+                .node
+                .name,
+            "Std"
+        );
     }
 
     #[test]
@@ -799,14 +851,19 @@ mod tests {
 
     #[test]
     fn trojan_defaults_to_tls() {
-        let parsed = parsed("trojan://p%40ss%2Fword@t.example.com:8443?sni=front.example.com&type=grpc&serviceName=g#TR");
+        let parsed = parsed(
+            "trojan://p%40ss%2Fword@t.example.com:8443?sni=front.example.com&type=grpc&serviceName=g#TR",
+        );
         assert_eq!(parsed.node.name, "TR");
         let ob = &parsed.node.outbounds[0];
         assert_eq!(ob["protocol"], "trojan");
         assert_eq!(ob["settings"]["password"], "p@ss/word");
         assert_eq!(ob["settings"]["port"], 8443);
         assert_eq!(ob["streamSettings"]["security"], "tls");
-        assert_eq!(ob["streamSettings"]["tlsSettings"]["serverName"], "front.example.com");
+        assert_eq!(
+            ob["streamSettings"]["tlsSettings"]["serverName"],
+            "front.example.com"
+        );
         assert_eq!(ob["streamSettings"]["grpcSettings"]["serviceName"], "g");
     }
 
@@ -857,9 +914,20 @@ mod tests {
     #[test]
     fn shadowsocks_errors() {
         let userinfo = STANDARD.encode("aes-128-gcm:pw");
-        assert!(parse(&format!("ss://{userinfo}@a.example.com:1?plugin=obfs-local")).is_err());
+        assert!(
+            parse(&format!(
+                "ss://{userinfo}@a.example.com:1?plugin=obfs-local"
+            ))
+            .is_err()
+        );
         assert!(parse("ss://!!!").is_err());
-        assert!(parse(&format!("ss://{}@a.example.com:1", STANDARD.encode("nopassword"))).is_err());
+        assert!(
+            parse(&format!(
+                "ss://{}@a.example.com:1",
+                STANDARD.encode("nopassword")
+            ))
+            .is_err()
+        );
         assert!(parse(&format!("ss://{userinfo}@a.example.com")).is_err());
     }
 
@@ -873,17 +941,29 @@ mod tests {
         assert!(parsed.warnings.is_empty());
         let ob = &parsed.node.outbounds[0];
         assert_eq!(ob["protocol"], "hysteria");
-        assert_eq!(ob["settings"], json!({"version": 2, "address": "hy.example.com", "port": 443}));
+        assert_eq!(
+            ob["settings"],
+            json!({"version": 2, "address": "hy.example.com", "port": 443})
+        );
         let stream = &ob["streamSettings"];
         assert_eq!(stream["network"], "hysteria");
         assert_eq!(stream["security"], "tls");
-        assert_eq!(stream["hysteriaSettings"], json!({"version": 2, "auth": "auth:pass"}));
+        assert_eq!(
+            stream["hysteriaSettings"],
+            json!({"version": 2, "auth": "auth:pass"})
+        );
         assert_eq!(stream["tlsSettings"]["serverName"], "front.example.com");
         assert_eq!(stream["tlsSettings"]["alpn"], json!(["h3"]));
         assert_eq!(stream["tlsSettings"]["pinnedPeerCertSha256"], "abcdef");
         assert_eq!(stream["finalmask"]["udp"][0]["type"], "salamander");
-        assert_eq!(stream["finalmask"]["udp"][0]["settings"]["password"], "mask");
-        assert_eq!(stream["finalmask"]["quicParams"]["udpHop"]["ports"], "20000-30000");
+        assert_eq!(
+            stream["finalmask"]["udp"][0]["settings"]["password"],
+            "mask"
+        );
+        assert_eq!(
+            stream["finalmask"]["quicParams"]["udpHop"]["ports"],
+            "20000-30000"
+        );
     }
 
     #[test]
@@ -901,7 +981,10 @@ mod tests {
     fn hysteria2_port_lists() {
         let ob = outbound_of("hy2://s@hy.example.com:443,20000-30000");
         assert_eq!(ob["settings"]["port"], 443);
-        assert_eq!(ob["streamSettings"]["finalmask"]["quicParams"]["udpHop"]["ports"], "443,20000-30000");
+        assert_eq!(
+            ob["streamSettings"]["finalmask"]["quicParams"]["udpHop"]["ports"],
+            "443,20000-30000"
+        );
         let ob = outbound_of("hy2://s@hy.example.com:20000-30000");
         assert_eq!(ob["settings"]["port"], 20000);
     }
@@ -916,7 +999,9 @@ mod tests {
 
     #[test]
     fn duplicate_parameters_keep_the_first() {
-        let ob = outbound_of(&format!("vless://{UUID}@a.example.com:443?security=tls&sni=one&sni=two"));
+        let ob = outbound_of(&format!(
+            "vless://{UUID}@a.example.com:443?security=tls&sni=one&sni=two"
+        ));
         assert_eq!(ob["streamSettings"]["tlsSettings"]["serverName"], "one");
     }
 }

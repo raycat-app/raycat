@@ -110,7 +110,10 @@ mod tests {
         assert_eq!(decode_base64("aGk=").unwrap(), b"hi");
         assert_eq!(decode_base64("aGk").unwrap(), b"hi");
         assert_eq!(decode_base64(" aG\nk= \n").unwrap(), b"hi");
-        assert_eq!(decode_base64("-_-_").unwrap(), decode_base64("+/+/").unwrap());
+        assert_eq!(
+            decode_base64("-_-_").unwrap(),
+            decode_base64("+/+/").unwrap()
+        );
         assert!(decode_base64("").is_none());
         assert!(decode_base64("!!!").is_none());
     }
@@ -139,7 +142,10 @@ mod tests {
 
     #[test]
     fn prefix_is_case_insensitive() {
-        assert_eq!(strip_prefix_ci("HAPP://Routing/off", "happ://routing/"), Some("off"));
+        assert_eq!(
+            strip_prefix_ci("HAPP://Routing/off", "happ://routing/"),
+            Some("off")
+        );
         assert_eq!(strip_prefix_ci("hap", "happ://"), None);
         assert_eq!(strip_prefix_ci("привет", "happ://"), None);
     }

@@ -6,7 +6,7 @@ use raycat_xray::Node;
 use serde_json::Value;
 
 use crate::body::{Content, MAX_NODES};
-use crate::stub::{endpoint_of, Endpoint};
+use crate::stub::{Endpoint, endpoint_of};
 use crate::text::{clean, push_warning};
 
 /// Служебные outbound'ы маршрутизации: узлом они не бывают.
@@ -23,7 +23,11 @@ pub(crate) fn is_xray(value: &Value) -> bool {
     config
         .and_then(|config| config.get("outbounds"))
         .and_then(Value::as_array)
-        .is_some_and(|outbounds| outbounds.iter().any(|outbound| outbound.get("protocol").is_some()))
+        .is_some_and(|outbounds| {
+            outbounds
+                .iter()
+                .any(|outbound| outbound.get("protocol").is_some())
+        })
 }
 
 pub(crate) fn parse(value: &Value) -> Content {
@@ -83,7 +87,9 @@ fn build_node(config: &Value, position: usize) -> Result<Node, String> {
         .and_then(Value::as_array)
         .ok_or_else(|| format!("конфиг «{label}» пропущен: нет списка outbounds"))?;
     if outbounds.len() > MAX_OUTBOUNDS {
-        return Err(format!("конфиг «{label}» пропущен: слишком много outbound'ов"));
+        return Err(format!(
+            "конфиг «{label}» пропущен: слишком много outbound'ов"
+        ));
     }
     let proxies: Vec<usize> = (0..outbounds.len())
         .filter(|&index| is_proxy(&outbounds[index]))
@@ -97,7 +103,9 @@ fn build_node(config: &Value, position: usize) -> Result<Node, String> {
         return Err(format!("конфиг «{label}» пропущен: нет прокси-outbound'ов"));
     };
     let Some(endpoint) = endpoint_of(&outbounds[exit]) else {
-        return Err(format!("конфиг «{label}» пропущен: у выхода нет адреса сервера"));
+        return Err(format!(
+            "конфиг «{label}» пропущен: у выхода нет адреса сервера"
+        ));
     };
 
     let mut order = vec![exit];
@@ -109,7 +117,10 @@ fn build_node(config: &Value, position: usize) -> Result<Node, String> {
         .unwrap_or_else(|| default_name(&endpoint));
     Ok(Node {
         name,
-        outbounds: order.iter().map(|&index| outbounds[index].clone()).collect(),
+        outbounds: order
+            .iter()
+            .map(|&index| outbounds[index].clone())
+            .collect(),
     })
 }
 
@@ -125,9 +136,7 @@ fn include_chain(outbounds: &[Value], order: &mut Vec<usize>) {
             .collect();
         let missing: Vec<usize> = (0..outbounds.len())
             .filter(|index| !order.contains(index))
-            .filter(|&index| {
-                tag_of(&outbounds[index]).is_some_and(|tag| wanted.contains(&tag))
-            })
+            .filter(|&index| tag_of(&outbounds[index]).is_some_and(|tag| wanted.contains(&tag)))
             .collect();
         if missing.is_empty() {
             return;

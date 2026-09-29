@@ -112,23 +112,32 @@ pub(crate) fn parse(
 ) -> (ProviderInfo, Vec<String>) {
     let headers = Headers::new(http, body);
     let mut warnings = Vec::new();
-    let routing = headers
-        .get("routing")
-        .or(body_routing)
-        .and_then(|value| match routing::parse(value) {
-            Ok(routing) => Some(routing),
-            Err(reason) => {
-                push_warning(&mut warnings, format!("профиль маршрутизации отброшен: {reason}"));
-                None
-            }
-        });
+    let routing =
+        headers
+            .get("routing")
+            .or(body_routing)
+            .and_then(|value| match routing::parse(value) {
+                Ok(routing) => Some(routing),
+                Err(reason) => {
+                    push_warning(
+                        &mut warnings,
+                        format!("профиль маршрутизации отброшен: {reason}"),
+                    );
+                    None
+                }
+            });
     let title = headers.text("profile-title", MAX_TITLE).or_else(|| {
-        let name = clean(&disposition_filename(headers.get("content-disposition")?)?, MAX_TITLE);
+        let name = clean(
+            &disposition_filename(headers.get("content-disposition")?)?,
+            MAX_TITLE,
+        );
         (!name.is_empty()).then_some(name)
     });
     let info = ProviderInfo {
         title,
-        usage: headers.get("subscription-userinfo").and_then(parse_userinfo),
+        usage: headers
+            .get("subscription-userinfo")
+            .and_then(parse_userinfo),
         update_interval: headers
             .get("profile-update-interval")
             .and_then(|value| value.parse::<u64>().ok())
@@ -244,13 +253,25 @@ mod tests {
         assert_eq!(info.title.as_deref(), Some("Мой VPN"));
         assert_eq!(info.announce.as_deref(), Some("Привет"));
         assert_eq!(info.update_interval, Some(Duration::from_secs(12 * 3600)));
-        assert_eq!(info.support_url.as_deref(), Some("https://example.com/support"));
-        assert_eq!(info.web_page_url.as_deref(), Some("https://example.com/cabinet"));
+        assert_eq!(
+            info.support_url.as_deref(),
+            Some("https://example.com/support")
+        );
+        assert_eq!(
+            info.web_page_url.as_deref(),
+            Some("https://example.com/cabinet")
+        );
         assert_eq!(info.refill_date, Some(1_767_225_600));
         assert!(info.hwid.active && !info.hwid.max_devices_reached);
-        assert_eq!(info.fallback_url.as_deref(), Some("https://reserve.example.com/sub"));
+        assert_eq!(
+            info.fallback_url.as_deref(),
+            Some("https://reserve.example.com/sub")
+        );
         assert_eq!(info.new_domain.as_deref(), Some("moved.example.com"));
-        assert_eq!(info.new_url.as_deref(), Some("https://moved.example.com/sub"));
+        assert_eq!(
+            info.new_url.as_deref(),
+            Some("https://moved.example.com/sub")
+        );
         assert_eq!(info.change_user_agent.as_deref(), Some("Example/1.0"));
         assert!(info.sub_expire);
         assert!(info.routing.is_none());
@@ -272,8 +293,14 @@ mod tests {
     fn interval_is_capped_and_positive() {
         let huge = info(&[("profile-update-interval", "99999999999999")]);
         assert_eq!(huge.update_interval, Some(Duration::from_secs(8760 * 3600)));
-        assert_eq!(info(&[("profile-update-interval", "0")]).update_interval, None);
-        assert_eq!(info(&[("profile-update-interval", "abc")]).update_interval, None);
+        assert_eq!(
+            info(&[("profile-update-interval", "0")]).update_interval,
+            None
+        );
+        assert_eq!(
+            info(&[("profile-update-interval", "abc")]).update_interval,
+            None
+        );
     }
 
     #[test]
@@ -285,7 +312,10 @@ mod tests {
         ]);
         assert_eq!(info.title.as_deref(), Some("VPN[31mred"));
         assert_eq!(info.announce.as_deref(), Some("Привет"));
-        assert_eq!(info.support_url.as_deref(), Some("https://example.com/help"));
+        assert_eq!(
+            info.support_url.as_deref(),
+            Some("https://example.com/help")
+        );
     }
 
     #[test]
@@ -299,7 +329,10 @@ mod tests {
         let (info, warnings) = parse(&http, &body, None);
         assert!(warnings.is_empty());
         assert_eq!(info.title.as_deref(), Some("Из заголовка"));
-        assert_eq!(info.support_url.as_deref(), Some("https://example.com/from-body"));
+        assert_eq!(
+            info.support_url.as_deref(),
+            Some("https://example.com/from-body")
+        );
         assert_eq!(info.update_interval, Some(Duration::from_secs(6 * 3600)));
     }
 
@@ -307,7 +340,10 @@ mod tests {
     fn empty_http_value_falls_back_to_body() {
         let http = pairs(&[("profile-title", "  ")]);
         let body = pairs(&[("profile-title", "Из тела")]);
-        assert_eq!(parse(&http, &body, None).0.title.as_deref(), Some("Из тела"));
+        assert_eq!(
+            parse(&http, &body, None).0.title.as_deref(),
+            Some("Из тела")
+        );
     }
 
     #[test]

@@ -29,13 +29,18 @@ fn link_list() -> String {
 }
 
 fn stub_links() -> String {
-    format!("vless://{UUID}@0.0.0.0:1?security=none#%D0%9F%D0%BE%D0%B4%D0%BF%D0%B8%D1%81%D0%BA%D0%B0%20%D0%B8%D1%81%D1%82%D0%B5%D0%BA%D0%BB%D0%B0\n")
+    format!(
+        "vless://{UUID}@0.0.0.0:1?security=none#%D0%9F%D0%BE%D0%B4%D0%BF%D0%B8%D1%81%D0%BA%D0%B0%20%D0%B8%D1%81%D1%82%D0%B5%D0%BA%D0%BB%D0%B0\n"
+    )
 }
 
 #[test]
 fn good_links_response() {
     let response = headers(&[
-        ("Subscription-Userinfo", "upload=1; download=2; total=10; expire=1767225600"),
+        (
+            "Subscription-Userinfo",
+            "upload=1; download=2; total=10; expire=1767225600",
+        ),
         ("Profile-Title", "base64:0JzQvtC5IFZQTg=="),
         ("Profile-Update-Interval", "12"),
         ("Routing", "happ://routing/off"),
@@ -46,8 +51,14 @@ fn good_links_response() {
     let names: Vec<&str> = result.nodes.iter().map(|node| node.name.as_str()).collect();
     assert_eq!(names, ["NL", "DE", "FI", "HY"]);
     assert_eq!(result.info.title.as_deref(), Some("Мой VPN"));
-    assert_eq!(result.info.usage.as_ref().map(|usage| usage.total), Some(10));
-    assert_eq!(result.info.update_interval, Some(Duration::from_secs(12 * 3600)));
+    assert_eq!(
+        result.info.usage.as_ref().map(|usage| usage.total),
+        Some(10)
+    );
+    assert_eq!(
+        result.info.update_interval,
+        Some(Duration::from_secs(12 * 3600))
+    );
     assert_eq!(result.info.routing, Some(Routing::Off));
 }
 
@@ -61,7 +72,10 @@ fn base64_body_with_headers_inside() {
     assert!(result.problem.is_none(), "{:?}", result.problem);
     assert_eq!(result.nodes.len(), 4);
     assert_eq!(result.info.title.as_deref(), Some("Из тела"));
-    assert_eq!(result.info.support_url.as_deref(), Some("https://example.com/support"));
+    assert_eq!(
+        result.info.support_url.as_deref(),
+        Some("https://example.com/support")
+    );
 }
 
 #[test]
@@ -96,7 +110,10 @@ fn provider_headers_reach_the_info() {
     ]);
     let info = analyze(200, &response, link_list().as_bytes()).info;
     assert_eq!(info.announce.as_deref(), Some("Привет"));
-    assert_eq!(info.fallback_url.as_deref(), Some("https://reserve.example.com/sub"));
+    assert_eq!(
+        info.fallback_url.as_deref(),
+        Some("https://reserve.example.com/sub")
+    );
     assert_eq!(info.new_domain.as_deref(), Some("moved.example.com"));
     assert_eq!(info.change_user_agent.as_deref(), Some("Example/1.0"));
 }
@@ -117,18 +134,30 @@ fn stubs_next_to_real_nodes_are_dropped() {
     let result = analyze(200, &[], text.as_bytes());
     assert!(result.problem.is_none(), "{:?}", result.problem);
     assert_eq!(result.nodes.len(), 4);
-    assert!(result.warnings.iter().any(|warning| warning.contains("заглушки")));
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("заглушки"))
+    );
 }
 
 #[test]
 fn hwid_refusal_wins_over_the_body() {
     for header in ["x-hwid-max-devices-reached", "x-hwid-not-supported"] {
         let result = analyze(200, &headers(&[(header, "true")]), link_list().as_bytes());
-        assert!(matches!(result.problem, Some(Problem::Refused(_))), "{header}");
+        assert!(
+            matches!(result.problem, Some(Problem::Refused(_))),
+            "{header}"
+        );
     }
     let empty = analyze(200, &headers(&[("x-hwid-not-supported", "true")]), b"");
     assert!(matches!(empty.problem, Some(Problem::Refused(_))));
-    let active_only = analyze(200, &headers(&[("x-hwid-active", "true")]), link_list().as_bytes());
+    let active_only = analyze(
+        200,
+        &headers(&[("x-hwid-active", "true")]),
+        link_list().as_bytes(),
+    );
     assert!(active_only.problem.is_none());
     assert!(active_only.info.hwid.active);
 }
@@ -157,7 +186,11 @@ fn unrecognized_bodies() {
         br#"{"log": {}}"#,
     ] {
         let result = analyze(200, &[], body);
-        assert!(matches!(result.problem, Some(Problem::Unrecognized(_))), "{:?}", result.problem);
+        assert!(
+            matches!(result.problem, Some(Problem::Unrecognized(_))),
+            "{:?}",
+            result.problem
+        );
         assert!(result.nodes.is_empty());
     }
 }
@@ -186,11 +219,18 @@ fn garbage_never_panics() {
         b"ss://@".to_vec(),
         b"hy2://@[".to_vec(),
         "#\n#:\n#:x\n\u{feff}".as_bytes().to_vec(),
-        format!("{{\"outbounds\":[{{\"protocol\":\"vless\",\"settings\":{{\"port\":{}}}}}]}}", u64::MAX)
-            .into_bytes(),
+        format!(
+            "{{\"outbounds\":[{{\"protocol\":\"vless\",\"settings\":{{\"port\":{}}}}}]}}",
+            u64::MAX
+        )
+        .into_bytes(),
     ];
     for body in bodies {
-        let result = analyze(200, &headers(&[("routing", "happ://routing/add/\u{0}")]), &body);
+        let result = analyze(
+            200,
+            &headers(&[("routing", "happ://routing/add/\u{0}")]),
+            &body,
+        );
         assert!(result.problem.is_some());
     }
 }

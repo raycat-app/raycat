@@ -62,10 +62,7 @@ pub(crate) fn parse(value: &str) -> Result<Routing, String> {
         "add" => false,
         "onadd" => true,
         other => {
-            return Err(format!(
-                "неизвестное действие «{}»",
-                clean(other, 32)
-            ));
+            return Err(format!("неизвестное действие «{}»", clean(other, 32)));
         }
     };
     if payload.len() > MAX_PAYLOAD {
@@ -128,9 +125,7 @@ fn text(fields: &BTreeMap<String, &Value>, key: &str) -> String {
 fn flag(fields: &BTreeMap<String, &Value>, key: &str) -> bool {
     match fields.get(key) {
         Some(Value::Bool(value)) => *value,
-        Some(Value::String(value)) => {
-            value.eq_ignore_ascii_case("true") || value == "1"
-        }
+        Some(Value::String(value)) => value.eq_ignore_ascii_case("true") || value == "1",
         _ => false,
     }
 }
@@ -214,7 +209,10 @@ mod tests {
         assert_eq!(profile.last_updated, Some(1_767_225_600));
         assert_eq!(profile.dns_hosts["example.com"], "203.0.113.7");
         assert_eq!(profile.dns_hosts["multi.example.com"], "203.0.113.8");
-        assert_eq!(profile.direct_sites, ["geosite:category-ru", "domain:example.org"]);
+        assert_eq!(
+            profile.direct_sites,
+            ["geosite:category-ru", "domain:example.org"]
+        );
         assert_eq!(profile.direct_ip.len(), 2);
         assert!(profile.proxy_sites.is_empty());
 

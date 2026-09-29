@@ -113,7 +113,11 @@ mod tests {
         ] {
             assert!(is_stub(&node(flat(address, port))), "{address}:{port}");
         }
-        for (address, port) in [("nl.example.com", 443), ("203.0.113.5", 2), ("2001:db8::1", 443)] {
+        for (address, port) in [
+            ("nl.example.com", 443),
+            ("203.0.113.5", 2),
+            ("2001:db8::1", 443),
+        ] {
             assert!(!is_stub(&node(flat(address, port))), "{address}:{port}");
         }
     }

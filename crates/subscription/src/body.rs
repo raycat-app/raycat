@@ -43,9 +43,7 @@ impl Body {
 
 pub(crate) fn parse(body: &[u8]) -> Body {
     if body.len() > MAX_BODY {
-        return Body::rejected(Reject::Unrecognized(
-            "тело ответа больше 32 МиБ".to_owned(),
-        ));
+        return Body::rejected(Reject::Unrecognized("тело ответа больше 32 МиБ".to_owned()));
     }
     let text = String::from_utf8_lossy(body);
     let text = text.trim_start_matches('\u{feff}').trim();
@@ -81,7 +79,11 @@ pub(crate) fn parse(body: &[u8]) -> Body {
 }
 
 fn is_html(text: &str) -> bool {
-    let head: String = text.chars().take(64).collect::<String>().to_ascii_lowercase();
+    let head: String = text
+        .chars()
+        .take(64)
+        .collect::<String>()
+        .to_ascii_lowercase();
     head.starts_with("<!doctype") || head.starts_with("<html")
 }
 
@@ -366,12 +368,18 @@ mod tests {
         let inner = format!("#profile-title: Внутри\n{}", links());
         let body = parse(STANDARD.encode(inner).as_bytes());
         assert_eq!(names(&body).len(), 3);
-        assert_eq!(body.headers, [("profile-title".to_owned(), "Внутри".to_owned())]);
+        assert_eq!(
+            body.headers,
+            [("profile-title".to_owned(), "Внутри".to_owned())]
+        );
 
         let outer = format!("#profile-title: Снаружи\n{}", STANDARD.encode(links()));
         let body = parse(outer.as_bytes());
         assert_eq!(names(&body).len(), 3);
-        assert_eq!(body.headers, [("profile-title".to_owned(), "Снаружи".to_owned())]);
+        assert_eq!(
+            body.headers,
+            [("profile-title".to_owned(), "Снаружи".to_owned())]
+        );
     }
 
     #[test]
@@ -446,7 +454,10 @@ mod tests {
 
     #[test]
     fn very_long_line_is_skipped() {
-        let long = format!("vless://{UUID}@a.example.com:443?path={}\n", "x".repeat(MAX_LINE));
+        let long = format!(
+            "vless://{UUID}@a.example.com:443?path={}\n",
+            "x".repeat(MAX_LINE)
+        );
         let text = format!("{long}vless://{UUID}@b.example.com:443\n");
         let body = parse(text.as_bytes());
         assert_eq!(names(&body), ["b.example.com:443"]);
