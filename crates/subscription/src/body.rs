@@ -175,11 +175,11 @@ fn parse_json(text: &str) -> Result<Content, Reject> {
 
 fn parse_links_or_reject(text: &str) -> Result<Content, Reject> {
     let first_line = text.lines().map(str::trim).find(|line| !line.is_empty());
-    let crypted = text
+    let has_crypt_link = text
         .lines()
         .map(str::trim)
         .any(|line| strip_prefix_ci(line, "happ://crypt").is_some());
-    if crypted && !has_supported_scheme(text) {
+    if has_crypt_link && !has_supported_scheme(text) {
         return Err(Reject::Encrypted(
             "получена зашифрованная ссылка happ://crypt…: расшифровать её может только Happ"
                 .to_owned(),

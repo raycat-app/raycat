@@ -1,2 +1,6 @@
 [files]
 extend-exclude = ["Cargo.lock", "assets/"]
+
+[default.extend-words]
+# Параметр `mport` (порты для port hopping) в ссылках hysteria2.
+mport = "mport"
