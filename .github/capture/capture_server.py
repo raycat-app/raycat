@@ -12,6 +12,7 @@ import argparse
 import base64
 import os
 import socketserver
+import sys
 import threading
 import time
 
@@ -77,6 +78,8 @@ def main():
     parser.add_argument("--port", type=int, default=18080)
     parser.add_argument("--out", default="captures")
     args = parser.parse_args()
+    # Кодировка Windows-консоли по умолчанию не знает русских букв, и сервер падал при старте.
+    sys.stdout.reconfigure(encoding="utf-8")
     os.makedirs(args.out, exist_ok=True)
     server = Server((args.host, args.port), Handler)
     server.out = args.out

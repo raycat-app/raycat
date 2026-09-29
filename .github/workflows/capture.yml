@@ -129,9 +129,12 @@ jobs:
           APK: ${{ matrix.asset }}
           DATE: ${{ matrix.date }}
           LINK: ${{ matrix.scheme }}://add/http://10.0.2.2:18080/sub/capture-android
+          LINK2: ${{ matrix.scheme }}://import/http://10.0.2.2:18080/sub/capture-android
+          SUB_URL: http://10.0.2.2:18080/sub/capture-android
           OUT: captures
         with:
           api-level: 34
+          profile: pixel_6
           arch: x86_64
           target: google_apis
           disable-animations: true

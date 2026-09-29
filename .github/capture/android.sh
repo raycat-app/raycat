@@ -39,6 +39,7 @@ adb shell date -u | tee "$out/clock.txt"
 aapt=$(find "$ANDROID_HOME/build-tools" -name aapt 2>/dev/null | sort -V | tail -1)
 [ -n "$aapt" ] && "$aapt" dump badging "$APK" | grep -E "^package:|native-code|sdkVersion" | tee "$out/apk-info.txt"
 pkg=$(grep -o "package: name='[^']*'" "$out/apk-info.txt" 2>/dev/null | cut -d"'" -f2)
+[ -n "$aapt" ] && "$aapt" dump xmltree "$APK" AndroidManifest.xml >"$out/manifest.txt" 2>&1
 adb install -r -g "$APK" 2>&1 | tail -2
 adb shell getprop ro.product.model >"$out/device.txt"
 adb shell getprop ro.build.version.release >>"$out/device.txt"
@@ -53,6 +54,8 @@ for _ in 1 2 3 4 5 6; do
 done
 snap onboarding
 
+captured() { ls "$out"/*.http >/dev/null 2>&1; }
+
 adb shell am start -a android.intent.action.VIEW -d "$LINK" 2>&1 | tail -1
 sleep 12
 snap deeplink
@@ -62,6 +65,27 @@ for _ in 1 2 3; do
 done
 snap added
 sleep 20
+
+# Запасные пути, если приложение не обработало ссылку: другая схема, затем ввод адреса в интерфейсе.
+if ! captured && [ -n "${LINK2:-}" ]; then
+  adb shell am start -a android.intent.action.VIEW -d "$LINK2" 2>&1 | tail -1
+  sleep 15
+  snap deeplink2
+  tap "Add" "OK" "Import" "Yes" "Confirm" || true
+  sleep 15
+fi
+if ! captured && [ -n "${SUB_URL:-}" ]; then
+  tap "Add" && sleep 4
+  snap add-dialog
+  adb shell input text "$SUB_URL"
+  sleep 2
+  snap typed
+  adb shell input keyevent KEYCODE_BACK
+  tap "Add" "OK" "Import" "Save" "Confirm" || true
+  sleep 15
+  snap ui-added
+fi
 snap final
-adb logcat -d -t 3000 >"$out/logcat.txt" 2>&1 || true
+[ -n "$pkg" ] && adb logcat -d --pid="$(adb shell pidof "$pkg" | awk '{print $1}')" >"$out/logcat-app.txt" 2>&1
+adb logcat -d -t 2000 >"$out/logcat.txt" 2>&1 || true
 ls -la "$out"

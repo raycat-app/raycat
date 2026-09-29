@@ -6,7 +6,7 @@ param(
     [Parameter(Mandatory)] [string] $Installer,
     [Parameter(Mandatory)] [string] $Link,
     [string] $Out = "captures",
-    [string] $ExeName = "Happ*.exe"
+    [string] $ExeName = "Happ.exe"
 )
 $ErrorActionPreference = "Continue"
 New-Item -ItemType Directory -Force $Out | Out-Null
@@ -52,7 +52,7 @@ $cv = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
 Get-Content "$Out\device.txt"
 
 # Ключи тихой установки разные у Inno Setup, NSIS и MSI: пробуем по очереди.
-$app = Find-App
+$app = $null
 foreach ($switches in @("/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /ALLUSERS", "/S", "/quiet /norestart")) {
     if ($app) { break }
     "установка с ключами $switches"
