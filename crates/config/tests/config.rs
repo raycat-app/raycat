@@ -493,30 +493,33 @@ app = "happ"
 platform = "windows"
 "#,
     );
-    assert_eq!(list.len(), 1, "{list:?}");
-    assert!(has(&list, "subscription[0].url"), "{list:?}");
-    assert!(list[0].contains("allow_http"), "{list:?}");
-    assert!(list[0].contains("http://203.0.113.7/…1234"), "{list:?}");
-    assert!(!list[0].contains("AbCdEfGh1234"), "{list:?}");
+    assert_eq!(list.len(), 1);
+    assert!(has(&list, "subscription[0].url"));
+    assert!(list[0].contains("allow_http"));
+    assert!(list[0].contains("http://203.0.113.7/…1234"));
+    assert!(!list[0].contains("AbCdEfGh1234"), "ссылка не замаскирована");
 }
 
 #[test]
 fn bad_links_are_masked_in_errors() {
-    for url in [
+    for (i, url) in [
         "https://sub.example.com/a b/SECRETTOKEN9999",
         "ftp://sub.example.com/x/SECRETTOKEN9999",
         "https://user:pass@sub.example.com/x/SECRETTOKEN9999",
         "https://sub.example.com:0/x/SECRETTOKEN9999",
         "SECRETTOKEN9999",
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let list = problems(&format!(
             "[[subscription]]\nname = \"a\"\nurl = \"{url}\"\napp = \"happ\"\nplatform = \"windows\"\n"
         ));
-        assert_eq!(list.len(), 1, "{url}: {list:?}");
-        assert!(has(&list, "subscription[0].url"), "{url}: {list:?}");
-        assert!(list[0].contains("…9999"), "{url}: {list:?}");
-        assert!(!list[0].contains("SECRETTOKEN"), "{url}: {list:?}");
-        assert!(!list[0].contains("pass"), "{url}: {list:?}");
+        assert_eq!(list.len(), 1, "ссылка №{i}");
+        assert!(has(&list, "subscription[0].url"), "ссылка №{i}");
+        assert!(list[0].contains("…9999"), "ссылка №{i}");
+        assert!(!list[0].contains("SECRETTOKEN"), "ссылка №{i} не замаскирована");
+        assert!(!list[0].contains("pass"), "ссылка №{i}: виден пароль");
     }
 }
 
@@ -614,15 +617,15 @@ fn type_errors_do_not_echo_values() {
     let message = Config::from_toml_str(text, &Env::new())
         .unwrap_err()
         .to_string();
-    assert!(message.contains("строка 2 (seed)"), "{message}");
-    assert!(!message.contains("123456789"), "{message}");
+    assert!(message.contains("строка 2 (seed)"));
+    assert!(!message.contains("123456789"), "значение попало в сообщение");
 
     let text = format!("{OK_SUB}\n[selection]\nfailures = \"SECRETVALUE\"\n");
     let message = Config::from_toml_str(&text, &Env::new())
         .unwrap_err()
         .to_string();
-    assert!(message.contains("(failures)"), "{message}");
-    assert!(!message.contains("SECRETVALUE"), "{message}");
+    assert!(message.contains("(failures)"));
+    assert!(!message.contains("SECRETVALUE"), "значение попало в сообщение");
 }
 
 #[test]
@@ -789,13 +792,13 @@ fn environment_errors_name_the_variable() {
         "RAYCAT_KILL_SWITCH",
         "RAYCAT_LOG",
     ] {
-        assert!(has(&list, key), "{key}: {list:?}");
+        assert!(has(&list, key), "нет ошибки для {key}");
     }
-    assert!(has(&list, "subscription[0].app"), "{list:?}");
-    assert!(has(&list, "subscription[0].platform"), "{list:?}");
+    assert!(has(&list, "subscription[0].app"));
+    assert!(has(&list, "subscription[0].platform"));
     assert!(
         list.iter().all(|line| !line.contains("ZzZz0003")),
-        "{list:?}"
+        "ссылка попала в сообщение"
     );
 }
 
@@ -807,14 +810,14 @@ fn environment_subscription_is_checked_and_masked() {
         ("RAYCAT_PLATFORM", "windows"),
     ]);
     let list = problems_with_env("", &vars);
-    assert_eq!(list.len(), 2, "{list:?}");
-    assert!(has(&list, "subscription[0].url"), "{list:?}");
-    assert!(has(&list, "subscription[0].platform"), "{list:?}");
+    assert_eq!(list.len(), 2);
+    assert!(has(&list, "subscription[0].url"));
+    assert!(has(&list, "subscription[0].platform"));
     assert!(
         list.iter().all(|line| !line.contains("ZzZz0004")),
-        "{list:?}"
+        "ссылка не замаскирована"
     );
-    assert!(list[0].contains("…0004"), "{list:?}");
+    assert!(list[0].contains("…0004"));
 }
 
 #[test]
@@ -878,24 +881,27 @@ fn debug_output_hides_secrets() {
             .unwrap()
     ));
     let debug = format!("{config:?}");
-    for secret in [
+    for (i, secret) in [
         "AbCdEfGh1234",
         "sub.example.com/api",
         "reserve-token-9876",
         "другое устройство",
         "0123456789abcdef0123456789abcdef",
-    ] {
-        assert!(!debug.contains(secret), "{secret} в {debug}");
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(!debug.contains(secret), "секрет №{i} попал в Debug");
     }
-    assert!(debug.contains("Secret(***)"), "{debug}");
-    assert!(debug.contains("основная"), "{debug}");
+    assert!(debug.contains("Secret(***)"));
+    assert!(debug.contains("основная"));
 }
 
 #[test]
 fn seed_is_hidden_in_debug() {
     let config = parse(FULL);
     let debug = format!("{config:?}");
-    assert!(!debug.contains("любая фраза"), "{debug}");
-    assert!(!debug.contains("AbCdEfGh1234"), "{debug}");
+    assert!(!debug.contains("любая фраза"), "seed попал в Debug");
+    assert!(!debug.contains("AbCdEfGh1234"), "ссылка попала в Debug");
     assert!(!format!("{:?}", config.subscriptions[0]).contains("sub.example.com"));
 }
