@@ -92,10 +92,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {app: Happ, repo: Happ-proxy/happ-android, asset: Happ.apk, scheme: happ, requested: "${{ inputs.happ_android }}"}
-          - {app: INCY, repo: INCY-DEV/incy-platforms, asset: Incy.apk, scheme: incy, requested: "${{ inputs.incy_android }}"}
+          - {app: Happ, repo: Happ-proxy/happ-android, asset: Happ.apk, scheme: happ, hosts: 10.0.2.2, requested: "${{ inputs.happ_android }}"}
+          - {app: INCY, repo: INCY-DEV/incy-platforms, asset: Incy.apk, scheme: incy, hosts: "127.0.0.1 localhost 10.0.2.2", requested: "${{ inputs.incy_android }}"}
           # Нечётное число по Москве: маркер дня в User-Agent должен смениться.
-          - {app: Happ, repo: Happ-proxy/happ-android, asset: Happ.apk, scheme: happ, requested: "${{ inputs.happ_android }}", date: "092912002026.00"}
+          - {app: Happ, repo: Happ-proxy/happ-android, asset: Happ.apk, scheme: happ, hosts: 10.0.2.2, requested: "${{ inputs.happ_android }}", date: "092912002026.00"}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -128,13 +128,11 @@ jobs:
         env:
           APK: ${{ matrix.asset }}
           DATE: ${{ matrix.date }}
-          LINK: ${{ matrix.scheme }}://add/http://10.0.2.2:18080/sub/capture-android
-          LINK2: ${{ matrix.scheme }}://import/http://10.0.2.2:18080/sub/capture-android
-          SUB_URL: http://10.0.2.2:18080/sub/capture-android
+          SCHEME: ${{ matrix.scheme }}
+          HOSTS: ${{ matrix.hosts }}
           OUT: captures
         with:
           api-level: 34
-          profile: pixel_6
           arch: x86_64
           target: google_apis
           disable-animations: true

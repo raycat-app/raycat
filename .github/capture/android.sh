@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Работает внутри reactivecircus/android-emulator-runner: ставит APK, открывает ссылку
-# приложения «добавить подписку» на capture_server.py хоста (из эмулятора он виден как
-# 10.0.2.2), нажимает диалоги и сохраняет снимки экрана и дампы интерфейса рядом с
-# пойманными запросами.
-#   APK=Happ.apk LINK='happ://add/http://10.0.2.2:18080/sub/abc' OUT=captures bash android.sh
+# приложения «добавить подписку» на capture_server.py хоста, нажимает диалоги и
+# сохраняет снимки экрана и дампы интерфейса рядом с пойманными запросами.
+#   APK=Happ.apk SCHEME=happ HOSTS='10.0.2.2' OUT=captures bash android.sh
+# HOSTS: адреса сервера, которые пробуются по очереди до первого захвата (из эмулятора
+# хост виден как 10.0.2.2; 127.0.0.1 и localhost работают через adb reverse).
 set -u
 out=${OUT:-captures}
+port=${PORT:-18080}
 mkdir -p "$out"
 shot=0
 snap() {
@@ -27,6 +29,7 @@ tap() {
   done
   return 1
 }
+captured() { ls "$out"/*.http >/dev/null 2>&1; }
 
 # DATE=MMDDhhmmCCYY.ss переводит часы эмулятора (проверка значений, зависящих от дня).
 if [ -n "${DATE:-}" ]; then
@@ -37,10 +40,18 @@ fi
 adb shell date -u | tee "$out/clock.txt"
 
 aapt=$(find "$ANDROID_HOME/build-tools" -name aapt 2>/dev/null | sort -V | tail -1)
-[ -n "$aapt" ] && "$aapt" dump badging "$APK" | grep -E "^package:|native-code|sdkVersion" | tee "$out/apk-info.txt"
+if [ -n "$aapt" ]; then
+  "$aapt" dump badging "$APK" | grep -E "^package:|native-code|sdkVersion" | tee "$out/apk-info.txt"
+  "$aapt" dump xmltree "$APK" AndroidManifest.xml >"$out/manifest.txt" 2>&1
+  # Правила сети приложения: ресурс с сетевой конфигурацией может быть с любым именем.
+  for xml in $(unzip -Z1 "$APK" 'res/*.xml'); do
+    "$aapt" dump xmltree "$APK" "$xml" 2>/dev/null | grep -q network-security-config &&
+      "$aapt" dump xmltree "$APK" "$xml" >>"$out/network-security.txt" 2>&1
+  done
+fi
 pkg=$(grep -o "package: name='[^']*'" "$out/apk-info.txt" 2>/dev/null | cut -d"'" -f2)
-[ -n "$aapt" ] && "$aapt" dump xmltree "$APK" AndroidManifest.xml >"$out/manifest.txt" 2>&1
 adb install -r -g "$APK" 2>&1 | tail -2
+adb reverse "tcp:$port" "tcp:$port" >/dev/null 2>&1
 adb shell getprop ro.product.model >"$out/device.txt"
 adb shell getprop ro.build.version.release >>"$out/device.txt"
 adb shell settings get secure android_id >>"$out/device.txt"
@@ -49,43 +60,24 @@ adb shell settings get secure android_id >>"$out/device.txt"
 sleep 15
 snap launched
 for _ in 1 2 3 4 5 6; do
-  tap "Allow" "OK" "Accept" "Agree" "Continue" "Next" "Skip" "Got it" "Разрешить" "Принять" "Продолжить" "Далее" "Пропустить" || break
+  tap "Wait" "Allow" "OK" "Accept" "Agree" "Continue" "Next" "Skip" "Got it" "Разрешить" "Принять" "Продолжить" "Далее" "Пропустить" || break
   sleep 3
 done
 snap onboarding
 
-captured() { ls "$out"/*.http >/dev/null 2>&1; }
-
-adb shell am start -a android.intent.action.VIEW -d "$LINK" 2>&1 | tail -1
-sleep 12
-snap deeplink
-for _ in 1 2 3; do
-  tap "Add" "OK" "Import" "Yes" "Confirm" "Добавить" "Импорт" "Да" "Подтвердить" || break
-  sleep 8
+for host in $HOSTS; do
+  captured && break
+  adb shell am start -a android.intent.action.VIEW -d "$SCHEME://add/http://$host:$port/sub/capture-android" 2>&1 | tail -1
+  sleep 12
+  snap "deeplink-$host"
+  for _ in 1 2 3; do
+    tap "Wait" "Add" "OK" "Import" "Yes" "Confirm" "Добавить" "Импорт" "Да" "Подтвердить" || break
+    sleep 8
+  done
+  snap "added-$host"
+  sleep 15
 done
-snap added
-sleep 20
-
-# Запасные пути, если приложение не обработало ссылку: другая схема, затем ввод адреса в интерфейсе.
-if ! captured && [ -n "${LINK2:-}" ]; then
-  adb shell am start -a android.intent.action.VIEW -d "$LINK2" 2>&1 | tail -1
-  sleep 15
-  snap deeplink2
-  tap "Add" "OK" "Import" "Yes" "Confirm" || true
-  sleep 15
-fi
-if ! captured && [ -n "${SUB_URL:-}" ]; then
-  tap "Add" && sleep 4
-  snap add-dialog
-  adb shell input text "$SUB_URL"
-  sleep 2
-  snap typed
-  adb shell input keyevent KEYCODE_BACK
-  tap "Add" "OK" "Import" "Save" "Confirm" || true
-  sleep 15
-  snap ui-added
-fi
+sleep 10
 snap final
 [ -n "$pkg" ] && adb logcat -d --pid="$(adb shell pidof "$pkg" | awk '{print $1}')" >"$out/logcat-app.txt" 2>&1
-adb logcat -d -t 2000 >"$out/logcat.txt" 2>&1 || true
 ls -la "$out"
