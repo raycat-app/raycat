@@ -5,9 +5,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use raycat_config::{
-    App, Config, DEFAULT_UPDATE_INTERVAL, Env, Error, LogLevel, Mode, Platform,
-};
+use raycat_config::{App, Config, DEFAULT_UPDATE_INTERVAL, Env, Error, LogLevel, Mode, Platform};
 
 const FULL: &str = r#"
 [device]
@@ -93,7 +91,8 @@ fn problems(text: &str) -> Vec<String> {
 }
 
 fn has(list: &[String], field: &str) -> bool {
-    list.iter().any(|line| line.starts_with(&format!("{field}: ")))
+    list.iter()
+        .any(|line| line.starts_with(&format!("{field}: ")))
 }
 
 fn temp_file(name: &str, content: &[u8]) -> PathBuf {
@@ -133,7 +132,10 @@ fn full_example() {
 
     let reserve = &config.subscriptions[1];
     assert_eq!(reserve.name, "резерв");
-    assert_eq!((reserve.app, reserve.platform), (App::Incy, Platform::Android));
+    assert_eq!(
+        (reserve.app, reserve.platform),
+        (App::Incy, Platform::Android)
+    );
     assert_eq!(reserve.seed.as_ref().unwrap().expose(), "другое устройство");
     assert_eq!(reserve.update_interval, None);
     assert!(reserve.allow.is_empty() && reserve.deny.is_empty() && reserve.priority.is_empty());
@@ -280,10 +282,22 @@ fn no_subscriptions() {
 #[test]
 fn subscription_field_errors() {
     let cases = [
-        ("update_interval = \"5m\"", "subscription[0].update_interval"),
-        ("update_interval = \"31d\"", "subscription[0].update_interval"),
-        ("update_interval = \"soon\"", "subscription[0].update_interval"),
-        ("update_interval = \"12\"", "subscription[0].update_interval"),
+        (
+            "update_interval = \"5m\"",
+            "subscription[0].update_interval",
+        ),
+        (
+            "update_interval = \"31d\"",
+            "subscription[0].update_interval",
+        ),
+        (
+            "update_interval = \"soon\"",
+            "subscription[0].update_interval",
+        ),
+        (
+            "update_interval = \"12\"",
+            "subscription[0].update_interval",
+        ),
         ("allow = [\"\"]", "subscription[0].allow[0]"),
         ("deny = [\"ok\", \"  \"]", "subscription[0].deny[1]"),
         ("priority = [\"\"]", "subscription[0].priority[0]"),
@@ -350,7 +364,10 @@ fn other_section_errors() {
         ("[mode]\nlisten = \"127.0.0.1:0\"", "mode.listen"),
         ("[mode]\nlisten = \"7890\"", "mode.listen"),
         ("[dns]\nresolvers = []", "dns.resolvers"),
-        ("[dns]\nresolvers = [\"dns.example.com\"]", "dns.resolvers[0]"),
+        (
+            "[dns]\nresolvers = [\"dns.example.com\"]",
+            "dns.resolvers[0]",
+        ),
         (
             "[dns]\nresolvers = [\"1.1.1.1\", \"1.1.1.2\", \"1.1.1.3\", \"1.1.1.4\", \"1.1.1.5\", \"1.1.1.6\", \"1.1.1.7\", \"1.1.1.8\", \"1.1.1.9\"]",
             "dns.resolvers",
@@ -377,8 +394,14 @@ fn device_errors() {
         ),
         ("seed = \"  \"", "device.seed"),
         ("machine_id = \"abc\"", "device.machine_id"),
-        ("machine_id = \"0000000000000000000000000000000\"", "device.machine_id"),
-        ("machine_id = \"0000000000000000000000000000000g\"", "device.machine_id"),
+        (
+            "machine_id = \"0000000000000000000000000000000\"",
+            "device.machine_id",
+        ),
+        (
+            "machine_id = \"0000000000000000000000000000000g\"",
+            "device.machine_id",
+        ),
         ("hostname = \"\"", "device.hostname"),
         ("hostname = \"a\\r\\nX-Injected: 1\"", "device.hostname"),
         ("model = \"a\\tb\"", "device.model"),
@@ -417,10 +440,16 @@ fn subscription_name_errors() {
 fn missing_required_subscription_fields() {
     let list = problems("[[subscription]]\nname = \"a\"\n");
     assert_eq!(list.len(), 3, "{list:?}");
-    for field in ["subscription[0].url", "subscription[0].app", "subscription[0].platform"] {
+    for field in [
+        "subscription[0].url",
+        "subscription[0].app",
+        "subscription[0].platform",
+    ] {
         assert!(has(&list, field), "{list:?}");
     }
-    let list = problems("[[subscription]]\nurl = \"https://sub.example.com/x/abcd\"\napp = \"happ\"\nplatform = \"windows\"\n");
+    let list = problems(
+        "[[subscription]]\nurl = \"https://sub.example.com/x/abcd\"\napp = \"happ\"\nplatform = \"windows\"\n",
+    );
     assert_eq!(list.len(), 1, "{list:?}");
     assert!(has(&list, "subscription[0].name"), "{list:?}");
 }
@@ -562,7 +591,10 @@ fn syntax_and_type_errors() {
     let unknown = Config::from_toml_str("[[subscriptions]]\nname = \"a\"\n", &Env::new());
     let message = unknown.unwrap_err().to_string();
     assert!(message.contains("не удалось разобрать"), "{message}");
-    assert!(message.contains("неизвестный ключ `subscriptions`"), "{message}");
+    assert!(
+        message.contains("неизвестный ключ `subscriptions`"),
+        "{message}"
+    );
 
     let unknown = Config::from_toml_str(&format!("{OK_SUB}\n[log]\nlvl = \"info\"\n"), &Env::new());
     let message = unknown.unwrap_err().to_string();
@@ -571,19 +603,24 @@ fn syntax_and_type_errors() {
     let broken = Config::from_toml_str("[[subscription]\n", &Env::new());
     assert!(matches!(broken, Err(Error::Parse(_))));
 
-    let duplicate = Config::from_toml_str("[log]\nlevel = \"info\"\nlevel = \"debug\"\n", &Env::new());
+    let duplicate =
+        Config::from_toml_str("[log]\nlevel = \"info\"\nlevel = \"debug\"\n", &Env::new());
     assert!(matches!(duplicate, Err(Error::Parse(_))));
 }
 
 #[test]
 fn type_errors_do_not_echo_values() {
     let text = "[device]\nseed = 123456789\n";
-    let message = Config::from_toml_str(text, &Env::new()).unwrap_err().to_string();
+    let message = Config::from_toml_str(text, &Env::new())
+        .unwrap_err()
+        .to_string();
     assert!(message.contains("строка 2 (seed)"), "{message}");
     assert!(!message.contains("123456789"), "{message}");
 
     let text = format!("{OK_SUB}\n[selection]\nfailures = \"SECRETVALUE\"\n");
-    let message = Config::from_toml_str(&text, &Env::new()).unwrap_err().to_string();
+    let message = Config::from_toml_str(&text, &Env::new())
+        .unwrap_err()
+        .to_string();
     assert!(message.contains("(failures)"), "{message}");
     assert!(!message.contains("SECRETVALUE"), "{message}");
 }
@@ -598,7 +635,10 @@ fn oversized_files_are_refused() {
 #[test]
 fn environment_without_a_file() {
     let vars = env(&[
-        ("RAYCAT_SUBSCRIPTION", "https://sub.example.com/api/sub/ZzZz0001"),
+        (
+            "RAYCAT_SUBSCRIPTION",
+            "https://sub.example.com/api/sub/ZzZz0001",
+        ),
         ("RAYCAT_APP", "happ"),
         ("RAYCAT_PLATFORM", "android"),
         ("RAYCAT_SEED", "docker seed"),
@@ -647,7 +687,10 @@ fn environment_listen_for_the_proxy() {
 #[test]
 fn environment_overrides_the_file() {
     let vars = env(&[
-        ("RAYCAT_SUBSCRIPTION", "https://other.example.org/x/ZzZz0002"),
+        (
+            "RAYCAT_SUBSCRIPTION",
+            "https://other.example.org/x/ZzZz0002",
+        ),
         ("RAYCAT_APP", "INCY"),
         ("RAYCAT_PLATFORM", "android"),
         ("RAYCAT_SEED", "env seed"),
@@ -696,9 +739,7 @@ fn environment_kill_switch_over_the_file() {
 
 #[test]
 fn environment_seed_replaces_the_file_machine_id() {
-    let file = format!(
-        "[device]\nmachine_id = \"00000000000000000000000000000000\"\n{OK_SUB}"
-    );
+    let file = format!("[device]\nmachine_id = \"00000000000000000000000000000000\"\n{OK_SUB}");
     let config = Config::from_toml_str(&file, &env(&[("RAYCAT_SEED", "env seed")])).unwrap();
     assert!(config.device.machine_id.is_none());
     assert_eq!(config.device.seed.unwrap().expose(), "env seed");
@@ -752,7 +793,10 @@ fn environment_errors_name_the_variable() {
     }
     assert!(has(&list, "subscription[0].app"), "{list:?}");
     assert!(has(&list, "subscription[0].platform"), "{list:?}");
-    assert!(list.iter().all(|line| !line.contains("ZzZz0003")), "{list:?}");
+    assert!(
+        list.iter().all(|line| !line.contains("ZzZz0003")),
+        "{list:?}"
+    );
 }
 
 #[test]
@@ -766,7 +810,10 @@ fn environment_subscription_is_checked_and_masked() {
     assert_eq!(list.len(), 2, "{list:?}");
     assert!(has(&list, "subscription[0].url"), "{list:?}");
     assert!(has(&list, "subscription[0].platform"), "{list:?}");
-    assert!(list.iter().all(|line| !line.contains("ZzZz0004")), "{list:?}");
+    assert!(
+        list.iter().all(|line| !line.contains("ZzZz0004")),
+        "{list:?}"
+    );
     assert!(list[0].contains("…0004"), "{list:?}");
 }
 
@@ -807,8 +854,8 @@ fn file_errors() {
     assert!(matches!(error, Error::Read { .. }), "{error:?}");
     assert!(error.to_string().contains("не удалось прочитать"));
 
-    let error = Config::load(None, &env(&[("RAYCAT_CONFIG", "/nonexistent/raycat.toml")]))
-        .unwrap_err();
+    let error =
+        Config::load(None, &env(&[("RAYCAT_CONFIG", "/nonexistent/raycat.toml")])).unwrap_err();
     assert!(matches!(error, Error::Read { .. }), "{error:?}");
 
     let binary = temp_file("binary", &[0xff, 0xfe, 0x00, 0x80]);

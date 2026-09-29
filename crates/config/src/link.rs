@@ -75,9 +75,9 @@ fn check_authority(authority: &str) -> Result<(), &'static str> {
 /// `https://хост/…abcd`: хост и четыре последних символа пути, без запроса.
 pub(crate) fn mask(url: &str) -> String {
     let url = url.trim();
-    let split = url
-        .split_once("://")
-        .filter(|(scheme, _)| !scheme.is_empty() && scheme.chars().all(|c| c.is_ascii_alphabetic()));
+    let split = url.split_once("://").filter(|(scheme, _)| {
+        !scheme.is_empty() && scheme.chars().all(|c| c.is_ascii_alphabetic())
+    });
     let Some((scheme, rest)) = split else {
         return format!("…{}", tail(url));
     };
@@ -140,14 +140,23 @@ mod tests {
             mask("https://sub.example.com/api/sub/AbCdEfGh1234?x=secretquery"),
             "https://sub.example.com/…1234"
         );
-        assert_eq!(mask("HTTP://Example.com:8080/tok"), "http://Example.com:8080/…/tok");
+        assert_eq!(
+            mask("HTTP://Example.com:8080/tok"),
+            "http://Example.com:8080/…/tok"
+        );
         assert_eq!(mask("https://example.com"), "https://example.com/…");
-        assert_eq!(mask("https://example.com/?token=abcdef"), "https://example.com/…/");
+        assert_eq!(
+            mask("https://example.com/?token=abcdef"),
+            "https://example.com/…/"
+        );
         assert_eq!(
             mask("https://user:secret@example.com/x/abcd"),
             "https://example.com/…abcd"
         );
-        assert_eq!(mask("  https://example.com/sub/wxyz#frag "), "https://example.com/…wxyz");
+        assert_eq!(
+            mask("  https://example.com/sub/wxyz#frag "),
+            "https://example.com/…wxyz"
+        );
     }
 
     #[test]

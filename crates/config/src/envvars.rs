@@ -61,10 +61,24 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
         raw.device.machine_id = None;
     }
     if let Some(mode) = get(MODE) {
-        set_text(&mut raw.mode.kind, MODE, mode, parse_mode_kind, MODE_HINT, p);
+        set_text(
+            &mut raw.mode.kind,
+            MODE,
+            mode,
+            parse_mode_kind,
+            MODE_HINT,
+            p,
+        );
     }
     if let Some(listen) = get(LISTEN) {
-        set_text(&mut raw.mode.listen, LISTEN, listen, parse_listen, LISTEN_HINT, p);
+        set_text(
+            &mut raw.mode.listen,
+            LISTEN,
+            listen,
+            parse_listen,
+            LISTEN_HINT,
+            p,
+        );
     }
     if let Some(flag) = get(KILL_SWITCH) {
         match parse_bool(flag) {

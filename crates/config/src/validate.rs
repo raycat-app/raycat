@@ -11,9 +11,7 @@ use crate::model::{
     Subscription, Xray,
 };
 use crate::pattern::Pattern;
-use crate::raw::{
-    Raw, RawDevice, RawDns, RawLog, RawMode, RawRouting, RawSelection, RawSubscription, RawXray,
-};
+use crate::raw::{Raw, RawDevice, RawDns, RawLog, RawMode, RawSelection, RawSubscription, RawXray};
 use crate::units::{format_duration, format_size, parse_duration, parse_size};
 
 const MAX_NAME_CHARS: usize = 64;
@@ -28,8 +26,7 @@ const UPDATE_INTERVAL_RANGE: RangeInclusive<Duration> =
     Duration::from_secs(10 * 60)..=Duration::from_secs(30 * 86_400);
 const CHECK_INTERVAL_RANGE: RangeInclusive<Duration> =
     Duration::from_secs(5)..=Duration::from_secs(10 * 60);
-const SWITCH_GAIN_RANGE: RangeInclusive<Duration> =
-    Duration::ZERO..=Duration::from_secs(60);
+const SWITCH_GAIN_RANGE: RangeInclusive<Duration> = Duration::ZERO..=Duration::from_secs(60);
 const RETURN_DELAY_RANGE: RangeInclusive<Duration> =
     Duration::ZERO..=Duration::from_secs(24 * 3_600);
 const FAILURES_RANGE: RangeInclusive<u32> = 1..=20;
@@ -230,7 +227,12 @@ fn subscription(
 ) -> Option<Subscription> {
     let at = |key: &str| format!("subscription[{index}].{key}");
     let name = name(&at("name"), raw.name.as_deref(), names, p);
-    let url = url_field(&at("url"), raw.url.as_deref(), raw.allow_http == Some(true), p);
+    let url = url_field(
+        &at("url"),
+        raw.url.as_deref(),
+        raw.allow_http == Some(true),
+        p,
+    );
     let app = required(&at("app"), raw.app.as_deref(), parse_app, APP_HINT, p);
     let platform = required(
         &at("platform"),
@@ -282,7 +284,10 @@ fn name(
         return None;
     }
     if value.chars().any(char::is_control) || value.contains('/') {
-        p.add(field, "в имени нельзя использовать управляющие символы и «/»");
+        p.add(
+            field,
+            "в имени нельзя использовать управляющие символы и «/»",
+        );
         return None;
     }
     if !names.insert(value.to_owned()) {
@@ -491,8 +496,9 @@ fn mode(raw: &RawMode, p: &mut Problems) -> Mode {
     };
     let listen = match raw.listen.as_deref() {
         None => DEFAULT_LISTEN,
-        Some(value) => parsed("mode.listen", value, parse_listen, LISTEN_HINT, p)
-            .unwrap_or(DEFAULT_LISTEN),
+        Some(value) => {
+            parsed("mode.listen", value, parse_listen, LISTEN_HINT, p).unwrap_or(DEFAULT_LISTEN)
+        }
     };
     match kind {
         Some(ModeKind::Gateway) => Mode::Gateway {
@@ -522,7 +528,13 @@ fn dns(raw: &RawDns, p: &mut Problems) -> Dns {
         .iter()
         .enumerate()
         .filter_map(|(index, value)| {
-            parsed(&format!("dns.resolvers[{index}]"), value, parse_ip, IP_HINT, p)
+            parsed(
+                &format!("dns.resolvers[{index}]"),
+                value,
+                parse_ip,
+                IP_HINT,
+                p,
+            )
         })
         .collect();
     Dns { resolvers }

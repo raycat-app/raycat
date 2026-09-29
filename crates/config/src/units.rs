@@ -92,7 +92,9 @@ mod tests {
 
     #[test]
     fn bad_durations() {
-        for bad in ["", " ", "30", "s", "5x", "1.5h", "-5m", "5 m", "1h 30m", "мин"] {
+        for bad in [
+            "", " ", "30", "s", "5x", "1.5h", "-5m", "5 m", "1h 30m", "мин",
+        ] {
             assert_eq!(parse_duration(bad), None, "{bad:?}");
         }
         assert_eq!(parse_duration("99999999999999999999s"), None);
