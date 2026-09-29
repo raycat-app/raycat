@@ -1,0 +1,23 @@
+name: Предложение
+description: Новая возможность или доработка
+labels: [улучшение]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Задача
+      description: Какую задачу вы решаете и чем мешает текущее поведение.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Как это могло бы работать
+      description: Команда, настройка или поведение, которое решило бы задачу.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Обходные пути
+      description: Что вы пробовали вместо этого.

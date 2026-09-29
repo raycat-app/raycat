@@ -1,0 +1,13 @@
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
+
+[target.armv7-unknown-linux-musleabihf]
+linker = "rust-lld"
+
+[env]
+CC_x86_64_unknown_linux_musl = "clang"
+CFLAGS_x86_64_unknown_linux_musl = "--target=x86_64-linux-musl"
+CC_aarch64_unknown_linux_musl = "clang"
+CFLAGS_aarch64_unknown_linux_musl = "--target=aarch64-linux-musl"
+CC_armv7_unknown_linux_musleabihf = "clang"
+CFLAGS_armv7_unknown_linux_musleabihf = "--target=armv7-linux-musleabihf"

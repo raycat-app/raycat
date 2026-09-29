@@ -1,0 +1,47 @@
+name: Ошибка
+description: raycat работает не так, как описано в документации
+labels: [ошибка]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо, что сообщаете! **Никогда не публикуйте ссылку подписки**: это ваш пароль.
+        Уязвимости присылайте не сюда, а приватно (см. SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Версия
+      description: Вывод `raycat --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Как установлен
+      options:
+        - Docker (шлюз для контейнеров)
+        - Docker (прокси)
+        - systemd (весь хост)
+        - Другое
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Система
+      description: Дистрибутив и архитектура, например «Debian 13, arm64 (Raspberry Pi 4)»
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: Что произошло
+      description: Что вы делали, что ожидали увидеть и что увидели на самом деле.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи
+      description: Вывод `raycat logs` за время ошибки. Проверьте, что в нём нет ссылки подписки.
+      render: text

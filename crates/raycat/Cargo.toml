@@ -1,0 +1,16 @@
+[package]
+name = "raycat"
+description = "Серверный клиент VPN-подписок: шлюз и прокси для хоста и Docker-контейнеров"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+clap.workspace = true
+
+[lints]
+workspace = true
