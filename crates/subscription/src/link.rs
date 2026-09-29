@@ -182,7 +182,7 @@ fn vmess(rest: &str, warnings: &mut Vec<String>) -> Result<Built, String> {
     if head.contains('@') {
         vmess_standard(rest, warnings)
     } else {
-        vmess_legacy(rest, head, warnings)
+        vmess_legacy(head, warnings)
     }
 }
 
@@ -208,7 +208,7 @@ fn vmess_standard(rest: &str, warnings: &mut Vec<String>) -> Result<Built, Strin
 }
 
 /// `vmess://base64(JSON)` — формат v2rayN.
-fn vmess_legacy(rest: &str, head: &str, warnings: &mut Vec<String>) -> Result<Built, String> {
+fn vmess_legacy(head: &str, warnings: &mut Vec<String>) -> Result<Built, String> {
     let bytes = decode_base64(head).ok_or_else(|| "данные vmess не в формате base64".to_owned())?;
     let data: Value =
         serde_json::from_slice(&bytes).map_err(|_| "данные vmess не являются JSON".to_owned())?;
