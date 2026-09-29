@@ -70,9 +70,7 @@ pub(crate) fn resolve(
     }
     if found.is_empty() {
         return Err(match last_err {
-            Some(e) => anyhow!(e).context(format!(
-                "разрешение имени {host} (серверы {servers:?})"
-            )),
+            Some(e) => anyhow!(e).context(format!("разрешение имени {host} (серверы {servers:?})")),
             None => anyhow!("у {host} нет адресов"),
         });
     }
@@ -188,9 +186,7 @@ fn lookup_tcp(
     tcp.read_exact(&mut answer)?;
     parse_answer(&answer, query, qtype).map_err(|e| match e {
         Answer::Bad(e) => io::Error::other(e),
-        Answer::Mismatch | Answer::Truncated => {
-            io::Error::other("неожиданный ответ DNS по TCP")
-        }
+        Answer::Mismatch | Answer::Truncated => io::Error::other("неожиданный ответ DNS по TCP"),
     })
 }
 

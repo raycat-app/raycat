@@ -278,10 +278,7 @@ fn connects_through_a_proxy() {
         connect,
         b"CONNECT 203.0.113.7:8080 HTTP/1.1\r\nHost: 203.0.113.7:8080\r\n\r\n"
     );
-    assert_eq!(
-        inner,
-        b"GET /x HTTP/1.1\r\nHost: 203.0.113.7:8080\r\n\r\n"
-    );
+    assert_eq!(inner, b"GET /x HTTP/1.1\r\nHost: 203.0.113.7:8080\r\n\r\n");
 }
 
 #[test]

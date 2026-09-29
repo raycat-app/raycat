@@ -213,9 +213,7 @@ fn split_host_port(authority: &str) -> Result<(&str, Option<u16>)> {
         }
     };
     let port = match port {
-        Some(p) if !p.is_empty() => {
-            Some(p.parse().map_err(|_| anyhow!("неверный порт в ссылке"))?)
-        }
+        Some(p) if !p.is_empty() => Some(p.parse().map_err(|_| anyhow!("неверный порт в ссылке"))?),
         _ => None,
     };
     Ok((host, port))
