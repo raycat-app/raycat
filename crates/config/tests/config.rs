@@ -518,7 +518,10 @@ fn bad_links_are_masked_in_errors() {
         assert_eq!(list.len(), 1, "ссылка №{i}");
         assert!(has(&list, "subscription[0].url"), "ссылка №{i}");
         assert!(list[0].contains("…9999"), "ссылка №{i}");
-        assert!(!list[0].contains("SECRETTOKEN"), "ссылка №{i} не замаскирована");
+        assert!(
+            !list[0].contains("SECRETTOKEN"),
+            "ссылка №{i} не замаскирована"
+        );
         assert!(!list[0].contains("pass"), "ссылка №{i}: виден пароль");
     }
 }
@@ -618,14 +621,20 @@ fn type_errors_do_not_echo_values() {
         .unwrap_err()
         .to_string();
     assert!(message.contains("строка 2 (seed)"));
-    assert!(!message.contains("123456789"), "значение попало в сообщение");
+    assert!(
+        !message.contains("123456789"),
+        "значение попало в сообщение"
+    );
 
     let text = format!("{OK_SUB}\n[selection]\nfailures = \"SECRETVALUE\"\n");
     let message = Config::from_toml_str(&text, &Env::new())
         .unwrap_err()
         .to_string();
     assert!(message.contains("(failures)"));
-    assert!(!message.contains("SECRETVALUE"), "значение попало в сообщение");
+    assert!(
+        !message.contains("SECRETVALUE"),
+        "значение попало в сообщение"
+    );
 }
 
 #[test]
