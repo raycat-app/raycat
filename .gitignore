@@ -19,6 +19,7 @@
 !/rustfmt.toml
 !/SECURITY.md
 !/typos.toml
+!/versions.toml
 
 target/
 *.rs.bk
