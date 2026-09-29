@@ -249,7 +249,7 @@ fn encrypt(plain: &[u8], key: &[u8; 16]) -> (String, String) {
 
 #[test]
 fn encrypted_response() {
-    let key = *b"0123456789abcdef";
+    let key: [u8; 16] = std::array::from_fn(|index| u8::try_from(index).unwrap_or(0) * 3 + 1);
     let (body, tag) = encrypt(link_list().as_bytes(), &key);
     let response = headers(&[("Encrypt-Tag", tag.as_str()), ("profile-title", "VPN")]);
 
@@ -261,7 +261,7 @@ fn encrypted_response() {
     assert!(decrypted.problem.is_none(), "{:?}", decrypted.problem);
     assert_eq!(decrypted.nodes.len(), 4);
 
-    let wrong = analyze_with_key(200, &response, body.as_bytes(), b"fedcba9876543210");
+    let wrong = analyze_with_key(200, &response, body.as_bytes(), &[9; 16]);
     assert!(matches!(wrong.problem, Some(Problem::Encrypted(_))));
 }
 

@@ -62,7 +62,9 @@ mod tests {
 
     use super::*;
 
-    const KEY: [u8; 16] = *b"0123456789abcdef";
+    fn key() -> [u8; 16] {
+        std::array::from_fn(|index| u8::try_from(index).unwrap_or(0) * 3 + 1)
+    }
 
     fn encrypt(plain: &[u8], key: &[u8; 16]) -> (String, String) {
         let cipher = Aes128Gcm::new_from_slice(key).unwrap();
@@ -75,33 +77,33 @@ mod tests {
     fn round_trip() {
         let plain =
             "vless://00000000-0000-0000-0000-000000000000@a.example.com:443#Узел".as_bytes();
-        let (body, tag) = encrypt(plain, &KEY);
-        assert_eq!(decrypt_body(body.as_bytes(), &tag, &KEY).unwrap(), plain);
+        let (body, tag) = encrypt(plain, &key());
+        assert_eq!(decrypt_body(body.as_bytes(), &tag, &key()).unwrap(), plain);
     }
 
     #[test]
     fn base64_variants_of_body_and_tag() {
         let plain = b"[{\"remarks\": \"x\"}]";
-        let (body, tag) = encrypt(plain, &KEY);
+        let (body, tag) = encrypt(plain, &key());
         let raw_body = STANDARD.decode(&body).unwrap();
         let raw_tag = STANDARD.decode(&tag).unwrap();
         let url_body = URL_SAFE_NO_PAD.encode(&raw_body);
         let url_tag = URL_SAFE_NO_PAD.encode(&raw_tag);
         assert_eq!(
-            decrypt_body(url_body.as_bytes(), &url_tag, &KEY).unwrap(),
+            decrypt_body(url_body.as_bytes(), &url_tag, &key()).unwrap(),
             plain
         );
         let wrapped = format!("{}\r\n{}\r\n", &body[..4], &body[4..]);
         assert_eq!(
-            decrypt_body(wrapped.as_bytes(), &format!(" {tag} "), &KEY).unwrap(),
+            decrypt_body(wrapped.as_bytes(), &format!(" {tag} "), &key()).unwrap(),
             plain
         );
     }
 
     #[test]
     fn failures() {
-        let (body, tag) = encrypt(b"secret", &KEY);
-        let mut wrong_key = KEY;
+        let (body, tag) = encrypt(b"secret", &key());
+        let mut wrong_key = key();
         wrong_key[0] ^= 1;
         assert_eq!(
             decrypt_body(body.as_bytes(), &tag, &wrong_key),
@@ -112,22 +114,22 @@ mod tests {
         damaged[0] ^= 1;
         let damaged = STANDARD.encode(damaged);
         assert_eq!(
-            decrypt_body(damaged.as_bytes(), &tag, &KEY),
+            decrypt_body(damaged.as_bytes(), &tag, &key()),
             Err(DecryptError::Verify)
         );
 
-        assert_eq!(decrypt_body(b"!!!", &tag, &KEY), Err(DecryptError::Body));
+        assert_eq!(decrypt_body(b"!!!", &tag, &key()), Err(DecryptError::Body));
         assert_eq!(
-            decrypt_body(&[0xff, 0xfe], &tag, &KEY),
+            decrypt_body(&[0xff, 0xfe], &tag, &key()),
             Err(DecryptError::Body)
         );
-        assert_eq!(decrypt_body(b"", &tag, &KEY), Err(DecryptError::Body));
+        assert_eq!(decrypt_body(b"", &tag, &key()), Err(DecryptError::Body));
         assert_eq!(
-            decrypt_body(body.as_bytes(), "AAAA", &KEY),
+            decrypt_body(body.as_bytes(), "AAAA", &key()),
             Err(DecryptError::Tag)
         );
         assert_eq!(
-            decrypt_body(body.as_bytes(), "", &KEY),
+            decrypt_body(body.as_bytes(), "", &key()),
             Err(DecryptError::Tag)
         );
     }
