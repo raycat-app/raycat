@@ -1,0 +1,10 @@
+app = "happ"
+platform = "windows"
+arch = "x64"
+url = "http://127.0.0.1:{PORT}/sub/abc"
+# 2026-09-28 12:00 UTC: чётное число по Москве, маркер «6» как в захвате.
+unix = 1_790_596_800
+machine_id = "0d0af05ee8fd4dc29275718f2ce4dff1"
+hwid = "a3ee4d8e-7e6c-4c32-9490-f157ef0ceea8"
+hostname = "runnervm99s1a"
+locale = "en"
