@@ -54,14 +54,14 @@ use anyhow::{Result, bail};
 
 use device::windows_computer_name;
 use locale::Locale;
-use profile::{Build, Profile};
+use profile::{Profile, Release};
 use template::Values;
 
 /// Профиль клиента вместе с данными устройства: строит запросы подписки.
 #[derive(Debug, Clone)]
 pub struct Emulation {
     profile: Profile,
-    build: Build,
+    build: Release,
     hwid: String,
     os_version: String,
     model: String,

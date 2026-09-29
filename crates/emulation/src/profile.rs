@@ -102,7 +102,7 @@ impl Marker {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Build {
+pub(crate) struct Release {
     pub(crate) build: String,
     pub(crate) tail: String,
     pub(crate) cpu: Option<String>,
@@ -120,7 +120,7 @@ pub(crate) struct Profile {
     pub(crate) model: Template,
     pub(crate) hwid: HwidAlgorithm,
     pub(crate) locale: LocaleRule,
-    builds: BTreeMap<String, Build>,
+    builds: BTreeMap<String, Release>,
     pub(crate) headers: Vec<(String, Template)>,
 }
 
@@ -173,7 +173,7 @@ impl Profile {
     }
 
     /// Сборка для архитектуры; профиль без разбивки по архитектурам подходит всем.
-    pub(crate) fn build_for(&self, arch: Arch) -> Result<&Build> {
+    pub(crate) fn build_for(&self, arch: Arch) -> Result<&Release> {
         self.builds
             .get(arch.as_str())
             .or_else(|| self.builds.get(ANY_ARCH))
@@ -272,7 +272,7 @@ impl Profile {
     }
 }
 
-fn validate_builds(raw: BTreeMap<String, RawBuild>) -> Result<BTreeMap<String, Build>> {
+fn validate_builds(raw: BTreeMap<String, RawBuild>) -> Result<BTreeMap<String, Release>> {
     if raw.is_empty() {
         bail!("не задана ни одна сборка [builds.*]");
     }
@@ -287,7 +287,7 @@ fn validate_builds(raw: BTreeMap<String, RawBuild>) -> Result<BTreeMap<String, B
         }
         builds.insert(
             key,
-            Build {
+            Release {
                 build: build.build,
                 tail: build.tail,
                 cpu: build.cpu,
