@@ -188,10 +188,37 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+  xray-config:
+    name: Проверка конфигов xray
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Скачивание xray
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' versions.toml)
+          sha256=$(sed -n 's/^x86_64 = "\(.*\)"/\1/p' versions.toml)
+          test -n "$version" && test -n "$sha256"
+          archive="Xray-linux-64.zip"
+          curl -fsSLO "https://github.com/XTLS/Xray-core/releases/download/v${version}/${archive}"
+          echo "${sha256}  ${archive}" | sha256sum -c -
+          unzip -q "$archive" xray
+          ./xray version
+      - name: xray run -test
+        run: |
+          for config in crates/xray/tests/golden/*.json; do
+            echo "::group::${config}"
+            ./xray run -test -c "$config"
+            echo "::endgroup::"
+          done
+
   result:
     name: Итог
     if: ${{ always() }}
-    needs: [lint, lockfile, test, msrv, deny, workflows, build]
+    needs: [lint, lockfile, test, msrv, deny, workflows, build, xray-config]
     runs-on: ubuntu-24.04
     permissions: {}
     steps:
