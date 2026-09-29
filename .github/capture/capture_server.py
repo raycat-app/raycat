@@ -12,6 +12,7 @@ import argparse
 import base64
 import os
 import socketserver
+import ssl
 import sys
 import threading
 import time
@@ -77,12 +78,18 @@ def main():
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=18080)
     parser.add_argument("--out", default="captures")
+    parser.add_argument("--cert", help="сертификат сервера (PEM): включает HTTPS")
+    parser.add_argument("--key", help="ключ сертификата (PEM)")
     args = parser.parse_args()
     # Кодировка Windows-консоли по умолчанию не знает русских букв, и сервер падал при старте.
     sys.stdout.reconfigure(encoding="utf-8")
     os.makedirs(args.out, exist_ok=True)
     server = Server((args.host, args.port), Handler)
     server.out = args.out
+    if args.cert:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(args.cert, args.key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
     print(f"запись на {args.host}:{args.port} в {args.out}", flush=True)
     server.serve_forever()
 

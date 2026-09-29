@@ -3,6 +3,7 @@
 # приложения «добавить подписку» на capture_server.py хоста, нажимает диалоги и
 # сохраняет снимки экрана и дампы интерфейса рядом с пойманными запросами.
 #   APK=Happ.apk SCHEME=happ HOSTS='10.0.2.2' OUT=captures bash android.sh
+# CA_CERT и PROTO=https: приложение принимает подписку только по HTTPS (см. certs.sh).
 # HOSTS: адреса сервера, которые пробуются по очереди до первого захвата (из эмулятора
 # хост виден как 10.0.2.2; 127.0.0.1 и localhost работают через adb reverse).
 set -u
@@ -50,6 +51,29 @@ if [ -n "$aapt" ]; then
   done
 fi
 pkg=$(grep -o "package: name='[^']*'" "$out/apk-info.txt" 2>/dev/null | cut -d"'" -f2)
+if [ -n "${CA_CERT:-}" ]; then
+  # Корневой ЦС попадает в системное хранилище: в Android 14 оно лежит в APEX, поэтому
+  # каталог подменяется tmpfs и подключается в пространство имён zygote (новые процессы
+  # приложений наследуют его).
+  hash=$(openssl x509 -inform PEM -subject_hash_old -in "$CA_CERT" | head -1)
+  adb root >/dev/null && adb wait-for-device
+  adb push "$CA_CERT" "/data/local/tmp/$hash.0" >/dev/null
+  adb shell "
+    set -e
+    mkdir -m 700 /data/local/tmp/ca-copy
+    cp /apex/com.android.conscrypt/cacerts/* /data/local/tmp/ca-copy/
+    mount -t tmpfs tmpfs /system/etc/security/cacerts
+    cp /data/local/tmp/ca-copy/* /system/etc/security/cacerts/
+    cp /data/local/tmp/$hash.0 /system/etc/security/cacerts/
+    chown root:root /system/etc/security/cacerts/*
+    chmod 644 /system/etc/security/cacerts/*
+    chcon u:object_r:system_file:s0 /system/etc/security/cacerts/*
+    for pid in 1 \$(pidof zygote) \$(pidof zygote64); do
+      nsenter --mount=/proc/\$pid/ns/mnt -- /bin/mount --bind /system/etc/security/cacerts /apex/com.android.conscrypt/cacerts
+    done
+    ls /apex/com.android.conscrypt/cacerts | grep -c $hash
+  " 2>&1 | tee "$out/ca-install.txt"
+fi
 adb install -r -g "$APK" 2>&1 | tail -2
 adb reverse "tcp:$port" "tcp:$port" >/dev/null 2>&1
 adb shell getprop ro.product.model >"$out/device.txt"
@@ -67,7 +91,7 @@ snap onboarding
 
 for host in $HOSTS; do
   captured && break
-  adb shell am start -a android.intent.action.VIEW -d "$SCHEME://add/http://$host:$port/sub/capture-android" 2>&1 | tail -1
+  adb shell am start -a android.intent.action.VIEW -d "$SCHEME://add/${PROTO:-http}://$host:$port/sub/capture-android" 2>&1 | tail -1
   sleep 12
   snap "deeplink-$host"
   for _ in 1 2 3; do

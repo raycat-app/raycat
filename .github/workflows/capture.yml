@@ -93,7 +93,7 @@ jobs:
       matrix:
         include:
           - {app: Happ, repo: Happ-proxy/happ-android, asset: Happ.apk, scheme: happ, hosts: 10.0.2.2, requested: "${{ inputs.happ_android }}"}
-          - {app: INCY, repo: INCY-DEV/incy-platforms, asset: Incy.apk, scheme: incy, hosts: "127.0.0.1 localhost 10.0.2.2", requested: "${{ inputs.incy_android }}"}
+          - {app: INCY, repo: INCY-DEV/incy-platforms, asset: Incy.apk, scheme: incy, hosts: "127.0.0.1 localhost 10.0.2.2", tls: true, requested: "${{ inputs.incy_android }}"}
           # Нечётное число по Москве: маркер дня в User-Agent должен смениться.
           - {app: Happ, repo: Happ-proxy/happ-android, asset: Happ.apk, scheme: happ, hosts: 10.0.2.2, requested: "${{ inputs.happ_android }}", date: "092912002026.00"}
     steps:
@@ -123,13 +123,24 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
       - name: Сервер захвата
-        run: python3 .github/capture/capture_server.py --port 18080 --out captures > server.log 2>&1 &
+        env:
+          TLS: ${{ matrix.tls }}
+          TLS_DIR: ${{ runner.temp }}/capture-tls
+        run: |
+          args=()
+          if [ -n "$TLS" ]; then
+            bash .github/capture/certs.sh "$TLS_DIR"
+            args=(--cert "$TLS_DIR/server.pem" --key "$TLS_DIR/server.key")
+          fi
+          python3 .github/capture/capture_server.py --port 18080 --out captures "${args[@]}" > server.log 2>&1 &
       - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         env:
           APK: ${{ matrix.asset }}
           DATE: ${{ matrix.date }}
           SCHEME: ${{ matrix.scheme }}
           HOSTS: ${{ matrix.hosts }}
+          PROTO: ${{ matrix.tls && 'https' || 'http' }}
+          CA_CERT: ${{ matrix.tls && format('{0}/capture-tls/ca.pem', runner.temp) || '' }}
           OUT: captures
         with:
           api-level: 34
