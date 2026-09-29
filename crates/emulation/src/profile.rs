@@ -505,7 +505,8 @@ value = "{accept_language}"
                 .contains("платформа")
         );
         assert!(error_of(&VALID.replace("[builds.x64]", "[builds.mips]")).contains("mips"));
-        assert!(Profile::parse(&VALID.replace("version =", "versoin =")).is_err());
+        assert!(Profile::parse(&format!("{VALID}\nextra = 1\n")).is_err());
+        assert!(Profile::parse(&VALID.replace("version = \"1.0.0\"\n", "")).is_err());
         assert!(Profile::parse("").is_err());
     }
 
