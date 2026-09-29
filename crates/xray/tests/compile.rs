@@ -1,3 +1,6 @@
+// Хелперы тестов не покрыты allow-unwrap-in-tests: там ошибка и есть падение теста.
+#![allow(clippy::unwrap_used)]
+
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::Path;
 use std::time::Duration;
