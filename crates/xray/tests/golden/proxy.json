@@ -80,8 +80,14 @@
           "shortId": "0000000000000000",
           "spiderX": "/"
         },
-        "sockopt": {"domainStrategy": "UseIPv4"}
+        "sockopt": {"dialerProxy": "node-001-x-fragment", "domainStrategy": "UseIPv4"}
       }
+    },
+    {
+      "tag": "node-001-x-fragment",
+      "protocol": "freedom",
+      "settings": {"fragment": {"packets": "tlshello", "length": "100-200", "interval": "10-20"}},
+      "streamSettings": {"sockopt": {"domainStrategy": "UseIPv4"}}
     },
     {
       "tag": "node-002-main",

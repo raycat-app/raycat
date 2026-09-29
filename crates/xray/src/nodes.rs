@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 
 use serde_json::{Map, Value};
@@ -15,6 +15,10 @@ pub(crate) struct CompiledNode {
 
 /// Переименовывает теги узла, правит ссылки цепочки и добавляет `sockopt`.
 ///
+/// Служебный outbound (`freedom`, `blackhole`, `dns`, `loopback`) остаётся в узле,
+/// только если на него ссылается цепочка (так провайдеры делают фрагментацию), иначе
+/// выбрасывается.
+///
 /// `None` — узел непригоден: первый outbound служебный или не объект либо ссылка
 /// цепочки указывает на отсутствующий тег. Половина цепочки хуже её отсутствия:
 /// трафик пошёл бы в обход промежуточного сервера.
@@ -22,13 +26,26 @@ pub(crate) fn compile_node(number: usize, node: &Node, mark: Option<u32>) -> Opt
     let prefix = format!("node-{number:03}");
     let main_tag = format!("{prefix}-main");
 
+    let first = node.outbounds.first()?.as_object()?;
+    if protocol(first).is_none() || is_service(first) {
+        return None;
+    }
+    let objects: Vec<&Map<String, Value>> =
+        node.outbounds.iter().filter_map(Value::as_object).collect();
+    let referenced = referenced_tags(&objects);
+    let wanted = |outbound: &Map<String, Value>| {
+        protocol(outbound).is_some()
+            && (!is_service(outbound)
+                || outbound
+                    .get("tag")
+                    .and_then(Value::as_str)
+                    .is_some_and(|tag| referenced.contains(tag)))
+    };
+
     let mut renames: HashMap<&str, String> = HashMap::new();
     let mut kept: Vec<(String, &Map<String, Value>)> = Vec::new();
     for (index, value) in node.outbounds.iter().enumerate() {
-        let Some(outbound) = value.as_object().filter(|o| !is_service(o)) else {
-            if index == 0 {
-                return None;
-            }
+        let Some(outbound) = value.as_object().filter(|o| wanted(o)) else {
             continue;
         };
         let old_tag = outbound.get("tag").and_then(Value::as_str);
@@ -48,10 +65,6 @@ pub(crate) fn compile_node(number: usize, node: &Node, mark: Option<u32>) -> Opt
         kept.push((new_tag, outbound));
     }
 
-    if kept.is_empty() {
-        return None;
-    }
-
     let mut outbounds = Vec::with_capacity(kept.len());
     let mut hosts = Vec::new();
     for (tag, outbound) in kept {
@@ -65,11 +78,43 @@ pub(crate) fn compile_node(number: usize, node: &Node, mark: Option<u32>) -> Opt
     })
 }
 
+fn protocol(outbound: &Map<String, Value>) -> Option<&str> {
+    outbound.get("protocol").and_then(Value::as_str)
+}
+
 fn is_service(outbound: &Map<String, Value>) -> bool {
+    protocol(outbound).is_some_and(|name| SERVICE_PROTOCOLS.contains(&name))
+}
+
+/// Тег, на который outbound ссылается как на предыдущий шаг цепочки.
+fn chain_ref(outbound: &Map<String, Value>) -> Option<&str> {
     outbound
-        .get("protocol")
+        .get("streamSettings")
+        .and_then(|stream| stream.get("sockopt"))
+        .and_then(|sockopt| sockopt.get("dialerProxy"))
+        .or_else(|| outbound.get("proxySettings").and_then(|p| p.get("tag")))
         .and_then(Value::as_str)
-        .is_none_or(|protocol| SERVICE_PROTOCOLS.contains(&protocol))
+}
+
+/// Теги, достижимые по цепочке от неслужебных outbound'ов (и от служебных,
+/// которые сами оказались в цепочке).
+fn referenced_tags<'a>(outbounds: &[&'a Map<String, Value>]) -> HashSet<&'a str> {
+    let mut referenced: HashSet<&str> = HashSet::new();
+    loop {
+        let before = referenced.len();
+        for &outbound in outbounds {
+            let in_chain = outbound
+                .get("tag")
+                .and_then(Value::as_str)
+                .is_some_and(|tag| referenced.contains(tag));
+            if !is_service(outbound) || in_chain {
+                referenced.extend(chain_ref(outbound));
+            }
+        }
+        if referenced.len() == before {
+            return referenced;
+        }
+    }
 }
 
 fn rewrite(
@@ -314,6 +359,63 @@ mod tests {
             compiled.outbounds[0]["streamSettings"]["sockopt"]["domainStrategy"],
             "UseIPv4"
         );
+    }
+
+    #[test]
+    fn referenced_freedom_is_part_of_the_chain_and_unused_one_is_dropped() {
+        let node = node(vec![
+            json!({"tag": "proxy", "protocol": "vless",
+                   "streamSettings": {"sockopt": {"dialerProxy": "fragment"}}}),
+            json!({"tag": "fragment", "protocol": "freedom",
+                   "settings": {"fragment": {"packets": "tlshello", "length": "100-200"}}}),
+            json!({"tag": "direct", "protocol": "freedom"}),
+        ]);
+        let compiled = compile_node(2, &node, Some(255)).unwrap();
+
+        assert_eq!(tags(&compiled), ["node-002-main", "node-002-x-fragment"]);
+        assert_eq!(
+            compiled.outbounds[0]["streamSettings"]["sockopt"]["dialerProxy"],
+            "node-002-x-fragment"
+        );
+        let fragment = &compiled.outbounds[1];
+        assert_eq!(fragment["protocol"], "freedom");
+        assert_eq!(fragment["settings"]["fragment"]["packets"], "tlshello");
+        assert_eq!(fragment["streamSettings"]["sockopt"]["mark"], 255);
+        assert_eq!(
+            fragment["streamSettings"]["sockopt"]["domainStrategy"],
+            "UseIPv4"
+        );
+    }
+
+    #[test]
+    fn service_outbound_referenced_through_a_chain_hop_is_kept() {
+        let node = node(vec![
+            json!({"tag": "proxy", "protocol": "vless",
+                   "streamSettings": {"sockopt": {"dialerProxy": "hop"}}}),
+            json!({"tag": "hop", "protocol": "vless",
+                   "proxySettings": {"tag": "noise"}}),
+            json!({"tag": "noise", "protocol": "freedom"}),
+            json!({"tag": "unused", "protocol": "blackhole"}),
+        ]);
+        let compiled = compile_node(1, &node, None).unwrap();
+
+        assert_eq!(
+            tags(&compiled),
+            ["node-001-main", "node-001-x-hop", "node-001-x-noise"]
+        );
+    }
+
+    #[test]
+    fn service_outbound_referenced_only_by_an_unused_one_is_dropped() {
+        let node = node(vec![
+            json!({"tag": "proxy", "protocol": "vless"}),
+            json!({"tag": "a", "protocol": "freedom",
+                   "streamSettings": {"sockopt": {"dialerProxy": "b"}}}),
+            json!({"tag": "b", "protocol": "freedom"}),
+        ]);
+        let compiled = compile_node(1, &node, None).unwrap();
+
+        assert_eq!(tags(&compiled), ["node-001-main"]);
     }
 
     #[test]

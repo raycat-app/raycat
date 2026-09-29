@@ -97,6 +97,22 @@ fn trojan_via_legacy_proxy_settings() -> Vec<Value> {
     ]
 }
 
+// Фрагментация как у провайдеров: выход ссылается на freedom-outbound с `fragment`,
+// а лишний freedom рядом никому не нужен.
+fn reality_with_fragment() -> Vec<Value> {
+    let mut main = vless_reality("proxy", "reality.example.com");
+    main["streamSettings"]["sockopt"] = json!({"dialerProxy": "fragment"});
+    vec![
+        main,
+        json!({
+            "tag": "fragment",
+            "protocol": "freedom",
+            "settings": {"fragment": {"packets": "tlshello", "length": "100-200", "interval": "10-20"}}
+        }),
+        json!({"tag": "direct", "protocol": "freedom", "settings": {}}),
+    ]
+}
+
 fn node(name: &str, outbounds: Vec<Value>) -> Node {
     Node {
         name: name.to_owned(),
@@ -109,10 +125,7 @@ fn subscriptions() -> Vec<Subscription> {
         Subscription {
             id: "main".to_owned(),
             nodes: vec![
-                node(
-                    "Узел 1",
-                    vec![vless_reality("proxy", "reality.example.com")],
-                ),
+                node("Узел 1", reality_with_fragment()),
                 node("Узел 2", vless_xhttp_through_hop()),
             ],
         },
@@ -176,6 +189,7 @@ fn tags_are_numbered_and_chains_are_rewritten() {
         outbound_tags(&config),
         [
             "node-001-main",
+            "node-001-x-fragment",
             "node-002-main",
             "node-002-x-hop",
             "node-003-main",
@@ -186,6 +200,13 @@ fn tags_are_numbered_and_chains_are_rewritten() {
             "dns-out",
         ]
     );
+    assert_eq!(
+        outbound(&config, "node-001-main")["streamSettings"]["sockopt"]["dialerProxy"],
+        "node-001-x-fragment"
+    );
+    let fragment = outbound(&config, "node-001-x-fragment");
+    assert_eq!(fragment["protocol"], "freedom");
+    assert_eq!(fragment["settings"]["fragment"]["packets"], "tlshello");
     assert_eq!(
         outbound(&config, "node-002-main")["streamSettings"]["sockopt"]["dialerProxy"],
         "node-002-x-hop"
@@ -204,7 +225,7 @@ fn node_outbounds_resolve_names_with_the_builtin_dns_only() {
 
     for tag in MAIN_TAGS
         .iter()
-        .chain(&["node-002-x-hop", "node-004-x-relay"])
+        .chain(&["node-001-x-fragment", "node-002-x-hop", "node-004-x-relay"])
     {
         let sockopt = &outbound(&config, tag)["streamSettings"]["sockopt"];
         assert_eq!(sockopt["domainStrategy"], "UseIPv4", "{tag}");
@@ -223,7 +244,12 @@ fn gateway_marks_own_sockets() {
 
     for tag in MAIN_TAGS
         .iter()
-        .chain(&["node-002-x-hop", "node-004-x-relay", "direct"])
+        .chain(&[
+            "node-001-x-fragment",
+            "node-002-x-hop",
+            "node-004-x-relay",
+            "direct",
+        ])
     {
         let sockopt = &outbound(&config, tag)["streamSettings"]["sockopt"];
         assert_eq!(sockopt["mark"], 255, "{tag}");
@@ -393,9 +419,9 @@ fn service_outbounds_follow_the_nodes() {
         .as_array()
         .unwrap()
         .iter()
-        .filter(|o| o["protocol"] == "freedom")
+        .filter(|o| o["tag"] == "direct")
         .count();
-    assert_eq!(freedom, 1, "freedom из узлов не попадает в конфиг");
+    assert_eq!(freedom, 1, "неиспользуемый freedom из узла не попадает в конфиг");
 }
 
 #[test]
