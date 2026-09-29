@@ -1,0 +1,52 @@
+app = "happ"
+platform = "android"
+version = "4.6.0"
+marker = "moscow-day-parity"
+user_agent = "Happ/{app_version}/{os}/{build}{marker}{tail}"
+
+[device]
+os = "Android"
+os_version = "14"
+model = "SM-S921B"
+hwid = "android-id"
+locale = "android"
+
+[builds.any]
+build = "17903218884031681"
+tail = "67"
+
+[[headers]]
+name = "Connection"
+value = "close"
+
+[[headers]]
+name = "User-agent"
+value = "{user_agent}"
+
+[[headers]]
+name = "X-Device-Locale"
+value = "{device_locale}"
+
+[[headers]]
+name = "X-HWID"
+value = "{hwid}"
+
+[[headers]]
+name = "X-Device-OS"
+value = "{os}"
+
+[[headers]]
+name = "X-Ver-OS"
+value = "{os_version}"
+
+[[headers]]
+name = "X-Device-model"
+value = "{model}"
+
+[[headers]]
+name = "Host"
+value = "{host}"
+
+[[headers]]
+name = "Accept-Encoding"
+value = "gzip"
