@@ -11,6 +11,8 @@ pub(crate) const MAX_NODES: usize = 5_000;
 const MAX_LINE: usize = 64 * 1024;
 const MAX_BODY_HEADERS: usize = 128;
 const ROUTING_PREFIX: &str = "happ://routing/";
+pub(crate) const ENCRYPTED_MESSAGE: &str =
+    "провайдер шифрует подписку; raycat такие подписки не поддерживает";
 
 #[derive(Default)]
 pub(crate) struct Content {
@@ -180,10 +182,7 @@ fn parse_links_or_reject(text: &str) -> Result<Content, Reject> {
         .map(str::trim)
         .any(|line| strip_prefix_ci(line, "happ://crypt").is_some());
     if has_crypt_link && !has_supported_scheme(text) {
-        return Err(Reject::Encrypted(
-            "получена зашифрованная ссылка happ://crypt…: расшифровать её может только Happ"
-                .to_owned(),
-        ));
+        return Err(Reject::Encrypted(ENCRYPTED_MESSAGE.to_owned()));
     }
     if !has_link_lines(text) {
         let yaml = text.lines().any(|line| {
@@ -248,7 +247,7 @@ fn parse_links(text: &str) -> Content {
                 for warning in &parsed.warnings {
                     push_warning(
                         &mut content.warnings,
-                        format!("«{}»: {warning}", parsed.node.name),
+                        format!("узел «{}»: {warning}", parsed.node.name),
                     );
                 }
                 content.nodes.push(parsed.node);

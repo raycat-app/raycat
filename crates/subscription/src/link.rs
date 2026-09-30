@@ -13,6 +13,8 @@ use crate::text::{clean, decode_base64, percent_decode};
 
 const MAX_NAME: usize = 200;
 const TAG: &str = "proxy";
+const INSECURE_WARNING: &str =
+    "провайдер просит отключить проверку TLS-сертификата — проверка оставлена включённой";
 
 type Params = HashMap<String, String>;
 
@@ -379,8 +381,7 @@ fn hysteria2(rest: &str, warnings: &mut Vec<String>) -> Result<Built, String> {
         tls["pinnedPeerCertSha256"] = json!(pin.replace(':', "").to_ascii_lowercase());
     }
     if is_true(param(&url.query, "insecure")) {
-        tls["allowInsecure"] = json!(true);
-        warnings.push("проверка сертификата отключена ссылкой (insecure)".to_owned());
+        warnings.push(INSECURE_WARNING.to_owned());
     }
 
     let mut stream = json!({
@@ -564,8 +565,7 @@ fn tls_settings(query: &Params, warnings: &mut Vec<String>) -> Value {
         }
     }
     if is_true(param(query, "allowInsecure").or_else(|| param(query, "insecure"))) {
-        tls["allowInsecure"] = json!(true);
-        warnings.push("проверка сертификата отключена ссылкой (allowInsecure)".to_owned());
+        warnings.push(INSECURE_WARNING.to_owned());
     }
     tls
 }
@@ -745,15 +745,15 @@ mod tests {
     }
 
     #[test]
-    fn insecure_tls_is_reported() {
-        let parsed = parsed(&format!(
-            "vless://{UUID}@i.example.com:443?security=tls&allowInsecure=1"
-        ));
-        assert_eq!(
-            parsed.node.outbounds[0]["streamSettings"]["tlsSettings"]["allowInsecure"],
-            true
-        );
-        assert_eq!(parsed.warnings.len(), 1);
+    fn insecure_tls_is_ignored_with_a_warning() {
+        for parameter in ["allowInsecure=1", "insecure=true"] {
+            let parsed = parsed(&format!(
+                "vless://{UUID}@i.example.com:443?security=tls&{parameter}"
+            ));
+            let tls = &parsed.node.outbounds[0]["streamSettings"]["tlsSettings"];
+            assert!(tls.get("allowInsecure").is_none());
+            assert_eq!(parsed.warnings, [INSECURE_WARNING]);
+        }
     }
 
     #[test]
@@ -972,9 +972,9 @@ mod tests {
         let ob = &parsed.node.outbounds[0];
         assert_eq!(ob["settings"]["port"], 443);
         assert_eq!(parsed.node.name, "hy.example.com:443");
-        assert_eq!(ob["streamSettings"]["tlsSettings"]["allowInsecure"], true);
+        assert!(ob["streamSettings"]["tlsSettings"].get("allowInsecure").is_none());
         assert!(ob["streamSettings"].get("finalmask").is_none());
-        assert_eq!(parsed.warnings.len(), 1);
+        assert_eq!(parsed.warnings, [INSECURE_WARNING]);
     }
 
     #[test]

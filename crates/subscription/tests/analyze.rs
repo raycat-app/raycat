@@ -1,16 +1,10 @@
 //! Разбор ответа целиком через публичный интерфейс. Все данные вымышленные.
 
-// Вспомогательная функция шифрования не `#[test]`, и разрешение из `clippy.toml` на неё не действует.
-#![allow(clippy::unwrap_used)]
-
 use std::time::Duration;
 
-use aes_gcm::aead::consts::U12;
-use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes128Gcm, Nonce};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use raycat_subscription::{Problem, Routing, analyze, analyze_with_key, redact, redact_in};
+use raycat_subscription::{Problem, Routing, analyze, redact, redact_in};
 use serde_json::json;
 
 const UUID: &str = "00000000-0000-0000-0000-000000000000";
@@ -238,34 +232,33 @@ fn garbage_never_panics() {
     }
 }
 
-fn encrypt(plain: &[u8], key: &[u8; 16]) -> (String, String) {
-    let cipher = Aes128Gcm::new_from_slice(key).unwrap();
-    let sealed = cipher
-        .encrypt(
-            &Nonce::<U12>::from(std::array::from_fn::<u8, 12, _>(|_| b'k')),
-            plain,
-        )
-        .unwrap();
-    let (data, tag) = sealed.split_at(sealed.len() - 16);
-    (STANDARD.encode(data), STANDARD.encode(tag))
+#[test]
+fn encrypted_response_is_recognized() {
+    let response = headers(&[
+        ("Encrypt-Tag", "AAAAAAAAAAAAAAAAAAAAAA=="),
+        ("profile-title", "VPN"),
+    ]);
+    let result = analyze(200, &response, STANDARD.encode(link_list()).as_bytes());
+    let Some(Problem::Encrypted(message)) = &result.problem else {
+        panic!("ожидалась зашифрованная подписка: {:?}", result.problem);
+    };
+    assert!(message.contains("шифрует подписку"));
+    assert!(result.nodes.is_empty());
+    assert_eq!(result.info.title.as_deref(), Some("VPN"));
+
+    let link = analyze(200, &[], b"happ://crypt5/AAAA");
+    assert!(matches!(link.problem, Some(Problem::Encrypted(_))));
 }
 
 #[test]
-fn encrypted_response() {
-    let key: [u8; 16] = std::array::from_fn(|index| u8::try_from(index).unwrap_or(0) * 3 + 1);
-    let (body, tag) = encrypt(link_list().as_bytes(), &key);
-    let response = headers(&[("Encrypt-Tag", tag.as_str()), ("profile-title", "VPN")]);
-
-    let without_key = analyze(200, &response, body.as_bytes());
-    assert!(matches!(without_key.problem, Some(Problem::Encrypted(_))));
-    assert_eq!(without_key.info.title.as_deref(), Some("VPN"));
-
-    let decrypted = analyze_with_key(200, &response, body.as_bytes(), &key);
-    assert!(decrypted.problem.is_none(), "{:?}", decrypted.problem);
-    assert_eq!(decrypted.nodes.len(), 4);
-
-    let wrong = analyze_with_key(200, &response, body.as_bytes(), &key.map(|byte| byte ^ 1));
-    assert!(matches!(wrong.problem, Some(Problem::Encrypted(_))));
+fn insecure_flag_is_not_applied() {
+    let body = format!("vless://{UUID}@i.example.com:443?security=tls&allowInsecure=1#Узел\n");
+    let result = analyze(200, &[], body.as_bytes());
+    assert!(result.problem.is_none(), "{:?}", result.problem);
+    assert!(!result.nodes[0].outbounds[0].to_string().contains("allowInsecure"));
+    assert_eq!(result.warnings.len(), 1);
+    assert!(result.warnings[0].starts_with("узел «Узел»: провайдер просит отключить"));
+    assert!(!result.warnings[0].contains(UUID));
 }
 
 #[test]

@@ -5,7 +5,6 @@
 //! причина ([`Problem`]).
 
 mod body;
-mod encrypt;
 mod info;
 mod link;
 mod redact;
@@ -14,14 +13,11 @@ mod stub;
 mod text;
 mod xray_json;
 
-use std::borrow::Cow;
-
 use raycat_xray::Node;
 
 use body::{Body, Reject};
 use text::{clean, push_warning};
 
-pub use encrypt::{DecryptError, decrypt_body};
 pub use info::{HwidFlags, ProviderInfo, Usage};
 pub use redact::{redact, redact_in};
 pub use routing::{DnsServer, Routing, RoutingProfile};
@@ -37,7 +33,7 @@ pub enum Problem {
     Stub(String),
     /// Тело не удалось разобрать в узлы.
     Unrecognized(String),
-    /// Тело зашифровано, и расшифровать его не получилось.
+    /// Провайдер шифрует подписку (`Encrypt-Tag`, `happ://crypt…`): не поддерживается.
     Encrypted(String),
 }
 
@@ -70,60 +66,19 @@ pub struct Analysis {
     pub problem: Option<Problem>,
 }
 
-/// Разбирает ответ панели. Ответ с `Encrypt-Tag` без ключа считается
-/// зашифрованным ([`Problem::Encrypted`]); ключ задаёт [`analyze_with_key`].
+/// Разбирает ответ панели. Ответ с `Encrypt-Tag` не расшифровывается:
+/// это [`Problem::Encrypted`].
 pub fn analyze(status: u16, headers: &[(String, String)], body: &[u8]) -> Analysis {
-    analyze_inner(status, headers, body, None)
-}
-
-/// То же, что [`analyze`], но тело с `Encrypt-Tag` расшифровывается этим ключом.
-pub fn analyze_with_key(
-    status: u16,
-    headers: &[(String, String)],
-    body: &[u8],
-    key: &[u8; 16],
-) -> Analysis {
-    analyze_inner(status, headers, body, Some(key))
-}
-
-fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    headers
-        .iter()
-        .find(|(key, value)| key.trim().eq_ignore_ascii_case(name) && !value.trim().is_empty())
-        .map(|(_, value)| value.trim())
-}
-
-/// Тело после снятия шифрования или причина, по которой его читать нельзя.
-fn plain_body<'a>(
-    headers: &[(String, String)],
-    body: &'a [u8],
-    key: Option<&[u8; 16]>,
-) -> Result<Cow<'a, [u8]>, String> {
-    let Some(tag) = header(headers, "encrypt-tag") else {
-        return Ok(Cow::Borrowed(body));
-    };
-    let Some(key) = key else {
-        return Err("ответ зашифрован (заголовок Encrypt-Tag), ключ не задан".to_owned());
-    };
-    decrypt_body(body, tag, key)
-        .map(Cow::Owned)
-        .map_err(|error| error.to_string())
-}
-
-fn analyze_inner(
-    status: u16,
-    headers: &[(String, String)],
-    raw_body: &[u8],
-    key: Option<&[u8; 16]>,
-) -> Analysis {
     let http_ok = (200..300).contains(&status);
-    let parsed = if http_ok {
-        match plain_body(headers, raw_body, key) {
-            Ok(plain) => body::parse(&plain),
-            Err(reason) => Body::rejected(Reject::Encrypted(reason)),
-        }
-    } else {
+    let has_encrypt_tag = headers
+        .iter()
+        .any(|(name, value)| name.trim().eq_ignore_ascii_case("encrypt-tag") && !value.trim().is_empty());
+    let parsed = if !http_ok {
         Body::rejected(Reject::Unrecognized(String::new()))
+    } else if has_encrypt_tag {
+        Body::rejected(Reject::Encrypted(body::ENCRYPTED_MESSAGE.to_owned()))
+    } else {
+        body::parse(body)
     };
     let (info, mut warnings) = info::parse(headers, &parsed.headers, parsed.routing.as_deref());
 
