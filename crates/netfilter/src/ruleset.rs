@@ -28,14 +28,18 @@ const ALWAYS_DIRECT: [Cidr; 4] = [
 ///   что не попало в перехват.
 pub fn ruleset(rules: &Rules) -> Result<String> {
     rules.validate()?;
-    let own = format!("{:#x}", rules.own_mark);
-    let mark = format!("{:#x}", rules.intercept_mark);
-    let port = rules.tproxy_port;
     let (v4, v6) = direct_sets(rules);
-    let v4_only = if rules.intercept_ipv6 {
-        ""
-    } else {
-        "meta nfproto ipv4 "
+    let parts = Parts {
+        own: format!("{:#x}", rules.own_mark),
+        mark: format!("{:#x}", rules.intercept_mark),
+        port: rules.tproxy_port,
+        v4,
+        v6,
+        v4_only: if rules.intercept_ipv6 {
+            ""
+        } else {
+            "meta nfproto ipv4 "
+        },
     };
 
     let mut lines: Vec<String> = Vec::new();
@@ -50,7 +54,40 @@ pub fn ruleset(rules: &Rules) -> Result<String> {
     push(0, format!("add table {FAMILY} {TABLE}"));
     push(0, format!("delete table {FAMILY} {TABLE}"));
     push(0, format!("table {FAMILY} {TABLE} {{"));
+    output_chain(&mut push, &parts);
+    push(0, String::new());
+    prerouting_chain(&mut push, &parts, rules.intercept_ipv6);
+    if rules.kill_switch || !rules.intercept_ipv6 {
+        push(0, String::new());
+        guard_chain(&mut push, &parts, rules.kill_switch);
+    }
+    push(0, "}".to_owned());
+    let mut text = lines.join("\n");
+    text.push('\n');
+    Ok(text)
+}
 
+struct Parts {
+    own: String,
+    mark: String,
+    port: u16,
+    v4: String,
+    v6: String,
+    /// Условие, не пускающее правило на IPv6, пока IPv6 не перехватывается.
+    v4_only: &'static str,
+}
+
+type Push<'a> = &'a mut dyn FnMut(usize, String);
+
+fn output_chain(push: Push, parts: &Parts) {
+    let Parts {
+        own,
+        mark,
+        v4,
+        v6,
+        v4_only,
+        ..
+    } = parts;
     push(1, "chain output {".to_owned());
     push(
         2,
@@ -82,8 +119,10 @@ pub fn ruleset(rules: &Rules) -> Result<String> {
         format!("{v4_only}meta l4proto {{ tcp, udp }} meta mark set {mark}"),
     );
     push(1, "}".to_owned());
+}
 
-    push(0, String::new());
+fn prerouting_chain(push: Push, parts: &Parts, ipv6: bool) {
+    let Parts { mark, port, .. } = parts;
     push(1, "chain prerouting {".to_owned());
     push(
         2,
@@ -101,7 +140,7 @@ pub fn ruleset(rules: &Rules) -> Result<String> {
             ),
         );
     }
-    if rules.intercept_ipv6 {
+    if ipv6 {
         for proto in ["tcp", "udp"] {
             push(
                 2,
@@ -112,42 +151,39 @@ pub fn ruleset(rules: &Rules) -> Result<String> {
         }
     }
     push(1, "}".to_owned());
+}
 
-    if rules.kill_switch || !rules.intercept_ipv6 {
-        push(0, String::new());
-        push(1, "chain guard {".to_owned());
+fn guard_chain(push: Push, parts: &Parts, kill_switch: bool) {
+    let Parts {
+        own, mark, v4, v6, ..
+    } = parts;
+    push(1, "chain guard {".to_owned());
+    push(
+        2,
+        "type filter hook output priority filter; policy accept;".to_owned(),
+    );
+    push(2, "oifname \"lo\" accept".to_owned());
+    push(2, format!("meta mark {own} accept"));
+    push(
+        2,
+        "# перехваченные пакеты: после смены маршрута oifname ещё показывает прежний интерфейс"
+            .to_owned(),
+    );
+    push(2, format!("meta mark {mark} accept"));
+    push(2, "ct direction reply accept".to_owned());
+    push(2, format!("ip daddr {v4} accept"));
+    push(2, format!("ip6 daddr {v6} accept"));
+    if kill_switch {
+        push(2, "# kill switch: всё остальное отклоняется".to_owned());
+        push(2, "reject".to_owned());
+    } else {
         push(
             2,
-            "type filter hook output priority filter; policy accept;".to_owned(),
+            "# IPv6 не перехватывается, наружу его не выпускаем".to_owned(),
         );
-        push(2, "oifname \"lo\" accept".to_owned());
-        push(2, format!("meta mark {own} accept"));
-        push(
-            2,
-            "# перехваченные пакеты: после смены маршрута oifname ещё показывает прежний интерфейс"
-                .to_owned(),
-        );
-        push(2, format!("meta mark {mark} accept"));
-        push(2, "ct direction reply accept".to_owned());
-        push(2, format!("ip daddr {v4} accept"));
-        push(2, format!("ip6 daddr {v6} accept"));
-        if rules.kill_switch {
-            push(2, "# kill switch: всё остальное отклоняется".to_owned());
-            push(2, "reject".to_owned());
-        } else {
-            push(
-                2,
-                "# IPv6 не перехватывается, наружу его не выпускаем".to_owned(),
-            );
-            push(2, "meta nfproto ipv6 reject".to_owned());
-        }
-        push(1, "}".to_owned());
+        push(2, "meta nfproto ipv6 reject".to_owned());
     }
-
-    push(0, "}".to_owned());
-    let mut text = lines.join("\n");
-    text.push('\n');
-    Ok(text)
+    push(1, "}".to_owned());
 }
 
 /// Текст для `nft -f`, который удаляет таблицу, если она есть, и ничего не делает,
