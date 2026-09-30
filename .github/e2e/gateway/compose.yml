@@ -1,0 +1,140 @@
+# Стенд шлюза: приложение ходит на сайт только через шлюз raycat и узел.
+#
+#   wan   — шлюз, панель, узлы, «прямая» цель (canary): сеть с выходом наружу
+#   inet  — узлы и сайт: изолированная сеть, шлюз в ней не состоит
+#
+# Адреса нарочно не из частных диапазонов: частные сети шлюз пропускает мимо
+# перехвата, а xray (freedom) не пускает узел на зарезервированные адреса.
+name: raycat-e2e
+
+networks:
+  wan:
+    name: raycat-e2e-wan
+    ipam:
+      config:
+        - subnet: 11.30.0.0/24
+  inet:
+    name: raycat-e2e-inet
+    internal: true
+    ipam:
+      config:
+        - subnet: 11.40.0.0/24
+
+x-node: &node
+  image: raycat:ci
+  entrypoint: ["/usr/libexec/raycat/xray"]
+  command: ["run", "-c", "/e2e/gateway/node.json"]
+  volumes:
+    - ..:/e2e:ro
+
+services:
+  site:
+    image: python:3.13-alpine
+    command: ["python", "/e2e/echo.py"]
+    volumes:
+      - ..:/e2e:ro
+    networks:
+      inet:
+        ipv4_address: 11.40.0.10
+        aliases:
+          - site.e2e.test
+
+  canary:
+    image: python:3.13-alpine
+    command: ["python", "/e2e/echo.py"]
+    volumes:
+      - ..:/e2e:ro
+    networks:
+      wan:
+        ipv4_address: 11.30.0.50
+
+  panel:
+    image: python:3.13-alpine
+    command:
+      - python
+      - /e2e/panel.py
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --body
+      - /e2e/gateway/subscription.txt
+      - --requests
+      - /tmp/requests.log
+    volumes:
+      - ..:/e2e:ro
+    networks:
+      wan:
+        ipv4_address: 11.30.0.5
+
+  node1:
+    <<: *node
+    networks:
+      wan:
+        ipv4_address: 11.30.0.11
+      inet:
+        ipv4_address: 11.40.0.11
+
+  node2:
+    <<: *node
+    networks:
+      wan:
+        ipv4_address: 11.30.0.12
+      inet:
+        ipv4_address: 11.40.0.12
+
+  raycat:
+    image: raycat:ci
+    container_name: raycat-e2e-gateway
+    cap_add: [NET_ADMIN]
+    # Явный DNS: Docker опрашивает его из пространства контейнера, где запросы
+    # перехватываются. Без него имена разрешаются через хост, мимо перехвата.
+    dns: [1.1.1.1]
+    environment:
+      RAYCAT_CONFIG: /e2e/gateway/config.toml
+    volumes:
+      - ..:/e2e:ro
+    networks:
+      wan:
+        ipv4_address: 11.30.0.2
+    depends_on: [panel, node1, node2, site, canary]
+    healthcheck:
+      test: ["CMD-SHELL", "nft list table inet raycat >/dev/null && pidof xray >/dev/null"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  app:
+    image: raycat:ci
+    container_name: raycat-e2e-app
+    entrypoint: ["sleep", "infinity"]
+    network_mode: service:raycat
+    depends_on:
+      raycat:
+        condition: service_healthy
+        restart: true
+
+  # Жизненный цикл правил: сетевое пространство держит holder, шлюз gw2 живёт в нём
+  # и может быть остановлен штатно или убит, а правила можно проверить снаружи.
+  holder:
+    profiles: [lifecycle]
+    image: raycat:ci
+    container_name: raycat-e2e-holder
+    entrypoint: ["sleep", "infinity"]
+    cap_add: [NET_ADMIN]
+    dns: [1.1.1.1]
+    networks:
+      wan:
+        ipv4_address: 11.30.0.3
+
+  gw2:
+    profiles: [lifecycle]
+    image: raycat:ci
+    container_name: raycat-e2e-gw2
+    cap_add: [NET_ADMIN]
+    environment:
+      RAYCAT_CONFIG: /e2e/gateway/config.toml
+    volumes:
+      - ..:/e2e:ro
+    network_mode: service:holder
+    depends_on: [holder, panel, node1, node2, site, canary]

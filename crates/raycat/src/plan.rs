@@ -1,19 +1,63 @@
 //! Узлы подписок и настройки → конфиг xray.
 
-use std::net::SocketAddr;
-
 use anyhow::{Context, Result, bail};
 use raycat_config::{Config, Mode, Subscription};
+use raycat_netfilter::{DEFAULT_OWN_MARK, Rules};
 use raycat_xray::{Node, Settings, compile};
 
-const GATEWAY_UNAVAILABLE: &str = "режим шлюза появится в следующей версии";
+const LAN_UNAVAILABLE: &str = "шлюз для локальной сети (lan) появится в следующей версии";
 
-/// Адрес прокси из настроек; режим шлюза пока не поддерживается.
-pub(crate) fn proxy_listen(config: &Config) -> Result<SocketAddr> {
+/// Правила перехвата для режима шлюза; `None` в режиме прокси.
+pub(crate) fn gateway_rules(config: &Config) -> Result<Option<Rules>> {
     match config.mode {
-        Mode::Proxy { listen } => Ok(listen),
-        Mode::Gateway { .. } => bail!(GATEWAY_UNAVAILABLE),
+        Mode::Proxy { .. } => Ok(None),
+        Mode::Gateway { kill_switch, lan } => {
+            if lan {
+                bail!(LAN_UNAVAILABLE);
+            }
+            let rules = Rules {
+                kill_switch,
+                ..Rules::default()
+            };
+            rules.validate()?;
+            Ok(Some(rules))
+        }
     }
+}
+
+/// Режим для строки лога и вывода `check`.
+pub(crate) fn describe_mode(config: &Config) -> String {
+    match config.mode {
+        Mode::Proxy { listen } => format!("режим прокси, адрес {listen}"),
+        Mode::Gateway { kill_switch, .. } => format!(
+            "режим шлюза, kill switch {}",
+            if kill_switch {
+                "включён"
+            } else {
+                "выключен"
+            }
+        ),
+    }
+}
+
+/// Метка собственных сокетов демона: в режиме шлюза kill switch выпускает наружу
+/// только помеченные пакеты.
+pub(crate) fn own_mark(config: &Config) -> Option<u32> {
+    match config.mode {
+        Mode::Proxy { .. } => None,
+        Mode::Gateway { .. } => Some(DEFAULT_OWN_MARK),
+    }
+}
+
+fn xray_mode(config: &Config) -> Result<raycat_xray::Mode> {
+    Ok(match (config.mode, gateway_rules(config)?) {
+        (Mode::Proxy { listen }, _) => raycat_xray::Mode::Proxy { listen },
+        (Mode::Gateway { .. }, Some(rules)) => raycat_xray::Mode::Gateway {
+            tproxy_port: rules.tproxy_port,
+            mark: rules.own_mark,
+        },
+        (Mode::Gateway { .. }, None) => bail!("режим шлюза без правил перехвата"),
+    })
 }
 
 pub(crate) struct Plan {
@@ -30,7 +74,7 @@ pub(crate) fn compile_config(
     inputs: &[(&Subscription, &[Node])],
     api_port: u16,
 ) -> Result<Plan> {
-    let listen = proxy_listen(config)?;
+    let mode = xray_mode(config)?;
     let subscriptions: Vec<raycat_xray::Subscription> = inputs
         .iter()
         .map(|(subscription, nodes)| raycat_xray::Subscription {
@@ -42,7 +86,7 @@ pub(crate) fn compile_config(
                 .collect(),
         })
         .collect();
-    let mut settings = Settings::new(raycat_xray::Mode::Proxy { listen }, api_port);
+    let mut settings = Settings::new(mode, api_port);
     settings.dns.resolvers.clone_from(&config.dns.resolvers);
     settings.probe.url.clone_from(&config.selection.check_url);
     settings.probe.interval = config.selection.check_interval;
@@ -92,20 +136,52 @@ mod tests {
     }
 
     #[test]
-    fn proxy_mode_gives_the_listen_address() {
+    fn proxy_mode_needs_no_rules_and_no_mark() {
         let config = config("type = \"proxy\"\nlisten = \"127.0.0.1:7891\"", "");
-        assert_eq!(
-            proxy_listen(&config).unwrap(),
-            "127.0.0.1:7891".parse().unwrap()
-        );
+        assert_eq!(gateway_rules(&config).unwrap(), None);
+        assert_eq!(own_mark(&config), None);
     }
 
     #[test]
-    fn gateway_mode_is_not_available_yet() {
-        let config = config("type = \"gateway\"", "");
-        let error = proxy_listen(&config).unwrap_err();
-        assert_eq!(error.to_string(), "режим шлюза появится в следующей версии");
+    fn gateway_mode_takes_the_kill_switch_from_the_settings() {
+        let on = config("type = \"gateway\"", "");
+        let rules = gateway_rules(&on).unwrap().unwrap();
+        assert!(rules.kill_switch);
+        assert!(!rules.intercept_ipv6);
+        assert_eq!(own_mark(&on), Some(rules.own_mark));
+
+        let off = config("type = \"gateway\"\nkill_switch = false", "");
+        assert!(!gateway_rules(&off).unwrap().unwrap().kill_switch);
+    }
+
+    #[test]
+    fn the_mode_is_described_for_people() {
+        let proxy = config("type = \"proxy\"\nlisten = \"127.0.0.1:7891\"", "");
+        assert_eq!(describe_mode(&proxy), "режим прокси, адрес 127.0.0.1:7891");
+        let gateway = config("type = \"gateway\"", "");
+        assert_eq!(describe_mode(&gateway), "режим шлюза, kill switch включён");
+        let open = config("type = \"gateway\"\nkill_switch = false", "");
+        assert_eq!(describe_mode(&open), "режим шлюза, kill switch выключен");
+    }
+
+    #[test]
+    fn a_lan_gateway_is_not_available_yet() {
+        let config = config("type = \"gateway\"\nlan = true", "");
+        let error = gateway_rules(&config).unwrap_err();
+        assert!(error.to_string().contains("lan"), "{error}");
         assert!(plan(&config, &nodes()).is_err());
+    }
+
+    #[test]
+    fn the_gateway_config_has_a_tproxy_inbound_and_marked_sockets() {
+        let config = config("type = \"gateway\"", "");
+        let plan = plan(&config, &nodes()).unwrap();
+        let rules = gateway_rules(&config).unwrap().unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&plan.json).unwrap();
+        assert_eq!(json["inbounds"][0]["tag"], "tproxy-in");
+        assert_eq!(json["inbounds"][0]["port"], rules.tproxy_port);
+        let text = String::from_utf8(plan.json).unwrap();
+        assert!(text.contains(&format!("\"mark\":{}", rules.own_mark)));
     }
 
     #[test]

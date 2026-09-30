@@ -1,6 +1,7 @@
 mod cli;
 mod commands;
 mod daemon;
+mod gateway;
 mod log;
 mod paths;
 mod plan;

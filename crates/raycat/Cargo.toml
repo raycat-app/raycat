@@ -16,6 +16,7 @@ libc.workspace = true
 raycat-config.workspace = true
 raycat-emulation.workspace = true
 raycat-http.workspace = true
+raycat-netfilter.workspace = true
 raycat-subscription.workspace = true
 raycat-xray.workspace = true
 serde.workspace = true
