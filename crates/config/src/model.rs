@@ -48,6 +48,7 @@ pub struct Device {
     pub machine_id: Option<Secret>,
     pub hostname: Option<String>,
     pub model: Option<String>,
+    pub manufacturer: Option<String>,
     pub os_version: Option<String>,
     pub locale: Option<String>,
 }
