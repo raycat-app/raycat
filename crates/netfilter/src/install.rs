@@ -199,7 +199,7 @@ mod tests {
 
     use super::*;
 
-    type Handler = Box<dyn Fn(&str) -> Result<Output>>;
+    type Handler = Box<dyn Fn(&str) -> Output>;
 
     struct Fake {
         calls: RefCell<Vec<String>>,
@@ -208,7 +208,7 @@ mod tests {
     }
 
     impl Fake {
-        fn new(handler: impl Fn(&str) -> Result<Output> + 'static) -> Self {
+        fn new(handler: impl Fn(&str) -> Output + 'static) -> Self {
             Self {
                 calls: RefCell::default(),
                 inputs: RefCell::default(),
@@ -228,24 +228,24 @@ mod tests {
             if let Some(stdin) = stdin {
                 self.inputs.borrow_mut().push(stdin.to_owned());
             }
-            (self.handler)(&line)
+            Ok((self.handler)(&line))
         }
     }
 
-    fn ok(stdout: &str) -> Result<Output> {
-        Ok(Output {
+    fn ok(stdout: &str) -> Output {
+        Output {
             success: true,
             stdout: stdout.to_owned(),
             stderr: String::new(),
-        })
+        }
     }
 
-    fn failed(stderr: &str) -> Result<Output> {
-        Ok(Output {
+    fn failed(stderr: &str) -> Output {
+        Output {
             success: false,
             stdout: String::new(),
             stderr: stderr.to_owned(),
-        })
+        }
     }
 
     const DEFAULT_RULES: &str = "0:\tfrom all lookup local\n32766:\tfrom all lookup main\n32767:\tfrom all lookup default\n";
