@@ -1,4 +1,5 @@
-//! Эмуляция официальных приложений подписок (Happ для Windows и Android).
+//! Эмуляция официальных приложений подписок (Happ для Windows и Android, INCY для
+//! Android).
 //!
 //! Панели провайдеров выбирают формат ответа и проверяют клиента по заголовкам
 //! запроса, поэтому запрос строится побайтно как у приложения: порядок и регистр
@@ -14,15 +15,17 @@
 //! app = "happ"                    # строчные латинские буквы, цифры и «-»
 //! platform = "windows"            # windows | android
 //! version = "4.3.0"
-//! marker = "moscow-day-parity"    # необязательно: алгоритм для {marker}
+//! marker = "moscow-day-parity"    # необязательно, для {marker}: moscow-day-parity
+//!                                 # (по Москве, Windows) | device-local-day-parity
+//!                                 # (по местной дате устройства, Android)
 //! user_agent = "Happ/{app_version}/{os}/{build}{marker}{tail}"
 //!
 //! [device]
 //! os = "Windows"
 //! os_version = "11_10.0.26100"    # значение по умолчанию
 //! model = "{hostname}_{cpu}"      # шаблон; готовое значение для Android
-//! hwid = "windows-machine-guid"   # windows-machine-guid | android-id
-//! locale = "qt-windows"           # qt-windows | android
+//! hwid = "windows-machine-guid"   # windows-machine-guid | android-id | incy-uuid
+//! locale = "qt-windows"           # qt-windows | android | android-region
 //!
 //! [builds.x64]                    # x64, arm64 или any (для всех архитектур)
 //! build = "2609151455"
@@ -278,6 +281,58 @@ mod tests {
         assert_eq!(info.model, "SM-S921B");
     }
 
+    fn incy(device: &Device) -> Emulation {
+        Emulation::new("incy", Platform::Android, Arch::X64, device).unwrap()
+    }
+
+    #[test]
+    fn incy_defaults_come_from_the_machine_id() {
+        let device = Device::from_machine_id(MACHINE_ID);
+        let incy = incy(&device);
+        let info = incy.device_info();
+        assert_eq!(info.hwid, device::incy_uuid(MACHINE_ID));
+        assert!(is_valid_hwid(&info.hwid));
+        assert_eq!(info.os, "Android");
+        assert_eq!(info.os_version, "14");
+        assert_eq!(info.model, "samsung SM-S921B");
+        assert_eq!(incy.user_agent(EVEN_DAY), "INCY/3.7.0/android Dalvik/2.1.0");
+        assert_eq!(incy.user_agent(EVEN_DAY), incy.user_agent(ODD_DAY));
+    }
+
+    #[test]
+    fn incy_headers_have_the_captured_order_and_locale_forms() {
+        let device = Device {
+            locale: "ru_RU.UTF-8".into(),
+            model: Some("Google Pixel 8".into()),
+            ..Device::from_machine_id(MACHINE_ID)
+        };
+        let headers = incy(&device).headers(&url(), EVEN_DAY);
+        let names: Vec<&str> = headers.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "User-Agent",
+                "Accept",
+                "Accept-Language",
+                "x-hwid",
+                "x-device-os",
+                "x-ver-os",
+                "x-device-model",
+                "x-app-version",
+                "x-device-locale",
+                "x-client",
+                "Host",
+                "Connection",
+                "Accept-Encoding"
+            ]
+        );
+        assert_eq!(header(&headers, "Accept-Language"), "ru-RU");
+        assert_eq!(header(&headers, "x-device-locale"), "ru_RU");
+        assert_eq!(header(&headers, "x-device-model"), "Google Pixel 8");
+        assert_eq!(header(&headers, "x-app-version"), "3.7.0");
+        assert_eq!(header(&headers, "x-client"), "INCY");
+    }
+
     #[test]
     fn overrides_replace_derived_values() {
         let device = Device {
@@ -400,12 +455,12 @@ mod tests {
     #[test]
     fn errors_are_understandable() {
         let device = Device::from_machine_id(MACHINE_ID);
-        let unknown = Emulation::new("incy", Platform::Android, Arch::X64, &device);
+        let unknown = Emulation::new("nope", Platform::Android, Arch::X64, &device);
         assert!(
             unknown
                 .unwrap_err()
                 .to_string()
-                .contains("нет профиля incy/android")
+                .contains("нет профиля nope/android")
         );
         let empty = Emulation::new("happ", Platform::Windows, Arch::X64, &Device::default());
         assert!(empty.unwrap_err().to_string().contains("machine_id"));

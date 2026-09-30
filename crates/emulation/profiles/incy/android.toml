@@ -1,0 +1,66 @@
+app = "incy"
+platform = "android"
+version = "3.7.0"
+user_agent = "INCY/{app_version}/android Dalvik/2.1.0"
+
+[device]
+os = "Android"
+os_version = "14"
+model = "samsung SM-S921B"
+hwid = "incy-uuid"
+locale = "android-region"
+
+[builds.any]
+build = "370"
+
+[[headers]]
+name = "User-Agent"
+value = "{user_agent}"
+
+[[headers]]
+name = "Accept"
+value = "*/*"
+
+[[headers]]
+name = "Accept-Language"
+value = "{accept_language}"
+
+[[headers]]
+name = "x-hwid"
+value = "{hwid}"
+
+[[headers]]
+name = "x-device-os"
+value = "{os}"
+
+[[headers]]
+name = "x-ver-os"
+value = "{os_version}"
+
+[[headers]]
+name = "x-device-model"
+value = "{model}"
+
+[[headers]]
+name = "x-app-version"
+value = "{app_version}"
+
+[[headers]]
+name = "x-device-locale"
+value = "{device_locale}"
+
+[[headers]]
+name = "x-client"
+value = "INCY"
+
+[[headers]]
+name = "Host"
+value = "{host}"
+
+[[headers]]
+name = "Connection"
+value = "Keep-Alive"
+
+[[headers]]
+name = "Accept-Encoding"
+value = "gzip"

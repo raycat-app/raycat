@@ -13,21 +13,24 @@ pub(crate) enum LocaleRule {
     QtWindows,
     /// Android: только язык в нижнем регистре, `Accept-Language` не отправляется.
     Android,
+    /// Android с регионом: `en_US` в `X-Device-Locale` и `en-US` в `Accept-Language`.
+    AndroidRegion,
 }
 
 impl LocaleRule {
-    pub(crate) const NAMES: &'static str = "qt-windows, android";
+    pub(crate) const NAMES: &'static str = "qt-windows, android, android-region";
 
     pub(crate) fn from_name(name: &str) -> Option<Self> {
         match name {
             "qt-windows" => Some(Self::QtWindows),
             "android" => Some(Self::Android),
+            "android-region" => Some(Self::AndroidRegion),
             _ => None,
         }
     }
 
     pub(crate) fn provides_accept_language(self) -> bool {
-        matches!(self, Self::QtWindows)
+        matches!(self, Self::QtWindows | Self::AndroidRegion)
     }
 
     /// `locale` — локаль в стиле POSIX (`ru_RU.UTF-8`, `ru`, `en`, `C`).
@@ -44,7 +47,36 @@ impl LocaleRule {
                 device_locale: android_language(locale),
                 accept_language: None,
             },
+            Self::AndroidRegion => {
+                let (device_locale, accept_language) = android_region(locale);
+                Locale {
+                    device_locale,
+                    accept_language: Some(accept_language),
+                }
+            }
         }
+    }
+}
+
+/// (`en_US`, `en-US`); язык без региона получает вероятный регион по CLDR.
+fn android_region(locale: &str) -> (String, String) {
+    let locale = locale.split(['.', '@']).next().unwrap_or_default();
+    let (language, region) = match locale.split_once(['_', '-']) {
+        Some((language, region)) => (
+            language.to_ascii_lowercase(),
+            Some(region.to_ascii_uppercase()),
+        ),
+        None => (locale.to_ascii_lowercase(), None),
+    };
+    if region.is_none() && matches!(language.as_str(), "" | "c" | "posix") {
+        return ("en_US".to_owned(), "en-US".to_owned());
+    }
+    match region.or_else(|| likely_region(&language).map(str::to_owned)) {
+        Some(region) => (
+            format!("{language}_{region}"),
+            format!("{language}-{region}"),
+        ),
+        None => (language.clone(), language),
     }
 }
 
@@ -95,6 +127,7 @@ fn qt_locale(locale: &str) -> (String, String) {
 /// Вероятные регионы по CLDR для языков, на которых чаще всего сидят пользователи Happ.
 fn likely_region(language: &str) -> Option<&'static str> {
     Some(match language {
+        "en" => "US",
         "ru" => "RU",
         "uk" => "UA",
         "be" => "BY",
@@ -160,7 +193,28 @@ mod tests {
     }
 
     #[test]
+    fn android_region_gives_underscore_and_hyphen_forms() {
+        let region = |locale: &str| {
+            let l = LocaleRule::AndroidRegion.apply(locale);
+            (l.device_locale, l.accept_language.unwrap())
+        };
+        assert_eq!(region("en_US"), pair("en_US", "en-US"));
+        assert_eq!(region("en"), pair("en_US", "en-US"));
+        assert_eq!(region(""), pair("en_US", "en-US"));
+        assert_eq!(region("C.UTF-8"), pair("en_US", "en-US"));
+        assert_eq!(region("ru_RU.UTF-8"), pair("ru_RU", "ru-RU"));
+        assert_eq!(region("ru"), pair("ru_RU", "ru-RU"));
+        assert_eq!(region("pt-br"), pair("pt_BR", "pt-BR"));
+        assert_eq!(region("en_GB"), pair("en_GB", "en-GB"));
+        assert_eq!(region("eo"), pair("eo", "eo"));
+    }
+
+    #[test]
     fn rule_names_round_trip() {
+        assert_eq!(
+            LocaleRule::from_name("android-region"),
+            Some(LocaleRule::AndroidRegion)
+        );
         assert_eq!(
             LocaleRule::from_name("qt-windows"),
             Some(LocaleRule::QtWindows)
