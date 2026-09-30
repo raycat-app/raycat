@@ -141,9 +141,7 @@ fn create_machine_id(path: &Path) -> Result<String> {
                 .with_context(|| format!("не удалось прочитать {}", path.display()))?;
             checked_machine_id(&text, path)
         }
-        Err(error) => {
-            Err(error).with_context(|| format!("не удалось создать {}", path.display()))
-        }
+        Err(error) => Err(error).with_context(|| format!("не удалось создать {}", path.display())),
     }
 }
 
