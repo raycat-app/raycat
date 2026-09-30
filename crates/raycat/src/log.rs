@@ -162,31 +162,36 @@ fn emit(lines: &[Line]) {
     }
 }
 
-macro_rules! error {
+// Макросы определены под другими именами: `warn` совпадает со встроенным атрибутом,
+// и повторный экспорт под этим именем внутри модуля неоднозначен.
+macro_rules! log_error {
     ($($arg:tt)*) => {
         $crate::log::write($crate::log::Level::Error, ::std::format_args!($($arg)*))
     };
 }
 
-macro_rules! warn {
+macro_rules! log_warn {
     ($($arg:tt)*) => {
         $crate::log::write($crate::log::Level::Warn, ::std::format_args!($($arg)*))
     };
 }
 
-macro_rules! info {
+macro_rules! log_info {
     ($($arg:tt)*) => {
         $crate::log::write($crate::log::Level::Info, ::std::format_args!($($arg)*))
     };
 }
 
-macro_rules! debug {
+macro_rules! log_debug {
     ($($arg:tt)*) => {
         $crate::log::write($crate::log::Level::Debug, ::std::format_args!($($arg)*))
     };
 }
 
-pub(crate) use {debug, error, info, warn};
+pub(crate) use log_debug as debug;
+pub(crate) use log_error as error;
+pub(crate) use log_info as info;
+pub(crate) use log_warn as warn;
 
 #[cfg(test)]
 mod tests {

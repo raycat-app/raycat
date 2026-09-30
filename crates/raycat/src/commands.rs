@@ -22,9 +22,9 @@ const CHECK_CONFIG: &str = "xray-check.json";
 
 /// Строка в stdout; закрытый канал (`| head`) не повод падать.
 macro_rules! say {
-    ($($arg:tt)*) => {
-        let _ = writeln!(io::stdout().lock(), $($arg)*)
-    };
+    ($($arg:tt)*) => {{
+        let _ = writeln!(io::stdout().lock(), $($arg)*);
+    }};
 }
 
 /// `raycat check`: настройки, кэш подписок, конфиг xray и `xray run -test`.
