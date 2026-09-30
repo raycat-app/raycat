@@ -213,10 +213,7 @@ pub(crate) fn identity(config: &Config, store: &Store) -> Result<()> {
         if let Some(manufacturer) = &device.manufacturer {
             say!("  производитель: {manufacturer}");
         }
-        say!(
-            "  устройство выведено из: {}",
-            source.origin().describe()
-        );
+        say!("  устройство выведено из: {}", source.origin().describe());
     }
     Ok(())
 }

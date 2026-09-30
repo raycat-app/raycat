@@ -100,14 +100,21 @@ impl Process {
         let Some(mut running) = self.running.take() else {
             return;
         };
-        if let Some(pid) = running.child.id().and_then(|id| libc::pid_t::try_from(id).ok()) {
+        if let Some(pid) = running
+            .child
+            .id()
+            .and_then(|id| libc::pid_t::try_from(id).ok())
+        {
             terminate(pid);
         }
         if tokio::time::timeout(STOP_GRACE, running.child.wait())
             .await
             .is_err()
         {
-            warn!("xray не завершился за {} с, останавливаю принудительно", STOP_GRACE.as_secs());
+            warn!(
+                "xray не завершился за {} с, останавливаю принудительно",
+                STOP_GRACE.as_secs()
+            );
             let _ = running.child.kill().await;
         }
         info!("xray остановлен");
@@ -210,7 +217,10 @@ pub(crate) fn test_config(bin: &Path, config: &Path) -> Result<()> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).collect();
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
     let tail = lines
         .iter()
         .skip(lines.len().saturating_sub(CHECK_TAIL_LINES))
@@ -238,7 +248,10 @@ mod tests {
 
     #[test]
     fn other_lines_are_left_alone() {
-        assert_eq!(strip_timestamp("Xray 26.9.9 started"), "Xray 26.9.9 started");
+        assert_eq!(
+            strip_timestamp("Xray 26.9.9 started"),
+            "Xray 26.9.9 started"
+        );
         assert_eq!(strip_timestamp("[Info] core: ok"), "[Info] core: ok");
         assert_eq!(
             strip_timestamp("failed to load [config]"),

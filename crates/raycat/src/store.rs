@@ -75,7 +75,9 @@ impl Store {
         match fs::read_to_string(&path) {
             Ok(text) => checked_machine_id(&text, &path),
             Err(error) if error.kind() == io::ErrorKind::NotFound => self.create_machine_id(&path),
-            Err(error) => Err(error).with_context(|| format!("не удалось прочитать {}", path.display())),
+            Err(error) => {
+                Err(error).with_context(|| format!("не удалось прочитать {}", path.display()))
+            }
         }
     }
 
@@ -99,7 +101,9 @@ impl Store {
                     .with_context(|| format!("не удалось прочитать {}", path.display()))?;
                 checked_machine_id(&text, path)
             }
-            Err(error) => Err(error).with_context(|| format!("не удалось создать {}", path.display())),
+            Err(error) => {
+                Err(error).with_context(|| format!("не удалось создать {}", path.display()))
+            }
         }
     }
 
@@ -137,7 +141,8 @@ impl Store {
     pub(crate) fn save_state(&self, name: &str, state: &SubState) -> Result<()> {
         let dir = self.subscription_dir(name);
         create_private_dir(&dir)?;
-        let json = serde_json::to_vec_pretty(state).context("не удалось сериализовать состояние")?;
+        let json =
+            serde_json::to_vec_pretty(state).context("не удалось сериализовать состояние")?;
         write_atomic(&dir.join("state.json"), &json)
     }
 }
@@ -198,9 +203,10 @@ fn temp_path(path: &Path) -> Result<PathBuf> {
     let dir = path
         .parent()
         .with_context(|| format!("у {} нет каталога", path.display()))?;
-    let name = path
-        .file_name()
-        .map_or_else(|| "file".to_owned(), |name| name.to_string_lossy().into_owned());
+    let name = path.file_name().map_or_else(
+        || "file".to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
     Ok(dir.join(format!(
         ".{name}.{}.{}.tmp",
         std::process::id(),
@@ -378,7 +384,10 @@ mod tests {
     fn keys_are_safe_and_distinct() {
         for name in ["..", "../../etc", "a/b", "имя", "with space", ""] {
             let key = key(name);
-            assert!(!key.contains('/') && !key.contains('.') && !key.contains(' '), "{key}");
+            assert!(
+                !key.contains('/') && !key.contains('.') && !key.contains(' '),
+                "{key}"
+            );
             assert!(key.len() <= 24 + 17, "{key}");
         }
         assert_eq!(key("основная"), key("основная"));

@@ -176,7 +176,9 @@ mod tests {
     #[test]
     fn help_and_version_are_not_errors() {
         for flag in ["--help", "-h", "--version", "-V"] {
-            let error = command().try_get_matches_from(["raycat", flag]).unwrap_err();
+            let error = command()
+                .try_get_matches_from(["raycat", flag])
+                .unwrap_err();
             assert!(!error.use_stderr(), "{flag}");
             assert!(matches!(
                 error.kind(),
@@ -192,7 +194,15 @@ mod tests {
     #[test]
     fn help_is_in_russian() {
         let help = command().render_help().to_string();
-        for word in ["Использование:", "Команды", "Параметры", "daemon", "check", "fetch", "identity"] {
+        for word in [
+            "Использование:",
+            "Команды",
+            "Параметры",
+            "daemon",
+            "check",
+            "fetch",
+            "identity",
+        ] {
             assert!(help.contains(word), "{word}: {help}");
         }
         assert!(!help.contains("Print help"));

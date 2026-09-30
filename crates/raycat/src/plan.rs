@@ -94,7 +94,10 @@ mod tests {
     #[test]
     fn proxy_mode_gives_the_listen_address() {
         let config = config("type = \"proxy\"\nlisten = \"127.0.0.1:7891\"", "");
-        assert_eq!(proxy_listen(&config).unwrap(), "127.0.0.1:7891".parse().unwrap());
+        assert_eq!(
+            proxy_listen(&config).unwrap(),
+            "127.0.0.1:7891".parse().unwrap()
+        );
     }
 
     #[test]

@@ -41,7 +41,9 @@ pub(crate) fn run(config: Config, store: Store) -> Result<()> {
 async fn serve(config: Config, store: Store) -> Result<()> {
     let listen = plan::proxy_listen(&config)?;
     if !listen.ip().is_loopback() {
-        warn!("прокси слушает {listen} без пароля: им сможет пользоваться любой, кто до него дотянется");
+        warn!(
+            "прокси слушает {listen} без пароля: им сможет пользоваться любой, кто до него дотянется"
+        );
     }
     let machine_id = store.machine_id()?;
     let mut daemon = Daemon::new(config, store, &machine_id, free_port()?)?;
@@ -213,7 +215,10 @@ impl Daemon {
             );
         }
         if plan.skipped > 0 {
-            warn!("узлов, которые xray не поддерживает, пропущено: {}", plan.skipped);
+            warn!(
+                "узлов, которые xray не поддерживает, пропущено: {}",
+                plan.skipped
+            );
         }
         self.applied = Some(plan.json);
         self.applied_nodes = plan.nodes;
@@ -324,7 +329,10 @@ impl Daemon {
                 let url = sub.source.config().url.expose();
                 info!(
                     "подписка «{name}» обновлена: {}; следующее обновление через {}",
-                    redact_in(&updater::summary(&analysis.info, analysis.nodes.len()), &[url]),
+                    redact_in(
+                        &updater::summary(&analysis.info, analysis.nodes.len()),
+                        &[url]
+                    ),
                     format_duration(refresh.next_in)
                 );
                 for warning in &analysis.warnings {

@@ -124,7 +124,10 @@ mod tests {
     fn formats_durations() {
         assert_eq!(format_duration(Duration::from_secs(7)), "7 с");
         assert_eq!(format_duration(Duration::from_secs(330)), "5 мин 30 с");
-        assert_eq!(format_duration(Duration::from_secs(12 * 3_600)), "12 ч 0 мин");
+        assert_eq!(
+            format_duration(Duration::from_secs(12 * 3_600)),
+            "12 ч 0 мин"
+        );
         assert_eq!(format_duration(Duration::from_secs(100_000)), "1 д 3 ч");
     }
 

@@ -224,8 +224,16 @@ mod tests {
         let mut dedup = dedup();
         let start = Instant::now();
         dedup.push(start, Level::Warn, "сбой".to_owned());
-        dedup.push(start + Duration::from_secs(1), Level::Warn, "сбой".to_owned());
-        dedup.push(start + Duration::from_secs(2), Level::Warn, "сбой".to_owned());
+        dedup.push(
+            start + Duration::from_secs(1),
+            Level::Warn,
+            "сбой".to_owned(),
+        );
+        dedup.push(
+            start + Duration::from_secs(2),
+            Level::Warn,
+            "сбой".to_owned(),
+        );
         let lines = dedup.push(start + Duration::from_secs(3), Level::Info, "ок".to_owned());
         assert_eq!(texts(&lines), ["сбой (повторилось 2 раз)", "ок"]);
         assert_eq!(lines[0].level, Level::Warn);
@@ -255,10 +263,22 @@ mod tests {
         let mut dedup = dedup();
         let start = Instant::now();
         dedup.push(start, Level::Warn, "сбой".to_owned());
-        dedup.push(start + Duration::from_secs(10), Level::Warn, "сбой".to_owned());
-        let lines = dedup.push(start + Duration::from_secs(61), Level::Warn, "сбой".to_owned());
+        dedup.push(
+            start + Duration::from_secs(10),
+            Level::Warn,
+            "сбой".to_owned(),
+        );
+        let lines = dedup.push(
+            start + Duration::from_secs(61),
+            Level::Warn,
+            "сбой".to_owned(),
+        );
         assert_eq!(texts(&lines), ["сбой (повторилось 1 раз)", "сбой"]);
-        let again = dedup.push(start + Duration::from_secs(62), Level::Warn, "сбой".to_owned());
+        let again = dedup.push(
+            start + Duration::from_secs(62),
+            Level::Warn,
+            "сбой".to_owned(),
+        );
         assert!(again.is_empty());
     }
 
@@ -275,7 +295,9 @@ mod tests {
 
     #[test]
     fn levels_are_ordered_from_quiet_to_noisy() {
-        assert!(Level::Error < Level::Warn && Level::Warn < Level::Info && Level::Info < Level::Debug);
+        assert!(
+            Level::Error < Level::Warn && Level::Warn < Level::Info && Level::Info < Level::Debug
+        );
         assert_eq!(Level::from(LogLevel::Debug), Level::Debug);
         assert_eq!(Level::from(LogLevel::Error), Level::Error);
     }

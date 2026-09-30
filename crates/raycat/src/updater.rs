@@ -215,7 +215,8 @@ impl Source {
         }
         if let Some(url) = state.fallback_url.as_deref().and_then(parse_url)
             && !list.contains(&url)
-            && !(url.scheme == Scheme::Http && list.iter().any(|known| known.scheme == Scheme::Https))
+            && !(url.scheme == Scheme::Http
+                && list.iter().any(|known| known.scheme == Scheme::Https))
         {
             list.push(url);
         }
@@ -344,7 +345,15 @@ pub(crate) fn refresh(source: &Source, store: &Store, failures: u32, now: u64) -
     let mut send = |url: &Url| source.send(url);
     let (outcome, next_in) = match fetch_candidates(&candidates, &mut send) {
         Err(error) => reject(&mut state, Outcome::Failed, format!("{error:#}"), failures),
-        Ok(fetched) => process(source, store, &mut state, cached.as_deref(), &fetched, now, failures),
+        Ok(fetched) => process(
+            source,
+            store,
+            &mut state,
+            cached.as_deref(),
+            &fetched,
+            now,
+            failures,
+        ),
     };
     state.next_update = now.saturating_add(next_in.as_secs());
     if let Err(error) = store.save_state(source.name(), &state) {
@@ -409,7 +418,10 @@ fn remember_addresses(name: &str, state: &mut SubState, info: &ProviderInfo, fet
         let text = url.to_string();
         if state.replaced_url.as_deref() != Some(text.as_str()) {
             hide(&text, &redact(&url));
-            info!("подписка «{name}»: провайдер переехал, новый адрес {}", redact(&url));
+            info!(
+                "подписка «{name}»: провайдер переехал, новый адрес {}",
+                redact(&url)
+            );
             state.replaced_url = Some(text);
         }
     }
@@ -458,8 +470,7 @@ mod tests {
     use crate::testing::{FakePanel, TempDir, http_response};
 
     const MACHINE_ID: &str = "0d0af05ee8fd4dc29275718f2ce4dff1";
-    const LINKS: &str =
-        "ss://aes-128-gcm:secret@203.0.113.5:8388#One\nss://aes-128-gcm:secret@203.0.113.6:8388#Two\n";
+    const LINKS: &str = "ss://aes-128-gcm:secret@203.0.113.5:8388#One\nss://aes-128-gcm:secret@203.0.113.6:8388#Two\n";
 
     fn response(status: u16, headers: &[(&str, &str)], body: &str) -> Response {
         Response {
@@ -679,7 +690,11 @@ mod tests {
             .collect();
         assert_eq!(
             hosts,
-            ["moved.example.com", "main.example.com", "reserve.example.com"]
+            [
+                "moved.example.com",
+                "main.example.com",
+                "reserve.example.com"
+            ]
         );
         let plain: Vec<String> = source
             .candidates(&SubState::default())
@@ -720,7 +735,11 @@ mod tests {
     #[test]
     fn new_domain_keeps_the_path_and_query() {
         let requested = url("https://old.example.com/sub/abcd?x=1");
-        let target = moved_to(&moved(None, Some("new.example.com")), &requested, &requested);
+        let target = moved_to(
+            &moved(None, Some("new.example.com")),
+            &requested,
+            &requested,
+        );
         assert_eq!(target, Some(url("https://new.example.com/sub/abcd?x=1")));
     }
 
@@ -752,7 +771,11 @@ mod tests {
     fn a_move_to_the_same_address_or_nowhere_is_ignored() {
         let requested = url("https://old.example.com/sub/abcd");
         assert_eq!(
-            moved_to(&moved(None, Some("old.example.com")), &requested, &requested),
+            moved_to(
+                &moved(None, Some("old.example.com")),
+                &requested,
+                &requested
+            ),
             None
         );
         assert_eq!(moved_to(&moved(None, None), &requested, &requested), None);
@@ -761,7 +784,13 @@ mod tests {
     #[test]
     fn a_hostile_domain_cannot_smuggle_a_path_or_credentials() {
         let requested = url("https://old.example.com/sub/abcd");
-        for domain in ["evil.example.com/x", "user@evil.example.com", "a b", "a?b", ""] {
+        for domain in [
+            "evil.example.com/x",
+            "user@evil.example.com",
+            "a b",
+            "a?b",
+            "",
+        ] {
             let info = moved(None, Some(domain));
             assert_eq!(moved_to(&info, &requested, &requested), None, "{domain:?}");
         }
@@ -814,7 +843,8 @@ mod tests {
         );
         let device_seed = load(&text("", "[device]\nseed = \"общий\""));
         let with_seed = load(&text("seed = \"свой\"", "[device]\nseed = \"общий\""));
-        let (shared, origin) = machine_id_for(&device_seed, &device_seed.subscriptions[0], "stored");
+        let (shared, origin) =
+            machine_id_for(&device_seed, &device_seed.subscriptions[0], "stored");
         assert_eq!(origin, Origin::DeviceSeed);
         let (own, origin) = machine_id_for(&with_seed, &with_seed.subscriptions[0], "stored");
         assert_eq!(origin, Origin::SubscriptionSeed);
@@ -827,7 +857,10 @@ mod tests {
         let panel = FakePanel::start(|_| {
             http_response(
                 "200 OK",
-                &[("Subscription-Userinfo", "upload=1; download=2; total=100; expire=0")],
+                &[(
+                    "Subscription-Userinfo",
+                    "upload=1; download=2; total=100; expire=0",
+                )],
                 LINKS,
             )
         });

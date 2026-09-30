@@ -26,9 +26,7 @@ pub(crate) fn interval(configured: Option<Duration>, provider: Option<Duration>)
 /// 30 с, 1 мин, 2 мин, … не дольше 10 мин.
 pub(crate) fn retry_delay(failures: u32) -> Duration {
     let doublings = failures.saturating_sub(1).min(16);
-    RETRY_FIRST
-        .saturating_mul(1 << doublings)
-        .min(RETRY_MAX)
+    RETRY_FIRST.saturating_mul(1 << doublings).min(RETRY_MAX)
 }
 
 /// Следующая пауза перед перезапуском: вдвое дольше предыдущей, не дольше 30 с.
