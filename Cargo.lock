@@ -389,6 +389,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "raycat-select"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "raycat-subscription"
 version = "0.1.0"
 dependencies = [
