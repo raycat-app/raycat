@@ -309,6 +309,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "raycat-config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "raycat-emulation"
 version = "0.1.0"
 dependencies = [
