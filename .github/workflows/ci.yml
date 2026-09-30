@@ -119,6 +119,8 @@ jobs:
     env:
       ACTIONLINT_VERSION: 1.7.12
       ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      HADOLINT_VERSION: 2.15.1
+      HADOLINT_SHA256: c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -134,6 +136,12 @@ jobs:
           echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum -c -
           tar -xzf "$archive" actionlint
           ./actionlint -color
+      - name: hadolint
+        run: |
+          curl -fsSLo hadolint "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
+          echo "${HADOLINT_SHA256}  hadolint" | sha256sum -c -
+          chmod +x hadolint
+          ./hadolint Dockerfile
       - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
           advanced-security: false
@@ -186,6 +194,71 @@ jobs:
           name: raycat-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/raycat
           retention-days: 14
+          if-no-files-found: error
+
+  image:
+    name: Образ Docker (${{ matrix.arch }})
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            xray_key: x86_64
+            xray_archive: Xray-linux-64.zip
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            xray_key: aarch64
+            xray_archive: Xray-linux-arm64-v8a.zip
+    env:
+      ARCH: ${{ matrix.arch }}
+      XRAY_KEY: ${{ matrix.xray_key }}
+      XRAY_ARCHIVE: ${{ matrix.xray_archive }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: raycat-${{ matrix.target }}
+          path: dist/${{ matrix.arch }}
+      - name: Сборка образа
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' versions.toml)
+          sha256=$(sed -n "s/^${XRAY_KEY} = \"\(.*\)\"/\1/p" versions.toml)
+          test -n "$version" && test -n "$sha256"
+          docker build \
+            --build-arg "XRAY_VERSION=${version}" \
+            --build-arg "XRAY_ARCHIVE=${XRAY_ARCHIVE}" \
+            --build-arg "XRAY_SHA256=${sha256}" \
+            --tag raycat:ci .
+      - name: Дымовая проверка
+        run: |
+          docker run --rm raycat:ci --version
+          docker run --rm --entrypoint /usr/libexec/raycat/xray raycat:ci version
+          docker run --rm --entrypoint nft raycat:ci --version
+          docker run --rm --entrypoint ip raycat:ci -V
+          volumes=$(docker image inspect -f '{{json .Config.Volumes}}' raycat:ci)
+          test "$volumes" = null
+          command=$(docker image inspect -f '{{json .Config.Entrypoint}} {{json .Config.Cmd}}' raycat:ci)
+          test "$command" = '["raycat"] ["daemon"]'
+          size=$(docker image inspect -f '{{.Size}}' raycat:ci)
+          echo "Образ ${ARCH}: $((size / 1024 / 1024)) МиБ ($size байт)"
+          echo "Образ ${ARCH}: $((size / 1024 / 1024)) МиБ" >> "$GITHUB_STEP_SUMMARY"
+      - name: Сохранение образа
+        run: docker save raycat:ci | gzip -9 > "$RUNNER_TEMP/image-${ARCH}.tar.gz"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-${{ matrix.arch }}
+          path: ${{ runner.temp }}/image-${{ matrix.arch }}.tar.gz
+          retention-days: 7
+          compression-level: 0
           if-no-files-found: error
 
   xray-config:
@@ -243,7 +316,7 @@ jobs:
   result:
     name: Итог
     if: ${{ always() }}
-    needs: [lint, lockfile, test, msrv, deny, workflows, build, xray-config, e2e-proxy]
+    needs: [lint, lockfile, test, msrv, deny, workflows, build, image, xray-config, e2e-proxy]
     runs-on: ubuntu-24.04
     permissions: {}
     steps:

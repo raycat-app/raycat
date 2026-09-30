@@ -1,5 +1,6 @@
 /*
 !/.cargo/
+!/.dockerignore
 !/.editorconfig
 !/.gitattributes
 !/.github/
@@ -12,6 +13,7 @@
 !/CONTRIBUTING.md
 !/crates/
 !/deny.toml
+!/Dockerfile
 !/LICENSE
 !/README.en.md
 !/README.md
