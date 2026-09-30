@@ -55,8 +55,11 @@ pub(crate) fn is_placeholder(endpoint: &Endpoint) -> bool {
     if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
         return true;
     }
-    host.parse::<IpAddr>()
-        .is_ok_and(|ip| ip.is_unspecified() || ip.is_loopback())
+    // Узел-разделитель вроде «33»: не IP-адрес и не доменное имя с точкой.
+    host.parse::<IpAddr>().map_or_else(
+        |_| !host.contains('.'),
+        |ip| ip.is_unspecified() || ip.is_loopback(),
+    )
 }
 
 /// Узел-заглушка: сервер выхода (первый outbound) ненастоящий.
@@ -107,6 +110,8 @@ mod tests {
             ("::", 443),
             ("[::1]", 443),
             ("localhost", 443),
+            ("33", 443),
+            ("separator", 443),
             ("", 443),
             ("nl.example.com", 1),
             ("nl.example.com", 0),

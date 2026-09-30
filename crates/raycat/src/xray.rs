@@ -165,17 +165,33 @@ async fn forward(reader: impl AsyncRead + Unpin) {
     }
 }
 
-/// Ошибки xray попадают в лог как предупреждения, остальное — на уровне debug.
+/// Вывод xray идёт на уровне debug; предупреждением становится только то, что говорит
+/// о проблеме самого xray. Ошибки соединений с мёртвыми узлами (`failed to dial`,
+/// `failed to resolve ip`) сюда не относятся: состояние узлов показывает выбор узла.
 fn report(line: &str) {
     let text = sanitize(strip_timestamp(line.trim()));
     if text.is_empty() {
         return;
     }
-    if text.contains("[Error]") {
+    if is_xray_problem(&text) {
         warn!("xray: {text}");
     } else {
         debug!("xray: {text}");
     }
+}
+
+fn is_xray_problem(text: &str) -> bool {
+    const MARKERS: [&str; 6] = [
+        "failed to start",
+        "failed to load config",
+        "failed to listen",
+        "address already in use",
+        "panic:",
+        "fatal error",
+    ];
+    let lower = text.to_ascii_lowercase();
+    MARKERS.iter().any(|marker| lower.contains(marker))
+        || (text.contains("[Error]") && text.contains("infra/conf"))
 }
 
 /// xray начинает строку со своей даты (`2026/09/30 12:00:00.123456 [Warning] …`).
@@ -244,6 +260,30 @@ mod tests {
             strip_timestamp("2026/09/30 12:00:00 [Error] app/dns: failed"),
             "[Error] app/dns: failed"
         );
+    }
+
+    #[test]
+    fn dead_node_errors_are_not_xray_problems() {
+        for line in [
+            "[Error] transport/internet/websocket: failed to dial to (wss://example.com/ws): dial tcp: i/o timeout",
+            "[Error] app/proxyman/outbound: failed to resolve ip > returning nil for domain 33",
+            "[Warning] proxy/http: failed to read response from 203.0.113.5:80 > unexpected EOF",
+            "[Info] infra/conf/serial: Reading config: &{Name:/x/xray.json Format:json}",
+        ] {
+            assert!(!is_xray_problem(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn config_and_port_failures_are_xray_problems() {
+        for line in [
+            "Failed to start: main: failed to load config files: [/x/xray.json] > invalid",
+            "[Error] infra/conf: unknown protocol foo",
+            "[Warning] app/proxyman/inbound: failed to listen TCP on 127.0.0.1:7890 > listen tcp 127.0.0.1:7890: bind: address already in use",
+            "panic: runtime error: invalid memory address",
+        ] {
+            assert!(is_xray_problem(line), "{line}");
+        }
     }
 
     #[test]
