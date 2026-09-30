@@ -23,6 +23,10 @@ use crate::util::{format_duration, format_time, now_unix};
 use crate::xray::{Exit, Process};
 
 const XRAY_CONFIG: &str = "xray.json";
+/// Сколько при старте без кэша ждать первой попытки всех подписок.
+const STARTUP_WAIT: Duration = Duration::from_secs(20);
+/// Изменения узлов в пределах этого срока дают один перезапуск xray.
+const RESTART_DEBOUNCE: Duration = Duration::from_secs(3);
 
 type Finished = (usize, Refresh);
 
@@ -106,6 +110,8 @@ struct Sub {
     in_flight: bool,
     failures: u32,
     announce: Option<String>,
+    /// Первая попытка получения (успешная или нет) уже закончилась.
+    first_done: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +132,8 @@ struct Daemon {
     applied_nodes: usize,
     restart: Restart,
     backoff: Duration,
+    /// Старт без кэша: xray ждёт первой попытки всех подписок до этого срока.
+    gather_until: Option<Instant>,
 }
 
 impl Daemon {
@@ -142,6 +150,7 @@ impl Daemon {
                     in_flight: false,
                     failures: 0,
                     announce: None,
+                    first_done: false,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -160,10 +169,12 @@ impl Daemon {
             applied_nodes: 0,
             restart: Restart::Idle,
             backoff: RESTART_FIRST,
+            gather_until: None,
         })
     }
 
-    /// Поднимает xray из кэша, не дожидаясь панелей.
+    /// Поднимает xray из кэша, не дожидаясь панелей. Без кэша ждёт первой попытки
+    /// всех подписок, чтобы запустить xray один раз, а не по разу на каждую.
     fn load_caches(&mut self) {
         let store = self.store.clone();
         for sub in &mut self.subs {
@@ -181,7 +192,14 @@ impl Daemon {
         }
         if self.subs.iter().any(|sub| !sub.nodes.is_empty()) {
             self.reconcile();
+        } else {
+            self.gather_until = Some(Instant::now() + STARTUP_WAIT);
         }
+    }
+
+    fn finish_gathering(&mut self) {
+        self.gather_until = None;
+        self.reconcile();
     }
 
     /// Собирает конфиг из текущих узлов; если он изменился, записывает его и
@@ -220,15 +238,24 @@ impl Daemon {
                 plan.skipped
             );
         }
+        let first = self.applied.is_none();
         self.applied = Some(plan.json);
         self.applied_nodes = plan.nodes;
-        self.restart = Restart::Now;
+        if first {
+            self.restart = Restart::Now;
+        } else if self.restart != Restart::Now {
+            // Несколько изменений подряд сливаются в один перезапуск.
+            self.restart = Restart::At(Instant::now() + RESTART_DEBOUNCE);
+        }
     }
 
     /// Запускает то, что подошло по времени: перезапуск xray и обновления подписок.
     async fn tick(&mut self, tx: &UnboundedSender<Finished>) {
-        self.restart_process().await;
         let now = Instant::now();
+        if self.gather_until.is_some_and(|deadline| deadline <= now) {
+            self.finish_gathering();
+        }
+        self.restart_process().await;
         let due: Vec<usize> = self
             .subs
             .iter()
@@ -289,6 +316,7 @@ impl Daemon {
             .filter(|sub| !sub.in_flight)
             .filter_map(|sub| sub.due)
             .chain(restart)
+            .chain(self.gather_until)
             .min()
     }
 
@@ -320,6 +348,7 @@ impl Daemon {
             return;
         };
         sub.in_flight = false;
+        sub.first_done = true;
         sub.due = Some(Instant::now() + refresh.next_in);
         let name = sub.source.config().name.clone();
         match refresh.outcome {
@@ -346,7 +375,9 @@ impl Daemon {
                     }
                 }
                 sub.nodes = analysis.nodes;
-                self.reconcile();
+                if self.gather_until.is_none() {
+                    self.reconcile();
+                }
             }
             Outcome::Rejected(reason) => {
                 sub.failures = sub.failures.saturating_add(1);
@@ -363,5 +394,139 @@ impl Daemon {
                 );
             }
         }
+        if self.gather_until.is_some() && self.subs.iter().all(|sub| sub.first_done) {
+            self.finish_gathering();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fmt::Write as _;
+
+    use raycat_config::Env;
+    use raycat_subscription::analyze;
+
+    use super::*;
+    use crate::testing::TempDir;
+
+    const ONE: &str = "ss://aes-128-gcm:secret@203.0.113.5:8388#One\n";
+    const TWO: &str = "ss://aes-128-gcm:secret@203.0.113.6:8388#Two\n";
+    const BOTH: &str =
+        "ss://aes-128-gcm:secret@203.0.113.5:8388#One\nss://aes-128-gcm:secret@203.0.113.6:8388#Two\n";
+
+    fn daemon(names: &[&str], temp: &TempDir) -> Daemon {
+        let mut text = String::new();
+        for name in names {
+            let _ = write!(
+                text,
+                "[[subscription]]\nname = \"{name}\"\nurl = \"https://{name}.example.com/sub/token1234\"\napp = \"happ\"\nplatform = \"windows\"\n"
+            );
+        }
+        let config = Config::from_toml_str(&text, &Env::new()).unwrap();
+        let store = Store::open(temp.path().to_path_buf()).unwrap();
+        Daemon::new(config, store, "0d0af05ee8fd4dc29275718f2ce4dff1", 10_085).unwrap()
+    }
+
+    fn applied(links: &str) -> Refresh {
+        let analysis = analyze(200, &[], links.as_bytes());
+        assert!(analysis.problem.is_none());
+        Refresh {
+            outcome: Outcome::Applied(Box::new(analysis)),
+            next_in: Duration::from_secs(43_200),
+        }
+    }
+
+    fn failed() -> Refresh {
+        Refresh {
+            outcome: Outcome::Failed("нет связи".to_owned()),
+            next_in: Duration::from_secs(30),
+        }
+    }
+
+    #[test]
+    fn without_a_cache_xray_starts_once_after_every_subscription_answered() {
+        let temp = TempDir::new("gather");
+        let mut daemon = daemon(&["a", "b"], &temp);
+        daemon.load_caches();
+        assert!(daemon.gather_until.is_some());
+
+        daemon.finished(0, applied(ONE));
+        assert!(daemon.gather_until.is_some());
+        assert!(daemon.applied.is_none());
+        assert_eq!(daemon.restart, Restart::Idle);
+
+        daemon.finished(1, applied(TWO));
+        assert!(daemon.gather_until.is_none());
+        assert_eq!(daemon.applied_nodes, 2);
+        assert_eq!(daemon.restart, Restart::Now);
+    }
+
+    #[test]
+    fn a_failed_subscription_does_not_hold_xray_back() {
+        let temp = TempDir::new("gather-failed");
+        let mut daemon = daemon(&["a", "b"], &temp);
+        daemon.load_caches();
+        daemon.finished(1, failed());
+        assert!(daemon.gather_until.is_some());
+        daemon.finished(0, applied(ONE));
+        assert!(daemon.gather_until.is_none());
+        assert_eq!(daemon.applied_nodes, 1);
+        assert_eq!(daemon.restart, Restart::Now);
+    }
+
+    #[test]
+    fn when_every_subscription_failed_nothing_starts_yet() {
+        let temp = TempDir::new("gather-none");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished(0, failed());
+        assert!(daemon.gather_until.is_none());
+        assert!(daemon.applied.is_none());
+        assert_eq!(daemon.restart, Restart::Idle);
+
+        daemon.finished(0, applied(ONE));
+        assert_eq!(daemon.restart, Restart::Now);
+    }
+
+    #[test]
+    fn later_changes_are_merged_into_one_delayed_restart() {
+        let temp = TempDir::new("debounce");
+        let mut daemon = daemon(&["a", "b"], &temp);
+        daemon.load_caches();
+        daemon.finished(0, applied(ONE));
+        daemon.finished(1, applied(TWO));
+        daemon.restart = Restart::Idle;
+
+        daemon.finished(0, applied(BOTH));
+        let Restart::At(first) = daemon.restart else {
+            panic!("ожидался отложенный перезапуск");
+        };
+        assert!(first > Instant::now());
+
+        daemon.finished(1, applied(BOTH));
+        assert!(matches!(daemon.restart, Restart::At(_)));
+    }
+
+    #[test]
+    fn an_unchanged_answer_does_not_restart_xray() {
+        let temp = TempDir::new("unchanged");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished(0, applied(ONE));
+        daemon.restart = Restart::Idle;
+        daemon.finished(0, applied(ONE));
+        assert_eq!(daemon.restart, Restart::Idle);
+    }
+
+    #[test]
+    fn a_pending_immediate_restart_is_not_postponed() {
+        let temp = TempDir::new("pending-now");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished(0, applied(ONE));
+        assert_eq!(daemon.restart, Restart::Now);
+        daemon.finished(0, applied(BOTH));
+        assert_eq!(daemon.restart, Restart::Now);
     }
 }

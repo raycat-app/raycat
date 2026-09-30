@@ -54,10 +54,21 @@ fn hex_value(byte: u8) -> Option<u8> {
 /// Убирает управляющие символы и символы смены направления текста: значения из
 /// ответа панели попадают в терминал и логи.
 pub(crate) fn sanitize(input: &str) -> String {
-    input
-        .chars()
-        .filter(|c| !c.is_control() && !is_bidi(*c))
-        .collect()
+    let mut out = String::with_capacity(input.len());
+    let mut after_break = false;
+    for c in input.chars() {
+        if matches!(c, '\n' | '\r') {
+            // Перенос строки не должен склеивать слова; подряд идущие дают один пробел.
+            if !after_break {
+                out.push(' ');
+            }
+            after_break = true;
+        } else if !c.is_control() && !is_bidi(c) {
+            out.push(c);
+            after_break = false;
+        }
+    }
+    out
 }
 
 fn is_bidi(c: char) -> bool {
@@ -129,7 +140,14 @@ mod tests {
 
     #[test]
     fn sanitize_strips_control_and_bidi() {
-        assert_eq!(sanitize("a\u{1b}[31mb\r\nc\u{202e}d\u{0}"), "a[31mbcd");
+        assert_eq!(sanitize("a\u{1b}[31mb\r\nc\u{202e}d\u{0}"), "a[31mb cd");
+    }
+
+    #[test]
+    fn line_breaks_become_one_space() {
+        assert_eq!(sanitize("подписке\nЕсли низкая"), "подписке Если низкая");
+        assert_eq!(sanitize("a\r\n\r\n\nb"), "a b");
+        assert_eq!(clean("\nстрока\r\n", 20), "строка");
         assert_eq!(clean("  привет мир  ", 6), "привет");
     }
 

@@ -304,13 +304,22 @@ mod tests {
     }
 
     #[test]
+    fn announce_line_breaks_do_not_glue_words() {
+        let info = info(&[("announce", "Продлите подписку\nЕсли баланс низкий\r\n\r\nпополните")]);
+        assert_eq!(
+            info.announce.as_deref(),
+            Some("Продлите подписку Если баланс низкий пополните")
+        );
+    }
+
+    #[test]
     fn control_characters_are_stripped() {
         let info = info(&[
             ("profile-title", "VPN\u{1b}[31m\r\nred"),
             ("announce", "base64:0J/RgNC40LLQtdGCCg=="),
             ("support-url", "https://example.com/\u{7}help"),
         ]);
-        assert_eq!(info.title.as_deref(), Some("VPN[31mred"));
+        assert_eq!(info.title.as_deref(), Some("VPN[31m red"));
         assert_eq!(info.announce.as_deref(), Some("Привет"));
         assert_eq!(
             info.support_url.as_deref(),
