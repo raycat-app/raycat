@@ -19,7 +19,10 @@ pub(crate) struct NodeState {
 
 impl NodeState {
     pub(crate) fn observe(&mut self, health: &Health) {
-        if self.last_checked.is_some_and(|last| health.checked_at <= last) {
+        if self
+            .last_checked
+            .is_some_and(|last| health.checked_at <= last)
+        {
             return;
         }
         self.last_checked = Some(health.checked_at);

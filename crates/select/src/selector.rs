@@ -104,7 +104,7 @@ impl Selector {
                         None
                     },
                     failures: state.failures,
-                    alive_for_secs: self.alive_for(index, now).map(Duration::as_secs),
+                    alive_for_secs: self.alive_for(index, now).map(|age| age.as_secs()),
                     last_error: state.last_error.clone(),
                     selected: self.current == Some(index),
                     pinned: pin.is_some_and(|pin| {
@@ -131,11 +131,7 @@ impl Selector {
             .collect();
         let updates: Vec<(usize, &Health)> = health
             .iter()
-            .filter_map(|item| {
-                positions
-                    .get(item.tag.as_str())
-                    .map(|&index| (index, item))
-            })
+            .filter_map(|item| positions.get(item.tag.as_str()).map(|&index| (index, item)))
             .collect();
         for (index, item) in updates {
             self.nodes[index].state.observe(item);
@@ -187,7 +183,8 @@ impl Selector {
                 },
             };
         }
-        let first_not_dead = (0..self.nodes.len()).find(|&index| self.status(index) != Status::Dead);
+        let first_not_dead =
+            (0..self.nodes.len()).find(|&index| self.status(index) != Status::Dead);
         match first_not_dead {
             Some(index) => Outcome {
                 target: Some(index),

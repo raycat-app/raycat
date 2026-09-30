@@ -168,10 +168,7 @@ fn equal_latency_keeps_list_order() {
 #[test]
 fn unknown_current_node_is_kept_until_data_arrives() {
     let mut selector = selector();
-    assert_eq!(
-        selector.step(secs(0), &[]).selected.as_deref(),
-        Some("a1")
-    );
+    assert_eq!(selector.step(secs(0), &[]).selected.as_deref(), Some("a1"));
     let partial: Vec<Health> = health(10, healthy())
         .into_iter()
         .filter(|item| item.tag != "a1")
@@ -374,7 +371,11 @@ fn failed_check_restarts_the_return_delay() {
         (50, outage, "b1", false),
         (60, recovered, "b1", false),
     ];
-    rows.extend((70..=110).step_by(10).map(|at| (at, recovered, "b1", false)));
+    rows.extend(
+        (70..=110)
+            .step_by(10)
+            .map(|at| (at, recovered, "b1", false)),
+    );
     rows.push((120, recovered, "a1", true));
     drive(&mut selector, &rows);
 }
@@ -622,7 +623,12 @@ fn snapshot_describes_every_node() {
     let mut selector = selector();
     let before = selector.snapshot(secs(0));
     assert_eq!(before.selected, None);
-    assert!(before.nodes.iter().all(|info| info.status == Status::Unknown));
+    assert!(
+        before
+            .nodes
+            .iter()
+            .all(|info| info.status == Status::Unknown)
+    );
 
     drive(
         &mut selector,
