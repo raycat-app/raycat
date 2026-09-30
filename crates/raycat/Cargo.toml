@@ -10,7 +10,17 @@ authors.workspace = true
 publish.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 clap.workspace = true
+libc.workspace = true
+raycat-config.workspace = true
+raycat-emulation.workspace = true
+raycat-http.workspace = true
+raycat-subscription.workspace = true
+raycat-xray.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true
