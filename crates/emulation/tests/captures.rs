@@ -66,7 +66,9 @@ fn generate(input: &Input) -> String {
     // датой захвата.
     let unix = input
         .unix
-        .checked_add_signed((input.utc_offset_hours.unwrap_or(MOSCOW_OFFSET_HOURS) - MOSCOW_OFFSET_HOURS) * 3600)
+        .checked_add_signed(
+            (input.utc_offset_hours.unwrap_or(MOSCOW_OFFSET_HOURS) - MOSCOW_OFFSET_HOURS) * 3600,
+        )
         .unwrap();
     let mut request = format!("GET {} HTTP/1.1\r\n", url.target);
     for (name, value) in emulation.headers(&url, unix) {

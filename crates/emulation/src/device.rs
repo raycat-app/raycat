@@ -282,7 +282,10 @@ mod tests {
             HwidAlgorithm::from_name("incy-uuid"),
             Some(HwidAlgorithm::IncyUuid)
         );
-        assert_eq!(HwidAlgorithm::IncyUuid.derive(MACHINE_ID), incy_uuid(MACHINE_ID));
+        assert_eq!(
+            HwidAlgorithm::IncyUuid.derive(MACHINE_ID),
+            incy_uuid(MACHINE_ID)
+        );
         assert_eq!(HwidAlgorithm::from_name("raw"), None);
         assert_eq!(
             HwidAlgorithm::AndroidId.derive(MACHINE_ID),
