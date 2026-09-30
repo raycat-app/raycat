@@ -103,7 +103,11 @@ fn xray_binary() -> Option<PathBuf> {
     if path.is_absolute() {
         return Some(path);
     }
-    Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(path))
+    Some(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(path),
+    )
 }
 
 async fn connect(xray: &mut RunningXray, api_port: u16) -> XrayApi {
@@ -137,7 +141,13 @@ async fn check_pinning(api: &XrayApi) {
     assert_eq!(api.pin(BALANCER, "").await, Err(ApiError::EmptyTag));
     let error = api.pin("no-such-balancer", NODES[0]).await.unwrap_err();
     assert!(
-        matches!(error, ApiError::Request { method: "OverrideBalancerTarget", .. }),
+        matches!(
+            error,
+            ApiError::Request {
+                method: "OverrideBalancerTarget",
+                ..
+            }
+        ),
         "{error}"
     );
 }
@@ -162,7 +172,9 @@ async fn check_health(api: &XrayApi) {
         assert!(!node.alive, "{node:?}");
         assert_eq!(node.delay, None, "{node:?}");
         assert!(
-            node.last_error.as_deref().is_some_and(|text| !text.is_empty()),
+            node.last_error
+                .as_deref()
+                .is_some_and(|text| !text.is_empty()),
             "{node:?}"
         );
     }
@@ -199,10 +211,7 @@ async fn closed_port_is_reported_in_russian() {
         .await
         .unwrap_err();
 
-    assert!(
-        matches!(error, ApiError::Unreachable { .. }),
-        "{error:?}"
-    );
+    assert!(matches!(error, ApiError::Unreachable { .. }), "{error:?}");
     assert!(
         error
             .to_string()

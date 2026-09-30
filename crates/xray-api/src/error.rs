@@ -5,7 +5,10 @@ use std::net::SocketAddr;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiError {
     /// Соединение не установилось или оборвалось, либо xray не ответил вовремя.
-    Unreachable { addr: SocketAddr, reason: String },
+    Unreachable {
+        addr: SocketAddr,
+        reason: String,
+    },
     /// xray ответил ошибкой на запрос.
     Request {
         method: &'static str,

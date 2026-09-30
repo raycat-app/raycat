@@ -158,12 +158,10 @@ impl XrayApi {
     fn status_error(&self, method: &'static str, status: &Status) -> ApiError {
         match status.code() {
             // Тайм-аут запроса tonic сообщает кодом Cancelled.
-            Code::Unavailable | Code::DeadlineExceeded | Code::Cancelled => {
-                ApiError::Unreachable {
-                    addr: self.addr,
-                    reason: status.message().to_owned(),
-                }
-            }
+            Code::Unavailable | Code::DeadlineExceeded | Code::Cancelled => ApiError::Unreachable {
+                addr: self.addr,
+                reason: status.message().to_owned(),
+            },
             code => ApiError::Request {
                 method,
                 details: format!("{code}: {}", status.message()),
