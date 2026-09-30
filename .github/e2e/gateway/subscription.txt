@@ -1,0 +1,2 @@
+ss://aes-128-gcm:e2e-password@11.30.0.11:8388#Node1
+ss://aes-128-gcm:e2e-password@11.30.0.12:8388#Node2

@@ -8,6 +8,7 @@ import pathlib
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--body", type=pathlib.Path, required=True)
     parser.add_argument("--requests", type=pathlib.Path, required=True)
@@ -35,7 +36,7 @@ def main():
         def log_message(self, *_):
             pass
 
-    http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
+    http.server.ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
 
 
 if __name__ == "__main__":

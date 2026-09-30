@@ -7,13 +7,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use raycat_config::{Config, Subscription};
+use raycat_config::{Config, Mode, Subscription};
+use raycat_netfilter::Rules;
 use raycat_subscription::redact_in;
 use raycat_xray::Node;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::time::Instant;
 
+use crate::gateway;
 use crate::log::{error, info, warn};
 use crate::plan;
 use crate::schedule::{HEALTHY_UPTIME, RESTART_FIRST, next_restart_delay};
@@ -43,17 +45,23 @@ pub(crate) fn run(config: Config, store: Store) -> Result<()> {
 }
 
 async fn serve(config: Config, store: Store) -> Result<()> {
-    let listen = plan::proxy_listen(&config)?;
-    if !listen.ip().is_loopback() {
-        warn!(
+    match config.mode {
+        Mode::Proxy { listen } if !listen.ip().is_loopback() => warn!(
             "прокси слушает {listen} без пароля: им сможет пользоваться любой, кто до него дотянется"
-        );
+        ),
+        Mode::Proxy { .. } => {}
+        Mode::Gateway { .. } => gateway::preflight()?,
     }
     let machine_id = store.machine_id()?;
     let mut daemon = Daemon::new(config, store, &machine_id, free_port()?)?;
+    // Правила ставятся до запуска xray, а при сбое подписки они остаются: это kill switch.
+    if let Some(rules) = &daemon.gateway {
+        gateway::install(rules)?;
+    }
     info!(
-        "raycat {} запущен: режим прокси, адрес {listen}, подписок: {}, состояние: {}",
+        "raycat {} запущен: {}, подписок: {}, состояние: {}",
         env!("CARGO_PKG_VERSION"),
+        plan::describe_mode(&daemon.config),
         daemon.subs.len(),
         daemon.store.root().display()
     );
@@ -85,6 +93,10 @@ async fn serve(config: Config, store: Store) -> Result<()> {
         }
     }
     daemon.process.stop().await;
+    // Только при штатной остановке: после аварии правила остаются и держат kill switch.
+    if let Some(rules) = &daemon.gateway {
+        gateway::remove(rules);
+    }
     Ok(())
 }
 
@@ -134,11 +146,15 @@ struct Daemon {
     backoff: Duration,
     /// Старт без кэша: xray ждёт первой попытки всех подписок до этого срока.
     gather_until: Option<Instant>,
+    /// Правила перехвата в режиме шлюза и время следующей проверки, что они на месте.
+    gateway: Option<Rules>,
+    next_guard: Instant,
 }
 
 impl Daemon {
     fn new(config: Config, store: Store, machine_id: &str, api_port: u16) -> Result<Self> {
         let now = Instant::now();
+        let gateway = plan::gateway_rules(&config)?;
         let subs = config
             .subscriptions
             .iter()
@@ -170,6 +186,8 @@ impl Daemon {
             restart: Restart::Idle,
             backoff: RESTART_FIRST,
             gather_until: None,
+            gateway,
+            next_guard: now + gateway::GUARD_INTERVAL,
         })
     }
 
@@ -255,6 +273,12 @@ impl Daemon {
         if self.gather_until.is_some_and(|deadline| deadline <= now) {
             self.finish_gathering();
         }
+        if let Some(rules) = &self.gateway
+            && self.next_guard <= now
+        {
+            gateway::guard(rules);
+            self.next_guard = now + gateway::GUARD_INTERVAL;
+        }
         self.restart_process().await;
         let due: Vec<usize> = self
             .subs
@@ -311,12 +335,14 @@ impl Daemon {
             Restart::Now => Some(Instant::now()),
             Restart::At(at) => Some(at),
         };
+        let guard = self.gateway.as_ref().map(|_| self.next_guard);
         self.subs
             .iter()
             .filter(|sub| !sub.in_flight)
             .filter_map(|sub| sub.due)
             .chain(restart)
             .chain(self.gather_until)
+            .chain(guard)
             .min()
     }
 

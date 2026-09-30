@@ -29,11 +29,12 @@ macro_rules! say {
 
 /// `raycat check`: настройки, кэш подписок, конфиг xray и `xray run -test`.
 pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
-    let listen = plan::proxy_listen(config)?;
+    plan::gateway_rules(config)?;
     let machine_id = store.machine_id()?;
     say!(
-        "Настройки в порядке: подписок {}, режим прокси, адрес {listen}",
-        config.subscriptions.len()
+        "Настройки в порядке: подписок {}, {}",
+        config.subscriptions.len(),
+        plan::describe_mode(config)
     );
     let mut cached: Vec<Vec<Node>> = Vec::new();
     for subscription in &config.subscriptions {
