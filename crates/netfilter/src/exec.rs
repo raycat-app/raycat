@@ -38,7 +38,9 @@ impl Executor for System {
             .stderr(Stdio::piped())
             .spawn()
             .with_context(|| {
-                format!("не удалось запустить `{program}`: установлен ли он и есть ли доступ к PATH")
+                format!(
+                    "не удалось запустить `{program}`: установлен ли он и есть ли доступ к PATH"
+                )
             })?;
 
         // Ввод пишется в отдельном потоке: команда может писать в stdout, пока мы
@@ -117,7 +119,10 @@ mod tests {
 
     #[test]
     fn sanitize_flattens_and_truncates() {
-        assert_eq!(sanitize("  Error: bad\n\tline  two\r\n"), "Error: bad line two");
+        assert_eq!(
+            sanitize("  Error: bad\n\tline  two\r\n"),
+            "Error: bad line two"
+        );
         assert_eq!(sanitize("a\u{1b}[31mred"), "a [31mred");
         let long = "x".repeat(1000);
         let cut = sanitize(&long);

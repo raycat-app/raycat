@@ -43,25 +43,37 @@ pub fn ruleset(rules: &Rules) -> Result<String> {
         lines.push(format!("{}{text}", "    ".repeat(depth)));
     };
 
-    push(0, "# raycat: перехват трафика, файл создаёт демон".to_owned());
+    push(
+        0,
+        "# raycat: перехват трафика, файл создаёт демон".to_owned(),
+    );
     push(0, format!("add table {FAMILY} {TABLE}"));
     push(0, format!("delete table {FAMILY} {TABLE}"));
     push(0, format!("table {FAMILY} {TABLE} {{"));
 
     push(1, "chain output {".to_owned());
-    push(2, "type route hook output priority mangle; policy accept;".to_owned());
+    push(
+        2,
+        "type route hook output priority mangle; policy accept;".to_owned(),
+    );
     push(2, "# трафик xray и демона идёт мимо перехвата".to_owned());
     push(2, format!("meta mark {own} return"));
     push(2, "# loopback, в том числе адреса самого хоста".to_owned());
     push(2, "oifname \"lo\" return".to_owned());
     push(2, "# ответы на входящие соединения".to_owned());
     push(2, "ct direction reply return".to_owned());
-    push(2, "# DNS перехватывается всегда, даже к приватным серверам".to_owned());
+    push(
+        2,
+        "# DNS перехватывается всегда, даже к приватным серверам".to_owned(),
+    );
     push(
         2,
         format!("{v4_only}meta l4proto {{ tcp, udp }} th dport 53 meta mark set {mark} return"),
     );
-    push(2, "# приватные сети, multicast и broadcast идут напрямую".to_owned());
+    push(
+        2,
+        "# приватные сети, multicast и broadcast идут напрямую".to_owned(),
+    );
     push(2, format!("ip daddr {v4} return"));
     push(2, format!("ip6 daddr {v6} return"));
     push(2, "# остальные tcp и udp уходят в xray".to_owned());
@@ -73,19 +85,29 @@ pub fn ruleset(rules: &Rules) -> Result<String> {
 
     push(0, String::new());
     push(1, "chain prerouting {".to_owned());
-    push(2, "type filter hook prerouting priority mangle; policy accept;".to_owned());
-    push(2, "# помеченные пакеты достаются прозрачному сокету xray".to_owned());
+    push(
+        2,
+        "type filter hook prerouting priority mangle; policy accept;".to_owned(),
+    );
+    push(
+        2,
+        "# помеченные пакеты достаются прозрачному сокету xray".to_owned(),
+    );
     for proto in ["tcp", "udp"] {
         push(
             2,
-            format!("meta nfproto ipv4 meta l4proto {proto} meta mark {mark} tproxy ip to :{port} accept"),
+            format!(
+                "meta nfproto ipv4 meta l4proto {proto} meta mark {mark} tproxy ip to :{port} accept"
+            ),
         );
     }
     if rules.intercept_ipv6 {
         for proto in ["tcp", "udp"] {
             push(
                 2,
-                format!("meta nfproto ipv6 meta l4proto {proto} meta mark {mark} tproxy ip6 to :{port} accept"),
+                format!(
+                    "meta nfproto ipv6 meta l4proto {proto} meta mark {mark} tproxy ip6 to :{port} accept"
+                ),
             );
         }
     }
@@ -94,9 +116,18 @@ pub fn ruleset(rules: &Rules) -> Result<String> {
     if rules.kill_switch || !rules.intercept_ipv6 {
         push(0, String::new());
         push(1, "chain guard {".to_owned());
-        push(2, "type filter hook output priority filter; policy accept;".to_owned());
+        push(
+            2,
+            "type filter hook output priority filter; policy accept;".to_owned(),
+        );
         push(2, "oifname \"lo\" accept".to_owned());
         push(2, format!("meta mark {own} accept"));
+        push(
+            2,
+            "# перехваченные пакеты: после смены маршрута oifname ещё показывает прежний интерфейс"
+                .to_owned(),
+        );
+        push(2, format!("meta mark {mark} accept"));
         push(2, "ct direction reply accept".to_owned());
         push(2, format!("ip daddr {v4} accept"));
         push(2, format!("ip6 daddr {v6} accept"));
@@ -104,7 +135,10 @@ pub fn ruleset(rules: &Rules) -> Result<String> {
             push(2, "# kill switch: всё остальное отклоняется".to_owned());
             push(2, "reject".to_owned());
         } else {
-            push(2, "# IPv6 не перехватывается, наружу его не выпускаем".to_owned());
+            push(
+                2,
+                "# IPv6 не перехватывается, наружу его не выпускаем".to_owned(),
+            );
             push(2, "meta nfproto ipv6 reject".to_owned());
         }
         push(1, "}".to_owned());
@@ -171,7 +205,10 @@ mod tests {
         let text = ruleset(&Rules::default()).unwrap();
         let dns = text.find("th dport 53").unwrap();
         let private = text.find("ip daddr").unwrap();
-        assert!(dns < private, "DNS к приватному серверу тоже должен перехватываться");
+        assert!(
+            dns < private,
+            "DNS к приватному серверу тоже должен перехватываться"
+        );
     }
 
     #[test]
@@ -187,12 +224,15 @@ mod tests {
         };
         let text = ruleset(&rules).unwrap();
         assert!(text.contains("tproxy ip6 to :12345"));
-        assert!(!text.contains("chain guard"), "без kill switch защищать нечего");
+        assert!(
+            !text.contains("chain guard"),
+            "без kill switch защищать нечего"
+        );
         assert!(!text.contains("meta nfproto ipv4 meta l4proto { tcp, udp }"));
     }
 
     #[test]
-    fn kill_switch_rejects_last_and_never_allows_the_intercept_mark() {
+    fn kill_switch_allows_only_safe_paths_and_rejects_last() {
         let rules = Rules {
             kill_switch: true,
             ..Rules::default()
@@ -200,13 +240,24 @@ mod tests {
         let lines = lines_of(&rules);
         let guard = position(&lines, "chain guard");
         let reject = position(&lines, "reject");
-        assert!(guard < reject);
         assert_eq!(lines[reject], "reject");
         assert_eq!(lines[reject + 1], "}");
-        assert!(
-            !lines[guard..].iter().any(|line| line.contains("0x52540000")),
-            "пакет с меткой перехвата, не свернувший на loopback, не должен выходить"
+        let allowed: Vec<&str> = lines[guard..reject]
+            .iter()
+            .filter(|line| line.ends_with(" accept"))
+            .map(|line| line.trim_end_matches(" accept"))
+            .collect();
+        assert_eq!(allowed.len(), 6);
+        assert_eq!(
+            &allowed[..4],
+            [
+                "oifname \"lo\"",
+                "meta mark 0x52430000",
+                "meta mark 0x52540000",
+                "ct direction reply"
+            ]
         );
+        assert!(allowed[4].starts_with("ip daddr {") && allowed[5].starts_with("ip6 daddr {"));
     }
 
     #[test]

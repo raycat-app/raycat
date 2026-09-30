@@ -107,7 +107,11 @@ mod tests {
         assert!(!rules.kill_switch);
         assert!(!rules.intercept_ipv6);
         for mark in [rules.own_mark, rules.intercept_mark] {
-            assert_eq!(mark & 0xffff, 0, "младшие 16 бит заняты другими программами");
+            assert_eq!(
+                mark & 0xffff,
+                0,
+                "младшие 16 бит заняты другими программами"
+            );
         }
     }
 

@@ -32,6 +32,8 @@ table inet raycat {
         type filter hook output priority filter; policy accept;
         oifname "lo" accept
         meta mark 0x52430000 accept
+        # перехваченные пакеты: после смены маршрута oifname ещё показывает прежний интерфейс
+        meta mark 0x52540000 accept
         ct direction reply accept
         ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 255.255.255.255/32 } accept
         ip6 daddr { fc00::/7, fe80::/10, ff00::/8 } accept

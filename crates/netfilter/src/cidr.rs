@@ -23,9 +23,9 @@ impl fmt::Display for CidrError {
         match self {
             Self::Syntax => f.write_str("ожидался адрес или сеть вида 10.0.0.0/8"),
             Self::Prefix { max } => write!(f, "длина префикса должна быть от 0 до {max}"),
-            Self::HostBits => f.write_str(
-                "в адресе сети заданы биты хоста (нужно 10.0.0.0/8, а не 10.1.2.3/8)",
-            ),
+            Self::HostBits => {
+                f.write_str("в адресе сети заданы биты хоста (нужно 10.0.0.0/8, а не 10.1.2.3/8)")
+            }
         }
     }
 }
@@ -160,9 +160,18 @@ mod tests {
         assert_eq!("10.0.0.0/".parse::<Cidr>(), Err(CidrError::Syntax));
         assert_eq!("10.0.0.0/+8".parse::<Cidr>(), Err(CidrError::Syntax));
         assert_eq!("10.0.0.0/8/8".parse::<Cidr>(), Err(CidrError::Syntax));
-        assert_eq!("10.0.0.0/33".parse::<Cidr>(), Err(CidrError::Prefix { max: 32 }));
-        assert_eq!("::/129".parse::<Cidr>(), Err(CidrError::Prefix { max: 128 }));
-        assert_eq!("10.0.0.0/999".parse::<Cidr>(), Err(CidrError::Prefix { max: 32 }));
+        assert_eq!(
+            "10.0.0.0/33".parse::<Cidr>(),
+            Err(CidrError::Prefix { max: 32 })
+        );
+        assert_eq!(
+            "::/129".parse::<Cidr>(),
+            Err(CidrError::Prefix { max: 128 })
+        );
+        assert_eq!(
+            "10.0.0.0/999".parse::<Cidr>(),
+            Err(CidrError::Prefix { max: 32 })
+        );
         assert_eq!("10.1.2.3/8".parse::<Cidr>(), Err(CidrError::HostBits));
         assert_eq!("fc00::1/7".parse::<Cidr>(), Err(CidrError::HostBits));
     }

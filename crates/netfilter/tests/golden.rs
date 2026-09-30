@@ -19,7 +19,10 @@ fn interception_with_kill_switch() {
         kill_switch: true,
         ..Rules::default()
     };
-    assert_eq!(ruleset(&rules).unwrap(), include_str!("golden/kill-switch.nft"));
+    assert_eq!(
+        ruleset(&rules).unwrap(),
+        include_str!("golden/kill-switch.nft")
+    );
 }
 
 #[test]

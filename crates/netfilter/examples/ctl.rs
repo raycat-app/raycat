@@ -41,7 +41,10 @@ fn main() -> Result<()> {
             "--bypass" => {
                 rules.bypass = value()?
                     .split(',')
-                    .map(|net| net.parse::<Cidr>().map_err(|error| anyhow!("{net}: {error}")))
+                    .map(|net| {
+                        net.parse::<Cidr>()
+                            .map_err(|error| anyhow!("{net}: {error}"))
+                    })
                     .collect::<Result<_>>()?;
             }
             "--port" => rules.tproxy_port = number(&value()?)?.try_into()?,

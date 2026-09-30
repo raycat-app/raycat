@@ -64,7 +64,10 @@ fn remove_with(exec: &dyn Executor, rules: &Rules) -> Result<()> {
     if problems.is_empty() {
         Ok(())
     } else {
-        bail!("не удалось снять правила перехвата: {}", problems.join("; "))
+        bail!(
+            "не удалось снять правила перехвата: {}",
+            problems.join("; ")
+        )
     }
 }
 
@@ -178,10 +181,7 @@ fn setup_routing(exec: &dyn Executor, rules: &Rules, family: Family) -> Result<(
 fn teardown_routing(exec: &dyn Executor, rules: &Rules, family: Family) -> Result<()> {
     let routing = Routing::new(rules, family);
     for _ in 0..MAX_RULE_COPIES {
-        if !exec
-            .run("ip", &routing.rule_args("del"), None)?
-            .success
-        {
+        if !exec.run("ip", &routing.rule_args("del"), None)?.success {
             break;
         }
     }
@@ -252,7 +252,10 @@ mod tests {
     const OURS: &str = "7263:\tfrom all fwmark 0x52540000 lookup 7263\n";
 
     fn listing(ours: usize) -> String {
-        format!("0:\tfrom all lookup local\n{}32766:\tfrom all lookup main\n", OURS.repeat(ours))
+        format!(
+            "0:\tfrom all lookup local\n{}32766:\tfrom all lookup main\n",
+            OURS.repeat(ours)
+        )
     }
 
     #[test]
@@ -288,7 +291,12 @@ mod tests {
             }
         });
         install_with(&once, &Rules::default()).unwrap();
-        assert!(!once.calls().iter().any(|call| call.contains("rule add") || call.contains("rule del")));
+        assert!(
+            !once
+                .calls()
+                .iter()
+                .any(|call| call.contains("rule add") || call.contains("rule del"))
+        );
 
         let thrice = Fake::new(|line| {
             if line == "ip -4 rule show" {
@@ -298,7 +306,11 @@ mod tests {
             }
         });
         install_with(&thrice, &Rules::default()).unwrap();
-        let dels = thrice.calls().iter().filter(|call| call.contains("rule del")).count();
+        let dels = thrice
+            .calls()
+            .iter()
+            .filter(|call| call.contains("rule del"))
+            .count();
         assert_eq!(dels, 2);
         assert!(!thrice.calls().iter().any(|call| call.contains("rule add")));
     }
@@ -312,7 +324,10 @@ mod tests {
                        7263:\tfrom all fwmark 0x52540000 lookup 254\n\
                        7263:\tfrom all lookup 7263\n";
         assert_eq!(routing.count(foreign), 0);
-        assert_eq!(routing.count("7263:\tfrom all fwmark 0x52540000/0xffffffff lookup 7263\n"), 1);
+        assert_eq!(
+            routing.count("7263:\tfrom all fwmark 0x52540000/0xffffffff lookup 7263\n"),
+            1
+        );
     }
 
     #[test]
@@ -329,7 +344,10 @@ mod tests {
         install_with(&fake, &rules).unwrap();
         let calls = fake.calls();
         assert!(calls.contains(&"ip -6 route replace local default dev lo table 7263".to_owned()));
-        assert!(calls.contains(&"ip -6 rule add fwmark 0x52540000 lookup 7263 priority 7263".to_owned()));
+        assert!(
+            calls
+                .contains(&"ip -6 rule add fwmark 0x52540000 lookup 7263 priority 7263".to_owned())
+        );
         assert_eq!(calls.last().unwrap(), "nft -f -");
     }
 
@@ -343,9 +361,10 @@ mod tests {
             ..Rules::default()
         };
         install_with(&fake, &rules).unwrap();
-        assert!(fake.calls().contains(
-            &"ip -4 rule add fwmark 0x10000002 lookup 4711 priority 99".to_owned()
-        ));
+        assert!(
+            fake.calls()
+                .contains(&"ip -4 rule add fwmark 0x10000002 lookup 4711 priority 99".to_owned())
+        );
     }
 
     #[test]
@@ -357,7 +376,9 @@ mod tests {
                 ok("")
             }
         });
-        let error = install_with(&fake, &Rules::default()).unwrap_err().to_string();
+        let error = install_with(&fake, &Rules::default())
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("nft"), "{error}");
         assert!(error.contains("unsupported chain type"), "{error}");
 
@@ -368,10 +389,15 @@ mod tests {
                 ok("")
             }
         });
-        let error = install_with(&fake, &Rules::default()).unwrap_err().to_string();
+        let error = install_with(&fake, &Rules::default())
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("ip -4 route replace"), "{error}");
         assert!(error.contains("Operation not permitted"), "{error}");
-        assert!(!fake.calls().iter().any(|call| call.starts_with("nft")), "правила без маршрутизации не ставятся");
+        assert!(
+            !fake.calls().iter().any(|call| call.starts_with("nft")),
+            "правила без маршрутизации не ставятся"
+        );
     }
 
     #[test]
@@ -402,8 +428,20 @@ mod tests {
         let calls = fake.calls();
         assert_eq!(calls[0], "nft -f -");
         assert_eq!(*fake.inputs.borrow(), [removal()]);
-        assert_eq!(calls.iter().filter(|call| call.starts_with("ip -4 rule del")).count(), 3);
-        assert_eq!(calls.iter().filter(|call| call.starts_with("ip -6 rule del")).count(), 1);
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| call.starts_with("ip -4 rule del"))
+                .count(),
+            3
+        );
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| call.starts_with("ip -6 rule del"))
+                .count(),
+            1
+        );
         assert!(calls.contains(&"ip -4 route flush table 7263".to_owned()));
         assert!(calls.contains(&"ip -6 route flush table 7263".to_owned()));
     }
@@ -417,7 +455,9 @@ mod tests {
                 ok("")
             }
         });
-        let error = remove_with(&fake, &Rules::default()).unwrap_err().to_string();
+        let error = remove_with(&fake, &Rules::default())
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("Operation not permitted"), "{error}");
         assert!(fake.calls().iter().any(|call| call.contains("route flush")));
     }
