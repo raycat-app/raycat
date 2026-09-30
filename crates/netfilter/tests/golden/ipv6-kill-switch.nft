@@ -1,0 +1,41 @@
+# raycat: перехват трафика, файл создаёт демон
+add table inet raycat
+delete table inet raycat
+table inet raycat {
+    chain output {
+        type route hook output priority mangle; policy accept;
+        # трафик xray и демона идёт мимо перехвата
+        meta mark 0x52430000 return
+        # loopback, в том числе адреса самого хоста
+        oifname "lo" return
+        # ответы на входящие соединения
+        ct direction reply return
+        # DNS перехватывается всегда, даже к приватным серверам
+        meta l4proto { tcp, udp } th dport 53 meta mark set 0x52540000 return
+        # приватные сети, multicast и broadcast идут напрямую
+        ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 255.255.255.255/32 } return
+        ip6 daddr { fc00::/7, fe80::/10, ff00::/8 } return
+        # остальные tcp и udp уходят в xray
+        meta l4proto { tcp, udp } meta mark set 0x52540000
+    }
+
+    chain prerouting {
+        type filter hook prerouting priority mangle; policy accept;
+        # помеченные пакеты достаются прозрачному сокету xray
+        meta nfproto ipv4 meta l4proto tcp meta mark 0x52540000 tproxy ip to :12345 accept
+        meta nfproto ipv4 meta l4proto udp meta mark 0x52540000 tproxy ip to :12345 accept
+        meta nfproto ipv6 meta l4proto tcp meta mark 0x52540000 tproxy ip6 to :12345 accept
+        meta nfproto ipv6 meta l4proto udp meta mark 0x52540000 tproxy ip6 to :12345 accept
+    }
+
+    chain guard {
+        type filter hook output priority filter; policy accept;
+        oifname "lo" accept
+        meta mark 0x52430000 accept
+        ct direction reply accept
+        ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 255.255.255.255/32 } accept
+        ip6 daddr { fc00::/7, fe80::/10, ff00::/8 } accept
+        # kill switch: всё остальное отклоняется
+        reject
+    }
+}
