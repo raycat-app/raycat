@@ -10,8 +10,11 @@ pub struct Device {
     pub machine_id: String,
     /// Имя компьютера Windows (по умолчанию `DESKTOP-XXXXXXX` из `machine_id`).
     pub hostname: Option<String>,
-    /// Заменяет `X-Device-Model` целиком.
+    /// Модель телефона (`Build.MODEL`) или имя устройства вместо профильного.
     pub model: Option<String>,
+    /// Производитель телефона (`Build.MANUFACTURER`) для приложений, которые его
+    /// отправляют; по умолчанию берётся из профиля.
+    pub manufacturer: Option<String>,
     pub os_version: Option<String>,
     /// Готовый HWID вместо выводимого из `machine_id`.
     pub hwid: Option<String>,
@@ -40,6 +43,8 @@ pub struct DeviceInfo {
     pub os: String,
     pub os_version: String,
     pub model: String,
+    /// `None`, если приложение производителя не отправляет.
+    pub manufacturer: Option<String>,
 }
 
 /// Какой идентификатор шлёт платформа как HWID.

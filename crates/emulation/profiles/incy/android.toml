@@ -6,7 +6,8 @@ user_agent = "INCY/{app_version}/android Dalvik/2.1.0"
 [device]
 os = "Android"
 os_version = "14"
-model = "samsung SM-S921B"
+model = "SM-S921B"
+manufacturer = "samsung"
 hwid = "incy-uuid"
 locale = "android-region"
 
@@ -39,7 +40,7 @@ value = "{os_version}"
 
 [[headers]]
 name = "x-device-model"
-value = "{model}"
+value = "{manufacturer} {model}"
 
 [[headers]]
 name = "x-app-version"

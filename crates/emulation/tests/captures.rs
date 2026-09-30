@@ -30,6 +30,7 @@ struct Input {
     hwid: Option<String>,
     hostname: Option<String>,
     model: Option<String>,
+    manufacturer: Option<String>,
     os_version: Option<String>,
     locale: Option<String>,
 }
@@ -53,6 +54,7 @@ fn generate(input: &Input) -> String {
         machine_id: input.machine_id.clone(),
         hostname: input.hostname.clone(),
         model: input.model.clone(),
+        manufacturer: input.manufacturer.clone(),
         os_version: input.os_version.clone(),
         hwid: input.hwid.clone(),
         locale: input.locale.clone().unwrap_or_default(),
