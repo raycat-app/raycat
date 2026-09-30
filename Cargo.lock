@@ -381,6 +381,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "raycat-netfilter"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
 name = "raycat-subscription"
 version = "0.1.0"
 dependencies = [

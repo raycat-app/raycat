@@ -313,10 +313,27 @@ jobs:
       - name: Стенд
         run: bash .github/e2e/proxy.sh
 
+  nftables:
+    name: Правила nftables
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: nftables и ping
+        run: sudo apt-get update -q && sudo apt-get install -y -q nftables iputils-ping
+      - name: Сборка
+        run: cargo build --locked -p raycat-netfilter --example ctl
+      - name: Стенд
+        run: bash .github/e2e/netfilter.sh
+
   result:
     name: Итог
     if: ${{ always() }}
-    needs: [lint, lockfile, test, msrv, deny, workflows, build, image, xray-config, e2e-proxy]
+    needs: [lint, lockfile, test, msrv, deny, workflows, build, image, xray-config, e2e-proxy, nftables]
     runs-on: ubuntu-24.04
     permissions: {}
     steps:
