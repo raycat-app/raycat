@@ -107,11 +107,11 @@ case "$first_event" in
   *) fail "xray запущен раньше, чем установлены правила" ;;
 esac
 
-echo "== DNS приложения отвечает fake-IP"
+echo "== DNS приложения отвечает fake-IP (пул 198.18.0.0/15)"
 answer=$(app_run nslookup site.e2e.test) || fail "nslookup не ответил"
-echo "$answer" | grep -q '198\.18\.' || fail "DNS ответил не fake-IP: $answer"
+echo "$answer" | grep -q 'Address: 198\.1[89]\.' || fail "DNS ответил не fake-IP: $answer"
 outside=$(app_run nslookup site.e2e.test 1.1.1.1) || fail "nslookup к 1.1.1.1 не ответил"
-echo "$outside" | grep -q '198\.18\.' || fail "DNS к внешнему серверу ответил не fake-IP: $outside"
+echo "$outside" | grep -q 'Address: 198\.1[89]\.' || fail "DNS к внешнему серверу ответил не fake-IP: $outside"
 
 echo "== IPv6 наружу не выходит"
 table=$(gateway_run nft list table inet raycat)
