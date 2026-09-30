@@ -74,35 +74,9 @@ impl Store {
         let path = self.path(MACHINE_ID_FILE);
         match fs::read_to_string(&path) {
             Ok(text) => checked_machine_id(&text, &path),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => self.create_machine_id(&path),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => create_machine_id(&path),
             Err(error) => {
                 Err(error).with_context(|| format!("не удалось прочитать {}", path.display()))
-            }
-        }
-    }
-
-    fn create_machine_id(&self, path: &Path) -> Result<String> {
-        let id = random_hex()?;
-        let created = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(FILE_MODE)
-            .open(path);
-        match created {
-            Ok(mut file) => {
-                writeln!(file, "{id}")
-                    .and_then(|()| file.sync_all())
-                    .with_context(|| format!("не удалось записать {}", path.display()))?;
-                Ok(id)
-            }
-            // Одновременно запущенная команда успела раньше: идентификатор один на всех.
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                let text = fs::read_to_string(path)
-                    .with_context(|| format!("не удалось прочитать {}", path.display()))?;
-                checked_machine_id(&text, path)
-            }
-            Err(error) => {
-                Err(error).with_context(|| format!("не удалось создать {}", path.display()))
             }
         }
     }
@@ -144,6 +118,32 @@ impl Store {
         let json =
             serde_json::to_vec_pretty(state).context("не удалось сериализовать состояние")?;
         write_atomic(&dir.join("state.json"), &json)
+    }
+}
+
+fn create_machine_id(path: &Path) -> Result<String> {
+    let id = random_hex()?;
+    let created = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(FILE_MODE)
+        .open(path);
+    match created {
+        Ok(mut file) => {
+            writeln!(file, "{id}")
+                .and_then(|()| file.sync_all())
+                .with_context(|| format!("не удалось записать {}", path.display()))?;
+            Ok(id)
+        }
+        // Одновременно запущенная команда успела раньше: идентификатор один на всех.
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            let text = fs::read_to_string(path)
+                .with_context(|| format!("не удалось прочитать {}", path.display()))?;
+            checked_machine_id(&text, path)
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("не удалось создать {}", path.display()))
+        }
     }
 }
 

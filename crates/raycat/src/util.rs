@@ -108,7 +108,8 @@ mod tests {
         assert_eq!(format_time(0), "1970-01-01T00:00:00Z");
         assert_eq!(format_time(951_782_400), "2000-02-29T00:00:00Z");
         assert_eq!(format_time(1_790_596_800), "2026-09-28T12:00:00Z");
-        assert_eq!(format_date(1_790_596_800 + 86_399), "2026-09-28");
+        assert_eq!(format_date(1_790_596_800 + 43_199), "2026-09-28");
+        assert_eq!(format_date(1_790_596_800 + 43_200), "2026-09-29");
     }
 
     #[test]
