@@ -11,6 +11,7 @@ use raycat_subscription::{Analysis, ProviderInfo, analyze, redact_in};
 use raycat_xray::Node;
 
 use crate::log::{hide, info, warn};
+use crate::plan;
 use crate::schedule::{interval, retry_delay};
 use crate::store::{Store, SubState};
 use crate::util::{fnv1a, format_bytes, format_date, now_unix};
@@ -131,6 +132,8 @@ impl Source {
             emulation,
             client: Client {
                 max_body: MAX_BODY,
+                // В режиме шлюза kill switch выпускает наружу только помеченное.
+                mark: plan::own_mark(config),
                 ..Client::default()
             },
             fingerprint,

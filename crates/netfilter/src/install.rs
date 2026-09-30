@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 
 use crate::exec::{Executor, Output, System};
 use crate::rules::Rules;
-use crate::ruleset::{removal, ruleset};
+use crate::ruleset::{FAMILY, TABLE, removal, ruleset};
 
 const MAX_RULE_COPIES: usize = 16;
 
@@ -34,6 +34,45 @@ pub fn install(rules: &Rules) -> Result<()> {
 /// даже если предыдущий не удался; отсутствие правил ошибкой не считается.
 pub fn remove(rules: &Rules) -> Result<()> {
     remove_with(&System, rules)
+}
+
+/// Всё ли, что поставил [`install`], на месте: таблица nftables, правило `ip rule` и
+/// локальный маршрут в таблице перехвата. Kill switch опирается на правило
+/// маршрутизации, поэтому без него схема не держит. Любая ошибка команд означает «нет».
+pub fn is_installed(rules: &Rules) -> bool {
+    installed_with(&System, rules)
+}
+
+fn installed_with(exec: &dyn Executor, rules: &Rules) -> bool {
+    let table = exec
+        .run("nft", &["list", "table", FAMILY, TABLE], None)
+        .is_ok_and(|output| output.success);
+    if !table {
+        return false;
+    }
+    let families: &[Family] = if rules.intercept_ipv6 {
+        &[Family::V4, Family::V6]
+    } else {
+        &[Family::V4]
+    };
+    families
+        .iter()
+        .all(|family| routing_present(exec, rules, *family))
+}
+
+fn routing_present(exec: &dyn Executor, rules: &Rules, family: Family) -> bool {
+    let routing = Routing::new(rules, family);
+    let rule = exec
+        .run("ip", &[routing.flag, "rule", "show"], None)
+        .is_ok_and(|output| output.success && routing.count(&output.stdout) > 0);
+    let route = exec
+        .run(
+            "ip",
+            &[routing.flag, "route", "show", "table", &routing.table],
+            None,
+        )
+        .is_ok_and(|output| output.success && output.stdout.contains("local"));
+    rule && route
 }
 
 fn install_with(exec: &dyn Executor, rules: &Rules) -> Result<()> {
@@ -444,6 +483,71 @@ mod tests {
         );
         assert!(calls.contains(&"ip -4 route flush table 7263".to_owned()));
         assert!(calls.contains(&"ip -6 route flush table 7263".to_owned()));
+    }
+
+    fn healthy(line: &str) -> Output {
+        match line {
+            "ip -4 rule show" | "ip -6 rule show" => ok(&listing(1)),
+            "ip -4 route show table 7263" | "ip -6 route show table 7263" => {
+                ok("local default dev lo scope host\n")
+            }
+            _ => ok(""),
+        }
+    }
+
+    #[test]
+    fn a_complete_installation_is_recognised() {
+        let fake = Fake::new(healthy);
+        assert!(installed_with(&fake, &Rules::default()));
+        assert_eq!(fake.calls()[0], "nft list table inet raycat");
+    }
+
+    #[test]
+    fn a_missing_table_rule_or_route_is_noticed() {
+        let no_table = Fake::new(|line| {
+            if line.starts_with("nft") {
+                failed("Error: No such file or directory")
+            } else {
+                healthy(line)
+            }
+        });
+        assert!(!installed_with(&no_table, &Rules::default()));
+
+        let no_rule = Fake::new(|line| {
+            if line == "ip -4 rule show" {
+                ok(DEFAULT_RULES)
+            } else {
+                healthy(line)
+            }
+        });
+        assert!(!installed_with(&no_rule, &Rules::default()));
+
+        let no_route = Fake::new(|line| {
+            if line.contains("route show") {
+                ok("")
+            } else {
+                healthy(line)
+            }
+        });
+        assert!(!installed_with(&no_route, &Rules::default()));
+    }
+
+    #[test]
+    fn ipv6_routing_is_checked_only_when_intercepted() {
+        let broken_v6 = |line: &str| {
+            if line.starts_with("ip -6") {
+                ok("")
+            } else {
+                healthy(line)
+            }
+        };
+        assert!(installed_with(&Fake::new(broken_v6), &Rules::default()));
+        let rules = Rules {
+            intercept_ipv6: true,
+            ..Rules::default()
+        };
+        assert!(!installed_with(&Fake::new(broken_v6), &rules));
+        assert!(installed_with(&Fake::new(healthy), &rules));
     }
 
     #[test]

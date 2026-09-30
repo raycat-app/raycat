@@ -340,6 +340,7 @@ dependencies = [
  "raycat-config",
  "raycat-emulation",
  "raycat-http",
+ "raycat-netfilter",
  "raycat-subscription",
  "raycat-xray",
  "serde",
