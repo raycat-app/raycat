@@ -15,8 +15,6 @@ on:
       godebug:
         description: Значение GODEBUG для всех процессов замера (например, cpu.aes=off для железа без AES), пусто — не задавать
         default: ""
-  push:
-    branches: [ci/xray-bench]
 
 permissions: {}
 
@@ -34,8 +32,8 @@ jobs:
           - {arch: x86_64, runner: ubuntu-24.04}
           - {arch: arm64, runner: ubuntu-24.04-arm}
     env:
-      VERSIONS: ${{ inputs.versions || '26.3.27 26.9.9' }}
-      SIZE_MIB: ${{ inputs.size_mib || '500' }}
+      VERSIONS: ${{ inputs.versions }}
+      SIZE_MIB: ${{ inputs.size_mib }}
       GODEBUG: ${{ inputs.godebug }}
       OUT_DIR: bench-out
     steps:
