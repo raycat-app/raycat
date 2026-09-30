@@ -1,5 +1,6 @@
 //! Эталонные правила. Те же файлы CI проверяет настоящим `nft -c` в отдельном
 //! сетевом пространстве (`.github/e2e/netfilter.sh`).
+#![allow(clippy::unwrap_used)]
 
 use raycat_netfilter::{Cidr, Rules, ruleset};
 
