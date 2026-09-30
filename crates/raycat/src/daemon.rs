@@ -412,8 +412,7 @@ mod tests {
 
     const ONE: &str = "ss://aes-128-gcm:secret@203.0.113.5:8388#One\n";
     const TWO: &str = "ss://aes-128-gcm:secret@203.0.113.6:8388#Two\n";
-    const BOTH: &str =
-        "ss://aes-128-gcm:secret@203.0.113.5:8388#One\nss://aes-128-gcm:secret@203.0.113.6:8388#Two\n";
+    const BOTH: &str = "ss://aes-128-gcm:secret@203.0.113.5:8388#One\nss://aes-128-gcm:secret@203.0.113.6:8388#Two\n";
 
     fn daemon(names: &[&str], temp: &TempDir) -> Daemon {
         let mut text = String::new();

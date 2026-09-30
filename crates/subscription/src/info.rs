@@ -305,7 +305,10 @@ mod tests {
 
     #[test]
     fn announce_line_breaks_do_not_glue_words() {
-        let info = info(&[("announce", "Продлите подписку\nЕсли баланс низкий\r\n\r\nпополните")]);
+        let info = info(&[(
+            "announce",
+            "Продлите подписку\nЕсли баланс низкий\r\n\r\nпополните",
+        )]);
         assert_eq!(
             info.announce.as_deref(),
             Some("Продлите подписку Если баланс низкий пополните")

@@ -56,8 +56,10 @@ pub(crate) fn is_placeholder(endpoint: &Endpoint) -> bool {
         return true;
     }
     // Узел-разделитель вроде «33»: не IP-адрес и не доменное имя с точкой.
-    host.parse::<IpAddr>()
-        .map_or_else(|_| !host.contains('.'), |ip| ip.is_unspecified() || ip.is_loopback())
+    host.parse::<IpAddr>().map_or_else(
+        |_| !host.contains('.'),
+        |ip| ip.is_unspecified() || ip.is_loopback(),
+    )
 }
 
 /// Узел-заглушка: сервер выхода (первый outbound) ненастоящий.
