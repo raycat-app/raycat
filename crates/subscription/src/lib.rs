@@ -70,9 +70,9 @@ pub struct Analysis {
 /// это [`Problem::Encrypted`].
 pub fn analyze(status: u16, headers: &[(String, String)], body: &[u8]) -> Analysis {
     let http_ok = (200..300).contains(&status);
-    let has_encrypt_tag = headers
-        .iter()
-        .any(|(name, value)| name.trim().eq_ignore_ascii_case("encrypt-tag") && !value.trim().is_empty());
+    let has_encrypt_tag = headers.iter().any(|(name, value)| {
+        name.trim().eq_ignore_ascii_case("encrypt-tag") && !value.trim().is_empty()
+    });
     let parsed = if !http_ok {
         Body::rejected(Reject::Unrecognized(String::new()))
     } else if has_encrypt_tag {

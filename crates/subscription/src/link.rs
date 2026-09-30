@@ -972,7 +972,11 @@ mod tests {
         let ob = &parsed.node.outbounds[0];
         assert_eq!(ob["settings"]["port"], 443);
         assert_eq!(parsed.node.name, "hy.example.com:443");
-        assert!(ob["streamSettings"]["tlsSettings"].get("allowInsecure").is_none());
+        assert!(
+            ob["streamSettings"]["tlsSettings"]
+                .get("allowInsecure")
+                .is_none()
+        );
         assert!(ob["streamSettings"].get("finalmask").is_none());
         assert_eq!(parsed.warnings, [INSECURE_WARNING]);
     }

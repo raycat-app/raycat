@@ -255,7 +255,11 @@ fn insecure_flag_is_not_applied() {
     let body = format!("vless://{UUID}@i.example.com:443?security=tls&allowInsecure=1#Узел\n");
     let result = analyze(200, &[], body.as_bytes());
     assert!(result.problem.is_none(), "{:?}", result.problem);
-    assert!(!result.nodes[0].outbounds[0].to_string().contains("allowInsecure"));
+    assert!(
+        !result.nodes[0].outbounds[0]
+            .to_string()
+            .contains("allowInsecure")
+    );
     assert_eq!(result.warnings.len(), 1);
     assert!(result.warnings[0].starts_with("узел «Узел»: провайдер просит отключить"));
     assert!(!result.warnings[0].contains(UUID));
