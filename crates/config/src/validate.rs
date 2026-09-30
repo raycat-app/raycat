@@ -151,6 +151,7 @@ fn device(raw: &RawDevice, p: &mut Problems) -> Device {
             .and_then(|value| machine_id(value, p)),
         hostname: header_text("device.hostname", raw.hostname.as_deref(), p),
         model: header_text("device.model", raw.model.as_deref(), p),
+        manufacturer: header_text("device.manufacturer", raw.manufacturer.as_deref(), p),
         os_version: header_text("device.os_version", raw.os_version.as_deref(), p),
         locale: header_text("device.locale", raw.locale.as_deref(), p),
     }

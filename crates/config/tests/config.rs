@@ -12,6 +12,7 @@ const FULL: &str = r#"
 seed = "любая фраза"
 hostname = "DESKTOP-TEST01"
 model = "SM-S921B"
+manufacturer = "samsung"
 os_version = "14"
 locale = "ru"
 
@@ -112,6 +113,7 @@ fn full_example() {
     assert!(config.device.machine_id.is_none());
     assert_eq!(config.device.hostname.as_deref(), Some("DESKTOP-TEST01"));
     assert_eq!(config.device.model.as_deref(), Some("SM-S921B"));
+    assert_eq!(config.device.manufacturer.as_deref(), Some("samsung"));
     assert_eq!(config.device.os_version.as_deref(), Some("14"));
     assert_eq!(config.device.locale.as_deref(), Some("ru"));
 
@@ -176,6 +178,7 @@ fn defaults() {
 
     assert!(config.device.seed.is_none() && config.device.machine_id.is_none());
     assert!(config.device.hostname.is_none() && config.device.model.is_none());
+    assert!(config.device.manufacturer.is_none());
     assert!(config.device.os_version.is_none() && config.device.locale.is_none());
 
     let sub = &config.subscriptions[0];
@@ -405,6 +408,8 @@ fn device_errors() {
         ("hostname = \"\"", "device.hostname"),
         ("hostname = \"a\\r\\nX-Injected: 1\"", "device.hostname"),
         ("model = \"a\\tb\"", "device.model"),
+        ("manufacturer = \"\"", "device.manufacturer"),
+        ("manufacturer = \"a\\r\\nb\"", "device.manufacturer"),
         ("os_version = \"14\\n\"", "device.os_version"),
         ("locale = \"ru\\u0007\"", "device.locale"),
     ];

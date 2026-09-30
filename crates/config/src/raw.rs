@@ -20,6 +20,7 @@ pub(crate) struct RawDevice {
     pub(crate) machine_id: Option<String>,
     pub(crate) hostname: Option<String>,
     pub(crate) model: Option<String>,
+    pub(crate) manufacturer: Option<String>,
     pub(crate) os_version: Option<String>,
     pub(crate) locale: Option<String>,
 }
