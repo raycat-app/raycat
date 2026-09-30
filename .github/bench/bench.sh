@@ -283,6 +283,9 @@ for proto in vless-reality shadowsocks-2022; do
 done
 
 model=$(lscpu | awk -F': *' '/^Model name/ {print $2; exit}')
-echo "- ${arch}: ядер $(nproc),${model:-процессор неизвестен}, ядро $(uname -r), ${size} МиБ на скачивание, ${repeats} повтора" >"$out/info.md"
+{
+  printf '%s\n' "- ${arch}: ${model:-процессор неизвестен}, ядер $(nproc), ядро $(uname -r), ${size} МиБ на скачивание, ${repeats} повтора"
+  [ -z "${GODEBUG:-}" ] || printf '%s\n' "- GODEBUG=${GODEBUG} (у xray, сайта и curl)"
+} >"$out/info.md"
 
 bash "$0" summary "$out"

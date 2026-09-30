@@ -12,6 +12,9 @@ on:
       size_mib:
         description: Объём одного скачивания, МиБ
         default: "500"
+      godebug:
+        description: Значение GODEBUG для всех процессов замера (например, cpu.aes=off для железа без AES), пусто — не задавать
+        default: ""
   push:
     branches: [ci/xray-bench]
 
@@ -33,6 +36,7 @@ jobs:
     env:
       VERSIONS: ${{ inputs.versions || '26.3.27 26.9.9' }}
       SIZE_MIB: ${{ inputs.size_mib || '500' }}
+      GODEBUG: ${{ inputs.godebug }}
       OUT_DIR: bench-out
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
