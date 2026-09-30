@@ -1,4 +1,5 @@
-//! Эмуляция официальных приложений подписок (Happ для Windows и Android).
+//! Эмуляция официальных приложений подписок (Happ для Windows и Android, INCY для
+//! Android).
 //!
 //! Панели провайдеров выбирают формат ответа и проверяют клиента по заголовкам
 //! запроса, поэтому запрос строится побайтно как у приложения: порядок и регистр
@@ -14,15 +15,18 @@
 //! app = "happ"                    # строчные латинские буквы, цифры и «-»
 //! platform = "windows"            # windows | android
 //! version = "4.3.0"
-//! marker = "moscow-day-parity"    # необязательно: алгоритм для {marker}
+//! marker = "moscow-day-parity"    # необязательно, для {marker}: moscow-day-parity
+//!                                 # (по Москве, Windows) | device-local-day-parity
+//!                                 # (по местной дате устройства, Android)
 //! user_agent = "Happ/{app_version}/{os}/{build}{marker}{tail}"
 //!
 //! [device]
 //! os = "Windows"
 //! os_version = "11_10.0.26100"    # значение по умолчанию
 //! model = "{hostname}_{cpu}"      # шаблон; готовое значение для Android
-//! hwid = "windows-machine-guid"   # windows-machine-guid | android-id
-//! locale = "qt-windows"           # qt-windows | android
+//! manufacturer = "samsung"        # необязательно, для {manufacturer}
+//! hwid = "windows-machine-guid"   # windows-machine-guid | android-id | incy-uuid
+//! locale = "qt-windows"           # qt-windows | android | android-region
 //!
 //! [builds.x64]                    # x64, arm64 или any (для всех архитектур)
 //! build = "2609151455"
@@ -36,7 +40,7 @@
 //!
 //! Подстановки: `{host}`, `{user_agent}` (только в заголовках), `{app_version}`,
 //! `{build}`, `{tail}`, `{marker}`, `{cpu}`, `{os}`, `{os_version}`, `{model}`,
-//! `{hostname}`, `{hwid}`, `{device_locale}`, `{accept_language}`. Профиль с
+//! `{manufacturer}`, `{hostname}`, `{hwid}`, `{device_locale}`, `{accept_language}`. Профиль с
 //! неизвестной или недоступной подстановкой, пустым обязательным полем, дублем
 //! заголовка или без `Host` не загружается: это ловит тест `profile::tests`.
 
@@ -65,6 +69,7 @@ pub struct Emulation {
     hwid: String,
     os_version: String,
     model: String,
+    manufacturer: Option<String>,
     hostname: String,
     locale: Locale,
 }
@@ -86,12 +91,21 @@ impl Emulation {
             .unwrap_or_else(|| windows_computer_name(&device.machine_id));
         let locale = profile.locale.apply(&device.locale);
         let model = overridden("model", device.model.as_deref())?;
+        // Приложение, которое производителя не отправляет, переопределение игнорирует.
+        let manufacturer = match &profile.manufacturer {
+            Some(default) => Some(
+                overridden("manufacturer", device.manufacturer.as_deref())?
+                    .unwrap_or_else(|| default.clone()),
+            ),
+            None => None,
+        };
         let mut emulation = Self {
             profile,
             build,
             hwid,
             os_version,
             model: model.clone().unwrap_or_default(),
+            manufacturer,
             hostname,
             locale,
         };
@@ -136,6 +150,7 @@ impl Emulation {
             os: self.profile.os.clone(),
             os_version: self.os_version.clone(),
             model: self.model.clone(),
+            manufacturer: self.manufacturer.clone(),
         }
     }
 
@@ -170,6 +185,7 @@ impl Emulation {
             os: &self.profile.os,
             os_version: &self.os_version,
             model: &self.model,
+            manufacturer: self.manufacturer.as_deref().unwrap_or_default(),
             hostname: &self.hostname,
             hwid: &self.hwid,
             device_locale: &self.locale.device_locale,
@@ -276,6 +292,84 @@ mod tests {
         assert_eq!(info.os, "Android");
         assert_eq!(info.os_version, "14");
         assert_eq!(info.model, "SM-S921B");
+    }
+
+    fn incy(device: &Device) -> Emulation {
+        Emulation::new("incy", Platform::Android, Arch::X64, device).unwrap()
+    }
+
+    #[test]
+    fn incy_defaults_come_from_the_machine_id() {
+        let device = Device::from_machine_id(MACHINE_ID);
+        let incy = incy(&device);
+        let info = incy.device_info();
+        assert_eq!(info.hwid, device::incy_uuid(MACHINE_ID));
+        assert!(is_valid_hwid(&info.hwid));
+        assert_eq!(info.os, "Android");
+        assert_eq!(info.os_version, "14");
+        assert_eq!(info.model, "SM-S921B");
+        assert_eq!(info.manufacturer.as_deref(), Some("samsung"));
+        let headers = incy.headers(&url(), EVEN_DAY);
+        assert_eq!(header(&headers, "x-device-model"), "samsung SM-S921B");
+        assert_eq!(incy.user_agent(EVEN_DAY), "INCY/3.7.0/android Dalvik/2.1.0");
+        assert_eq!(incy.user_agent(EVEN_DAY), incy.user_agent(ODD_DAY));
+    }
+
+    #[test]
+    fn incy_headers_have_the_captured_order_and_locale_forms() {
+        let device = Device {
+            locale: "ru_RU.UTF-8".into(),
+            manufacturer: Some("Google".into()),
+            model: Some("Pixel 8".into()),
+            ..Device::from_machine_id(MACHINE_ID)
+        };
+        let headers = incy(&device).headers(&url(), EVEN_DAY);
+        let names: Vec<&str> = headers.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "User-Agent",
+                "Accept",
+                "Accept-Language",
+                "x-hwid",
+                "x-device-os",
+                "x-ver-os",
+                "x-device-model",
+                "x-app-version",
+                "x-device-locale",
+                "x-client",
+                "Host",
+                "Connection",
+                "Accept-Encoding"
+            ]
+        );
+        assert_eq!(header(&headers, "Accept-Language"), "ru-RU");
+        assert_eq!(header(&headers, "x-device-locale"), "ru_RU");
+        assert_eq!(header(&headers, "x-device-model"), "Google Pixel 8");
+        assert_eq!(header(&headers, "x-app-version"), "3.7.0");
+        assert_eq!(header(&headers, "x-client"), "INCY");
+    }
+
+    #[test]
+    fn one_device_serves_happ_and_incy() {
+        let device = Device {
+            manufacturer: Some("Google".into()),
+            model: Some("Pixel 8".into()),
+            ..Device::from_machine_id(MACHINE_ID)
+        };
+        let happ = emulation(Platform::Android, Arch::X64, &device);
+        let happ_headers = happ.headers(&url(), EVEN_DAY);
+        assert_eq!(header(&happ_headers, "X-Device-model"), "Pixel 8");
+        assert_eq!(happ.device_info().manufacturer, None);
+        let incy_headers = incy(&device).headers(&url(), EVEN_DAY);
+        assert_eq!(header(&incy_headers, "x-device-model"), "Google Pixel 8");
+
+        let blank = Device {
+            manufacturer: Some(" ".into()),
+            ..Device::from_machine_id(MACHINE_ID)
+        };
+        let error = Emulation::new("incy", Platform::Android, Arch::X64, &blank).unwrap_err();
+        assert!(error.to_string().contains("device.manufacturer"));
     }
 
     #[test]
@@ -400,12 +494,12 @@ mod tests {
     #[test]
     fn errors_are_understandable() {
         let device = Device::from_machine_id(MACHINE_ID);
-        let unknown = Emulation::new("incy", Platform::Android, Arch::X64, &device);
+        let unknown = Emulation::new("nope", Platform::Android, Arch::X64, &device);
         assert!(
             unknown
                 .unwrap_err()
                 .to_string()
-                .contains("нет профиля incy/android")
+                .contains("нет профиля nope/android")
         );
         let empty = Emulation::new("happ", Platform::Windows, Arch::X64, &Device::default());
         assert!(empty.unwrap_err().to_string().contains("machine_id"));

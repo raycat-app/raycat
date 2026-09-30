@@ -10,8 +10,11 @@ pub struct Device {
     pub machine_id: String,
     /// Имя компьютера Windows (по умолчанию `DESKTOP-XXXXXXX` из `machine_id`).
     pub hostname: Option<String>,
-    /// Заменяет `X-Device-Model` целиком.
+    /// Модель телефона (`Build.MODEL`) или имя устройства вместо профильного.
     pub model: Option<String>,
+    /// Производитель телефона (`Build.MANUFACTURER`) для приложений, которые его
+    /// отправляют; по умолчанию берётся из профиля.
+    pub manufacturer: Option<String>,
     pub os_version: Option<String>,
     /// Готовый HWID вместо выводимого из `machine_id`.
     pub hwid: Option<String>,
@@ -40,6 +43,8 @@ pub struct DeviceInfo {
     pub os: String,
     pub os_version: String,
     pub model: String,
+    /// `None`, если приложение производителя не отправляет.
+    pub manufacturer: Option<String>,
 }
 
 /// Какой идентификатор шлёт платформа как HWID.
@@ -49,15 +54,18 @@ pub(crate) enum HwidAlgorithm {
     WindowsMachineGuid,
     /// `ANDROID_ID` приложения.
     AndroidId,
+    /// Идентификатор установки INCY: UUID в верхнем регистре.
+    IncyUuid,
 }
 
 impl HwidAlgorithm {
-    pub(crate) const NAMES: &'static str = "windows-machine-guid, android-id";
+    pub(crate) const NAMES: &'static str = "windows-machine-guid, android-id, incy-uuid";
 
     pub(crate) fn from_name(name: &str) -> Option<Self> {
         match name {
             "windows-machine-guid" => Some(Self::WindowsMachineGuid),
             "android-id" => Some(Self::AndroidId),
+            "incy-uuid" => Some(Self::IncyUuid),
             _ => None,
         }
     }
@@ -66,6 +74,7 @@ impl HwidAlgorithm {
         match self {
             Self::WindowsMachineGuid => windows_machine_guid(machine_id),
             Self::AndroidId => android_id(machine_id),
+            Self::IncyUuid => incy_uuid(machine_id),
         }
     }
 }
@@ -115,6 +124,20 @@ pub(crate) fn windows_computer_name(machine_id: &str) -> String {
 /// `ANDROID_ID`: 16 шестнадцатеричных цифр в нижнем регистре.
 pub(crate) fn android_id(machine_id: &str) -> String {
     sha256_hex(format!("android id\0{machine_id}").as_bytes())[..16].to_owned()
+}
+
+/// Идентификатор INCY: 8-4-4-4-12 шестнадцатеричных цифр в верхнем регистре.
+/// В захвате нет битов версии и варианта UUID, поэтому и здесь их нет.
+pub(crate) fn incy_uuid(machine_id: &str) -> String {
+    let hex = sha256_hex(format!("incy uuid\0{machine_id}").as_bytes()).to_ascii_uppercase();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
 }
 
 fn sha256(data: &[u8]) -> digest::Digest {
@@ -223,6 +246,20 @@ mod tests {
     }
 
     #[test]
+    fn incy_uuid_is_an_uppercase_uuid_shape() {
+        let id = incy_uuid(MACHINE_ID);
+        let lengths: Vec<usize> = id.split('-').map(str::len).collect();
+        assert_eq!(lengths, [8, 4, 4, 4, 12]);
+        assert!(
+            id.bytes()
+                .all(|b| b == b'-' || matches!(b, b'0'..=b'9' | b'A'..=b'F'))
+        );
+        assert!(is_valid_hwid(&id));
+        assert_eq!(id, incy_uuid(MACHINE_ID));
+        assert_ne!(id, incy_uuid("11112222333344445555666677778888"));
+    }
+
+    #[test]
     fn hwid_is_validated_like_remnawave() {
         assert!(is_valid_hwid("A3B522EAA6F7DD89"));
         assert!(is_valid_hwid("a3ee4d8e-7e6c-4c32-9490-f157ef0ceea8"));
@@ -245,6 +282,14 @@ mod tests {
         assert_eq!(
             HwidAlgorithm::from_name("android-id"),
             Some(HwidAlgorithm::AndroidId)
+        );
+        assert_eq!(
+            HwidAlgorithm::from_name("incy-uuid"),
+            Some(HwidAlgorithm::IncyUuid)
+        );
+        assert_eq!(
+            HwidAlgorithm::IncyUuid.derive(MACHINE_ID),
+            incy_uuid(MACHINE_ID)
         );
         assert_eq!(HwidAlgorithm::from_name("raw"), None);
         assert_eq!(

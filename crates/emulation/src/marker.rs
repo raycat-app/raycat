@@ -2,11 +2,22 @@
 
 const MOSCOW_OFFSET: u64 = 3 * 3600;
 
-/// Маркер из бинарника Happ: `(day(now_utc + 10800) & 1) ? '5' : '6'`, то есть
-/// меняется каждые сутки по московскому времени (UTC+3) в зависимости от
-/// чётности числа месяца.
+/// Маркер Happ для Windows из бинарника: `(day(now_utc + 10800) & 1) ? '5' : '6'`,
+/// то есть меняется каждые сутки по московскому времени (UTC+3) в зависимости от
+/// чётности числа месяца, каков бы ни был часовой пояс компьютера.
 pub(crate) fn moscow_day_parity(unix: u64) -> char {
-    if day_of_month(unix.saturating_add(MOSCOW_OFFSET)) % 2 == 1 {
+    day_parity(unix, MOSCOW_OFFSET)
+}
+
+/// Маркер Happ для Android: чётность числа месяца по местной дате устройства
+/// (проверено на эмуляторе в UTC). raycat эмулирует телефон в часовом поясе
+/// Москвы, поэтому местная дата совпадает с московской.
+pub(crate) fn device_local_day_parity(unix: u64) -> char {
+    day_parity(unix, MOSCOW_OFFSET)
+}
+
+fn day_parity(unix: u64, offset: u64) -> char {
+    if day_of_month(unix.saturating_add(offset)) % 2 == 1 {
         '5'
     } else {
         '6'

@@ -1,0 +1,15 @@
+GET /sub/capture-android HTTP/1.1
+User-Agent: INCY/3.7.0/android Dalvik/2.1.0
+Accept: */*
+Accept-Language: en-US
+x-hwid: 60C76286-FA42-CA7E-66EC-E0B059F47E23
+x-device-os: Android
+x-ver-os: 14
+x-device-model: Google sdk_gphone64_x86_64
+x-app-version: 3.7.0
+x-device-locale: en_US
+x-client: INCY
+Host: 127.0.0.1:18080
+Connection: Keep-Alive
+Accept-Encoding: gzip
+
