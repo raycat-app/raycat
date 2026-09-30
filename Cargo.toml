@@ -29,6 +29,7 @@ libc = "0.2"
 raycat-config = { path = "crates/config" }
 raycat-emulation = { path = "crates/emulation" }
 raycat-http = { path = "crates/http" }
+raycat-netfilter = { path = "crates/netfilter" }
 raycat-subscription = { path = "crates/subscription" }
 raycat-xray = { path = "crates/xray" }
 ring = "0.17"
