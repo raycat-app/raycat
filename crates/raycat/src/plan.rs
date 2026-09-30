@@ -31,7 +31,11 @@ pub(crate) fn describe_mode(config: &Config) -> String {
         Mode::Proxy { listen } => format!("режим прокси, адрес {listen}"),
         Mode::Gateway { kill_switch, .. } => format!(
             "режим шлюза, kill switch {}",
-            if kill_switch { "включён" } else { "выключен" }
+            if kill_switch {
+                "включён"
+            } else {
+                "выключен"
+            }
         ),
     }
 }
