@@ -28,7 +28,8 @@ pub struct Selector {
 }
 
 impl Selector {
-    /// Кандидаты идут в порядке приоритета подписок; повторы тегов отбрасываются.
+    /// Кандидаты идут в порядке приоритета подписок; узлы с повторным `id` или
+    /// тегом отбрасываются.
     pub fn new(settings: Settings, candidates: Vec<Candidate>) -> Self {
         Self {
             settings,
@@ -37,26 +38,31 @@ impl Selector {
         }
     }
 
+    /// Тег текущего узла.
     pub fn current(&self) -> Option<&str> {
         self.current.map(|index| self.tag(index))
+    }
+
+    pub fn current_id(&self) -> Option<&str> {
+        self.current.map(|index| self.id(index))
     }
 
     pub fn set_pin(&mut self, pin: Option<PinTarget>) {
         self.settings.pin = pin;
     }
 
-    /// Подменяет список узлов после пересборки конфига; история проверок
-    /// сохраняется для тех же тегов.
+    /// Подменяет список узлов после пересборки конфига. История проверок и
+    /// текущий выбор остаются за узлами с теми же `id`, даже если их теги сдвинулись.
     pub fn set_candidates(&mut self, candidates: Vec<Candidate>) {
-        let current = self.current().map(str::to_owned);
+        let current = self.current_id().map(str::to_owned);
         let mut history: HashMap<String, NodeState> = self
             .nodes
             .drain(..)
-            .map(|node| (node.candidate.tag, node.state))
+            .map(|node| (node.candidate.id, node.state))
             .collect();
         self.nodes = into_nodes(candidates, &mut history);
         self.current =
-            current.and_then(|tag| self.nodes.iter().position(|node| node.candidate.tag == tag));
+            current.and_then(|id| self.nodes.iter().position(|node| node.candidate.id == id));
         self.reset_streaks();
     }
 
@@ -76,7 +82,9 @@ impl Selector {
         self.current = outcome.target;
         Decision {
             selected: outcome.target.map(|index| self.tag(index).to_owned()),
+            selected_id: outcome.target.map(|index| self.id(index).to_owned()),
             previous: previous.map(|index| self.tag(index).to_owned()),
+            previous_id: previous.map(|index| self.id(index).to_owned()),
             changed: previous != outcome.target,
             reason: outcome.reason,
             warnings,
@@ -94,6 +102,7 @@ impl Selector {
                 let candidate = &node.candidate;
                 let state = &node.state;
                 NodeInfo {
+                    id: candidate.id.clone(),
                     tag: candidate.tag.clone(),
                     subscription: candidate.subscription.clone(),
                     name: candidate.name.clone(),
@@ -115,6 +124,7 @@ impl Selector {
             .collect();
         Snapshot {
             selected: self.current().map(str::to_owned),
+            selected_id: self.current_id().map(str::to_owned),
             nodes,
         }
     }
@@ -357,18 +367,27 @@ impl Selector {
         &self.nodes[index].candidate.tag
     }
 
+    fn id(&self, index: usize) -> &str {
+        &self.nodes[index].candidate.id
+    }
+
     fn name(&self, index: usize) -> String {
         self.nodes[index].candidate.name.clone()
     }
 }
 
 fn into_nodes(candidates: Vec<Candidate>, history: &mut HashMap<String, NodeState>) -> Vec<Node> {
-    let mut seen = HashSet::new();
+    let mut ids = HashSet::new();
+    let mut tags = HashSet::new();
     candidates
         .into_iter()
-        .filter(|candidate| seen.insert(candidate.tag.clone()))
+        .filter(|candidate| {
+            let new_id = ids.insert(candidate.id.clone());
+            let new_tag = tags.insert(candidate.tag.clone());
+            new_id && new_tag
+        })
         .map(|candidate| {
-            let state = history.remove(&candidate.tag).unwrap_or_default();
+            let state = history.remove(&candidate.id).unwrap_or_default();
             Node { candidate, state }
         })
         .collect()

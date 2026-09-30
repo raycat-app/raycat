@@ -7,7 +7,10 @@ use crate::reason::{Reason, Warning};
 /// Узел, из которого выбирает движок.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Candidate {
-    /// Тег выхода узла в конфиге xray.
+    /// Стабильный ключ узла, например «подписка/имя узла»; по нему хранится история.
+    /// Формирует вызывающий, между пересборками конфига он не меняется.
+    pub id: String,
+    /// Текущий тег выхода узла в конфиге xray; при пересборке может сдвинуться.
     pub tag: String,
     /// Позиция подписки в порядке приоритета: меньше — важнее.
     pub subscription_index: usize,
@@ -63,9 +66,11 @@ pub enum Status {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Decision {
-    /// Выбранный тег; `None`, только если кандидатов нет.
+    /// Тег выбранного узла; `None`, только если кандидатов нет.
     pub selected: Option<String>,
+    pub selected_id: Option<String>,
     pub previous: Option<String>,
+    pub previous_id: Option<String>,
     pub changed: bool,
     pub reason: Reason,
     pub warnings: Vec<Warning>,
@@ -73,6 +78,7 @@ pub struct Decision {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeInfo {
+    pub id: String,
     pub tag: String,
     pub subscription: String,
     pub name: String,
@@ -91,5 +97,6 @@ pub struct NodeInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub selected: Option<String>,
+    pub selected_id: Option<String>,
     pub nodes: Vec<NodeInfo>,
 }

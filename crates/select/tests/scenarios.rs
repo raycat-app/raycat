@@ -31,6 +31,7 @@ fn candidate(
     rank: u32,
 ) -> Candidate {
     Candidate {
+        id: format!("{subscription}/{name}"),
         tag: tag.to_owned(),
         subscription_index,
         subscription: subscription.to_owned(),
@@ -593,11 +594,95 @@ fn no_candidates_gives_no_selection() {
 }
 
 #[test]
-fn duplicate_tags_are_dropped() {
+fn duplicate_tags_and_ids_are_dropped() {
     let mut list = nodes();
     list.push(candidate("a1", 2, "other", "NL-1", 0));
+    list.push(candidate("x9", 2, "main", "NL-1", 0));
     let selector = Selector::new(settings(), list);
     assert_eq!(selector.snapshot(secs(0)).nodes.len(), 4);
+}
+
+fn raw_health(at: u64, probes: &[(&str, Option<u64>)]) -> Vec<Health> {
+    probes
+        .iter()
+        .map(|&(tag, result)| Health {
+            tag: tag.to_owned(),
+            alive: result.is_some(),
+            latency_ms: result.unwrap_or(0),
+            checked_at: secs(at),
+            error: result.is_none().then(|| "timeout".to_owned()),
+        })
+        .collect()
+}
+
+#[test]
+fn tag_shift_after_rebuild_keeps_history_and_selection() {
+    let mut selector = selector();
+    drive(
+        &mut selector,
+        &[
+            (0, healthy(), "a1", true),
+            (10, [DOWN, up(120), up(150), up(80)], "a1", false),
+        ],
+    );
+
+    // В первой подписке появился узел: у всех следующих новые теги.
+    selector.set_candidates(vec![
+        candidate("n0", 0, "main", "NL-0", 0),
+        candidate("n1", 0, "main", "NL-1", 0),
+        candidate("n2", 0, "main", "NL-2", 0),
+        candidate("n3", 0, "main", "NL-3", Candidate::UNRANKED),
+        candidate("n4", 1, "backup", "DE-1", 0),
+    ]);
+    assert_eq!(selector.current(), Some("n1"));
+    assert_eq!(selector.current_id(), Some("main/NL-1"));
+    let snapshot = selector.snapshot(secs(20));
+    assert_eq!(snapshot.selected.as_deref(), Some("n1"));
+    assert_eq!(snapshot.selected_id.as_deref(), Some("main/NL-1"));
+    assert_eq!(node(&snapshot, "n1").failures, 1);
+    assert_eq!(node(&snapshot, "n1").id, "main/NL-1");
+    assert_eq!(node(&snapshot, "n2").alive_for_secs, Some(20));
+    assert_eq!(node(&snapshot, "n0").status, Status::Unknown);
+
+    let probes = [
+        ("n0", up(90)),
+        ("n1", DOWN),
+        ("n2", up(120)),
+        ("n3", up(150)),
+        ("n4", up(80)),
+    ];
+    let second = selector.step(secs(20), &raw_health(20, &probes));
+    assert_eq!(second.selected.as_deref(), Some("n1"));
+    assert!(!second.changed);
+
+    let third = selector.step(secs(30), &raw_health(30, &probes));
+    assert_eq!(third.selected.as_deref(), Some("n0"));
+    assert_eq!(third.selected_id.as_deref(), Some("main/NL-0"));
+    assert_eq!(third.previous.as_deref(), Some("n1"));
+    assert_eq!(third.previous_id.as_deref(), Some("main/NL-1"));
+    assert_eq!(
+        third.reason,
+        Reason::CurrentDead {
+            from: "NL-1".into(),
+            to: "NL-0".into(),
+            failures: 3,
+        }
+    );
+}
+
+#[test]
+fn health_with_a_stale_tag_is_ignored_after_rebuild() {
+    let mut selector = selector();
+    drive(&mut selector, &[(0, healthy(), "a1", true)]);
+    selector.set_candidates(vec![
+        candidate("n0", 0, "main", "NL-0", 0),
+        candidate("n1", 0, "main", "NL-1", 0),
+    ]);
+    let decision = selector.step(secs(10), &raw_health(10, &[("a1", DOWN), ("n1", up(100))]));
+    assert_eq!(decision.selected.as_deref(), Some("n1"));
+    let snapshot = selector.snapshot(secs(10));
+    assert_eq!(node(&snapshot, "n0").status, Status::Unknown);
+    assert_eq!(node(&snapshot, "n1").failures, 0);
 }
 
 #[test]
