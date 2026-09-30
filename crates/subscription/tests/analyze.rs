@@ -241,7 +241,10 @@ fn garbage_never_panics() {
 fn encrypt(plain: &[u8], key: &[u8; 16]) -> (String, String) {
     let cipher = Aes128Gcm::new_from_slice(key).unwrap();
     let sealed = cipher
-        .encrypt(&Nonce::<U12>::from(std::array::from_fn::<u8, 12, _>(|_| b'k')), plain)
+        .encrypt(
+            &Nonce::<U12>::from(std::array::from_fn::<u8, 12, _>(|_| b'k')),
+            plain,
+        )
         .unwrap();
     let (data, tag) = sealed.split_at(sealed.len() - 16);
     (STANDARD.encode(data), STANDARD.encode(tag))
