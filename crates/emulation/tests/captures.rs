@@ -14,6 +14,7 @@ use raycat_emulation::{Arch, Device, Emulation, Platform, Url};
 use serde::Deserialize;
 
 const PORT: &str = "18080";
+const MOSCOW_OFFSET_HOURS: i64 = 3;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,10 +24,13 @@ struct Input {
     arch: String,
     url: String,
     unix: u64,
+    /// Часовой пояс устройства при захвате (часы от UTC), по умолчанию Москва.
+    utc_offset_hours: Option<i64>,
     machine_id: String,
     hwid: Option<String>,
     hostname: Option<String>,
     model: Option<String>,
+    manufacturer: Option<String>,
     os_version: Option<String>,
     locale: Option<String>,
 }
@@ -50,6 +54,7 @@ fn generate(input: &Input) -> String {
         machine_id: input.machine_id.clone(),
         hostname: input.hostname.clone(),
         model: input.model.clone(),
+        manufacturer: input.manufacturer.clone(),
         os_version: input.os_version.clone(),
         hwid: input.hwid.clone(),
         locale: input.locale.clone().unwrap_or_default(),
@@ -58,8 +63,17 @@ fn generate(input: &Input) -> String {
     let arch: Arch = input.arch.parse().unwrap();
     let emulation = Emulation::new(&input.app, platform, arch, &device).unwrap();
     let url = Url::parse(&input.url.replace("{PORT}", PORT)).unwrap();
+    // raycat эмулирует устройство в часовом поясе Москвы, а эмулятор при захвате
+    // жил в другом: берём момент, в который московская дата совпадает с местной
+    // датой захвата.
+    let unix = input
+        .unix
+        .checked_add_signed(
+            (input.utc_offset_hours.unwrap_or(MOSCOW_OFFSET_HOURS) - MOSCOW_OFFSET_HOURS) * 3600,
+        )
+        .unwrap();
     let mut request = format!("GET {} HTTP/1.1\r\n", url.target);
-    for (name, value) in emulation.headers(&url, input.unix) {
+    for (name, value) in emulation.headers(&url, unix) {
         write!(request, "{name}: {value}\r\n").unwrap();
     }
     request.push_str("\r\n");

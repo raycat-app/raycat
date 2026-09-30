@@ -83,20 +83,27 @@ impl FromStr for Arch {
 /// Алгоритм дневного маркера User-Agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Marker {
+    /// По московской дате, независимо от часового пояса устройства (Windows).
     MoscowDayParity,
+    /// По местной дате устройства (Android).
+    DeviceLocalDayParity,
 }
 
 impl Marker {
     fn from_name(name: &str) -> Result<Self> {
         match name {
             "moscow-day-parity" => Ok(Self::MoscowDayParity),
-            _ => bail!("неизвестный алгоритм маркера {name:?}: доступен moscow-day-parity"),
+            "device-local-day-parity" => Ok(Self::DeviceLocalDayParity),
+            _ => bail!(
+                "неизвестный алгоритм маркера {name:?}: доступны moscow-day-parity, device-local-day-parity"
+            ),
         }
     }
 
     pub(crate) fn at(self, unix: u64) -> char {
         match self {
             Self::MoscowDayParity => marker::moscow_day_parity(unix),
+            Self::DeviceLocalDayParity => marker::device_local_day_parity(unix),
         }
     }
 }
@@ -118,6 +125,7 @@ pub(crate) struct Profile {
     pub(crate) os: String,
     pub(crate) os_version: String,
     pub(crate) model: Template,
+    pub(crate) manufacturer: Option<String>,
     pub(crate) hwid: HwidAlgorithm,
     pub(crate) locale: LocaleRule,
     builds: BTreeMap<String, Release>,
@@ -143,6 +151,7 @@ struct RawDevice {
     os: String,
     os_version: String,
     model: String,
+    manufacturer: Option<String>,
     hwid: String,
     locale: String,
 }
@@ -200,6 +209,9 @@ impl Profile {
         non_empty("device.os", &raw.device.os)?;
         non_empty("device.os_version", &raw.device.os_version)?;
         non_empty("device.model", &raw.device.model)?;
+        if let Some(manufacturer) = &raw.device.manufacturer {
+            non_empty("device.manufacturer", manufacturer)?;
+        }
 
         let marker = raw.marker.as_deref().map(Marker::from_name).transpose()?;
         let hwid = HwidAlgorithm::from_name(&raw.device.hwid).ok_or_else(|| {
@@ -234,6 +246,7 @@ impl Profile {
             os: raw.device.os,
             os_version: raw.device.os_version,
             model,
+            manufacturer: raw.device.manufacturer,
             hwid,
             locale,
             builds,
@@ -259,6 +272,7 @@ impl Profile {
             for var in template.vars() {
                 let available = match var {
                     Var::Marker => self.marker.is_some(),
+                    Var::Manufacturer => self.manufacturer.is_some(),
                     Var::AcceptLanguage => self.locale.provides_accept_language(),
                     Var::Cpu => self.builds.values().all(|b| b.cpu.is_some()),
                     _ => true,
@@ -357,6 +371,11 @@ pub(crate) const SOURCES: &[Source] = &[
         app: "happ",
         platform: Platform::Android,
         text: include_str!("../profiles/happ/android.toml"),
+    },
+    Source {
+        app: "incy",
+        platform: Platform::Android,
+        text: include_str!("../profiles/incy/android.toml"),
     },
 ];
 
@@ -489,6 +508,8 @@ value = "{accept_language}"
         assert!(error_of(&no_cpu).contains("{cpu}"));
         let android_locale = VALID.replace("qt-windows", "android");
         assert!(error_of(&android_locale).contains("{accept_language}"));
+        let no_manufacturer = VALID.replace("{hostname}_{cpu}", "{manufacturer} {hostname}");
+        assert!(error_of(&no_manufacturer).contains("{manufacturer}"));
         let request_model = VALID.replace("{hostname}_{cpu}", "{host}");
         assert!(error_of(&request_model).contains("device.model"));
         let recursive = VALID.replace("T/{app_version}", "T/{user_agent}");

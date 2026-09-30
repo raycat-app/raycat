@@ -1,0 +1,12 @@
+app = "incy"
+platform = "android"
+arch = "x64"
+url = "http://127.0.0.1:{PORT}/sub/capture-android"
+# Wed Sep 30 00:02:06 UTC 2026, эмулятор в UTC.
+unix = 1_790_726_526
+utc_offset_hours = 0
+machine_id = "0d0af05ee8fd4dc29275718f2ce4dff1"
+hwid = "60C76286-FA42-CA7E-66EC-E0B059F47E23"
+manufacturer = "Google"
+model = "sdk_gphone64_x86_64"
+locale = "en_US"
