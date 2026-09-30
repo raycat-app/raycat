@@ -26,12 +26,15 @@ clap = { version = "4.6", default-features = false, features = [
 ] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 libc = "0.2"
+prost = "0.14"
+protox = "0.9"
 raycat-config = { path = "crates/config" }
 raycat-emulation = { path = "crates/emulation" }
 raycat-http = { path = "crates/http" }
 raycat-netfilter = { path = "crates/netfilter" }
 raycat-subscription = { path = "crates/subscription" }
 raycat-xray = { path = "crates/xray" }
+raycat-xray-api = { path = "crates/xray-api" }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 ruzstd = { version = "0.9", default-features = false, features = ["std"] }
@@ -47,6 +50,9 @@ tokio = { version = "1", default-features = false, features = [
   "io-util",
 ] }
 toml = { version = "1", default-features = false, features = ["std", "parse", "serde"] }
+tonic = { version = "0.14", default-features = false, features = ["channel", "codegen"] }
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
 webpki-roots = "1"
 
 [workspace.lints.rust]
