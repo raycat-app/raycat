@@ -145,6 +145,7 @@ pub fn compile(
         "log": {"loglevel": "warning"},
         "api": {"tag": "api", "listen": api_listen, "services": API_SERVICES},
         "stats": {},
+        "policy": {"system": {"statsOutboundUplink": true, "statsOutboundDownlink": true}},
         "dns": dns(&settings.dns.resolvers, *primary_resolver, &hosts),
         "fakedns": [{"ipPool": settings.dns.fake_ip_pool, "poolSize": FAKE_IP_POOL_SIZE}],
         "observatory": {

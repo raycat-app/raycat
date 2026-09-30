@@ -445,6 +445,19 @@ fn api_listens_on_loopback_only() {
 }
 
 #[test]
+fn outbound_traffic_counters_are_enabled() {
+    for mode in [proxy_mode(), gateway_mode()] {
+        let config = build(mode).config;
+
+        assert_eq!(config["stats"], json!({}));
+        assert_eq!(
+            config["policy"],
+            json!({"system": {"statsOutboundUplink": true, "statsOutboundDownlink": true}})
+        );
+    }
+}
+
+#[test]
 fn gateway_inbound_is_tproxy() {
     let config = build(gateway_mode()).config;
 

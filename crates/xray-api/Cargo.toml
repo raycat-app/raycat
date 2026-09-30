@@ -1,0 +1,27 @@
+[package]
+name = "raycat-xray-api"
+description = "Клиент gRPC API xray-core: здоровье узлов, закрепление узла в балансировщике, трафик"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[dependencies]
+prost.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+
+[build-dependencies]
+protox.workspace = true
+tonic-prost-build.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

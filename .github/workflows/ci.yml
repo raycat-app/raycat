@@ -288,6 +288,31 @@ jobs:
             echo "::endgroup::"
           done
 
+  xray-api:
+    name: API xray
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Скачивание xray
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' versions.toml)
+          sha256=$(sed -n 's/^x86_64 = "\(.*\)"/\1/p' versions.toml)
+          test -n "$version" && test -n "$sha256"
+          archive="Xray-linux-64.zip"
+          curl -fsSLO "https://github.com/XTLS/Xray-core/releases/download/v${version}/${archive}"
+          echo "${sha256}  ${archive}" | sha256sum -c -
+          unzip -q "$archive" xray
+          ./xray version
+      - name: Тесты клиента с настоящим xray
+        env:
+          XRAY_BIN: ./xray
+        run: cargo test -p raycat-xray-api --locked
+
   e2e-proxy:
     name: "e2e: прокси"
     runs-on: ubuntu-24.04
@@ -354,7 +379,7 @@ jobs:
   result:
     name: Итог
     if: ${{ always() }}
-    needs: [lint, lockfile, test, msrv, deny, workflows, build, image, xray-config, e2e-proxy, nftables, e2e-gateway]
+    needs: [lint, lockfile, test, msrv, deny, workflows, build, image, xray-config, xray-api, e2e-proxy, nftables, e2e-gateway]
     runs-on: ubuntu-24.04
     permissions: {}
     steps:

@@ -1,5 +1,5 @@
 [files]
-extend-exclude = ["Cargo.lock", "assets/"]
+extend-exclude = ["Cargo.lock", "assets/", "crates/xray-api/proto/"]
 
 [default.extend-words]
 # Параметр `mport` (порты для port hopping) в ссылках hysteria2.

@@ -6,6 +6,7 @@
     "services": ["HandlerService", "RoutingService", "ObservatoryService", "StatsService"]
   },
   "stats": {},
+  "policy": {"system": {"statsOutboundUplink": true, "statsOutboundDownlink": true}},
   "dns": {
     "tag": "dns-internal",
     "queryStrategy": "UseIPv4",
