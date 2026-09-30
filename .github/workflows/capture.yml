@@ -1,0 +1,155 @@
+name: Захват запросов приложений
+
+# Лаборатория: настоящие приложения (Happ, INCY) запрашивают подписку у локального
+# сервера .github/capture/capture_server.py, запросы сохраняются как артефакты и
+# служат образцами для профилей запросов raycat. Ничего не публикуется.
+
+on:
+  push:
+    branches: ["lab/**"]
+  workflow_dispatch:
+    inputs:
+      happ_windows:
+        description: Версия Happ для Windows (тег релиза Happ-proxy/happ-desktop или latest)
+        default: latest
+      happ_android:
+        description: Версия Happ для Android (тег релиза Happ-proxy/happ-android или latest)
+        default: latest
+      incy_android:
+        description: Версия INCY для Android (тег релиза INCY-DEV/incy-platforms или latest)
+        default: latest
+
+permissions: {}
+
+jobs:
+  happ-windows:
+    name: Happ Windows ${{ matrix.arch }}${{ matrix.date && ' (нечётный день)' || '' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: x64, runner: windows-latest}
+          - {arch: arm64, runner: windows-11-arm}
+          # Нечётное число по Москве: маркер дня в User-Agent должен смениться.
+          - {arch: x64, runner: windows-latest, date: "2026-09-29 12:00:00"}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Установщик
+        id: app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED: ${{ inputs.happ_windows }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          version=${REQUESTED:-latest}
+          if [ "$version" = latest ]; then
+            version=$(gh release list -R Happ-proxy/happ-desktop --limit 1 --json tagName --jq '.[0].tagName')
+          fi
+          [[ "$version" =~ ^[0-9A-Za-z._-]+$ ]] || { echo "неверная версия: $version"; exit 1; }
+          gh release download "$version" -R Happ-proxy/happ-desktop -p "setup-Happ.${ARCH}.exe"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Захват
+        shell: pwsh
+        env:
+          ARCH: ${{ matrix.arch }}
+          CAPTURE_DATE: ${{ matrix.date }}
+        run: |
+          $server = Start-Process python -ArgumentList ".github/capture/capture_server.py", "--host", "127.0.0.1", "--port", "18080", "--out", "captures" -PassThru -RedirectStandardOutput server.log
+          Start-Sleep 2
+          ./.github/capture/windows.ps1 -Installer "setup-Happ.$env:ARCH.exe" -Link "happ://add/http://127.0.0.1:18080/sub/capture-windows" -Out captures -Date $env:CAPTURE_DATE
+          Stop-Process $server -Force
+          Get-Content server.log
+          Copy-Item server.log captures/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() }}
+        with:
+          name: capture-happ-windows-${{ matrix.arch }}-${{ steps.app.outputs.version }}${{ matrix.date && '-odd-day' || '' }}
+          path: captures
+          if-no-files-found: error
+      - name: Есть ли захват
+        shell: bash
+        run: ls captures/*.http
+
+  android:
+    name: ${{ matrix.app }} Android${{ matrix.date && ' (нечётный день)' || '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {app: Happ, repo: Happ-proxy/happ-android, asset: Happ.apk, scheme: happ, hosts: 10.0.2.2, requested: "${{ inputs.happ_android }}"}
+          - {app: INCY, repo: INCY-DEV/incy-platforms, asset: Incy.apk, scheme: incy, hosts: "127.0.0.1 localhost 10.0.2.2", tls: true, requested: "${{ inputs.incy_android }}"}
+          # Нечётное число по Москве: маркер дня в User-Agent должен смениться.
+          - {app: Happ, repo: Happ-proxy/happ-android, asset: Happ.apk, scheme: happ, hosts: 10.0.2.2, requested: "${{ inputs.happ_android }}", date: "092912002026.00"}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: APK
+        id: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED: ${{ matrix.requested }}
+          REPO: ${{ matrix.repo }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          tag=${REQUESTED:-latest}
+          if [ "$tag" = latest ]; then
+            tag=$(gh release list -R "$REPO" --limit 1 --json tagName --jq '.[0].tagName')
+          fi
+          [[ "$tag" =~ ^[0-9A-Za-z._-]+$ ]] || { echo "неверная версия: $tag"; exit 1; }
+          gh release download "$tag" -R "$REPO" -p "$ASSET"
+          aapt=$(find "$ANDROID_HOME/build-tools" -name aapt | sort -V | tail -1)
+          version=$("$aapt" dump badging "$ASSET" | sed -n "s/^package:.* versionName='\([^']*\)'.*/\1/p" | head -1)
+          echo "tag=$tag version=${version:-?}"
+          echo "version=${version:-$tag}" >> "$GITHUB_OUTPUT"
+      - name: KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Сервер захвата
+        env:
+          TLS: ${{ matrix.tls }}
+          TLS_DIR: ${{ runner.temp }}/capture-tls
+        run: |
+          args=()
+          if [ -n "$TLS" ]; then
+            bash .github/capture/certs.sh "$TLS_DIR"
+            args=(--cert "$TLS_DIR/server.pem" --key "$TLS_DIR/server.key")
+          fi
+          python3 .github/capture/capture_server.py --port 18080 --out captures "${args[@]}" > server.log 2>&1 &
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        env:
+          APK: ${{ matrix.asset }}
+          DATE: ${{ matrix.date }}
+          SCHEME: ${{ matrix.scheme }}
+          HOSTS: ${{ matrix.hosts }}
+          PROTO: ${{ matrix.tls && 'https' || 'http' }}
+          CA_CERT: ${{ matrix.tls && format('{0}/capture-tls/ca.pem', runner.temp) || '' }}
+          OUT: captures
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: bash .github/capture/android.sh
+      - if: ${{ always() }}
+        run: cat server.log && cp server.log captures/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() }}
+        with:
+          name: capture-${{ matrix.scheme }}-android-x86_64-${{ steps.app.outputs.version }}${{ matrix.date && '-odd-day' || '' }}
+          path: captures
+          if-no-files-found: error
+      - name: Есть ли захват
+        run: ls captures/*.http
