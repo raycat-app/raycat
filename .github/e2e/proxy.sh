@@ -36,14 +36,16 @@ cleanup() {
   for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null; done
   wait 2>/dev/null
   if [ "$status" -ne 0 ]; then
-    for log in raycat node panel site; do
+    for log in raycat node panel site client-servers client-flat; do
       echo "::group::$log.log"
       cat "$work/$log.log" 2>/dev/null
       echo "::endgroup::"
     done
-    echo "::group::panel-requests.log"
-    cat "$work/panel-requests.log" 2>/dev/null
-    echo "::endgroup::"
+    for file in panel-requests.log node-access.log state/xray.json; do
+      echo "::group::$file"
+      cat "$work/$file" 2>/dev/null
+      echo "::endgroup::"
+    done
   fi
   rm -rf "$work"
   exit "$status"
@@ -54,7 +56,7 @@ wait_for() {
   local what=$1
   shift
   local _
-  for _ in $(seq 60); do
+  for _ in $(seq 30); do
     if "$@" >/dev/null 2>&1; then
       return 0
     fi
@@ -68,8 +70,8 @@ log_has() { grep -q -- "$1" "$work/raycat.log"; }
 log_since() { grep -q -- "$2" <(tail -n "+$(($1 + 1))" "$work/raycat.log"); }
 log_lines() { wc -l <"$work/raycat.log"; }
 
-via_http() { curl -fsS --max-time 15 -x "http://$proxy" "http://$site_ip:$site_port/index.html"; }
-via_socks() { curl -fsS --max-time 15 --socks5-hostname "$proxy" "http://$site_ip:$site_port/index.html"; }
+via_http() { curl -fsS --max-time 5 -x "http://$proxy" "http://$site_ip:$site_port/index.html"; }
+via_socks() { curl -fsS --max-time 5 --socks5-hostname "$proxy" "http://$site_ip:$site_port/index.html"; }
 
 expect_site() {
   local how=$1 body
@@ -100,7 +102,7 @@ sudo ip addr add "$site_ip/32" dev lo
 echo "== узел, сайт и панель"
 cat >"$work/node.json" <<EOF
 {
-  "log": {"loglevel": "warning", "access": "$work/node-access.log"},
+  "log": {"loglevel": "debug", "access": "$work/node-access.log"},
   "inbounds": [{
     "listen": "$node_ip",
     "port": $node_port,
@@ -128,6 +130,32 @@ pids+=("$panel_pid")
 
 wait_for "сайт" curl -fsS "http://$site_ip:$site_port/index.html"
 wait_for "панель" curl -fsS "http://127.0.0.1:$panel_port/sub/probe"
+
+echo "== узел отдельным клиентом xray (проверка стенда)"
+for form in servers flat; do
+  if [ "$form" = servers ]; then
+    settings="{\"servers\": [{\"address\": \"$node_ip\", \"port\": $node_port, \"method\": \"aes-128-gcm\", \"password\": \"$password\"}]}"
+    port=18400
+  else
+    settings="{\"address\": \"$node_ip\", \"port\": $node_port, \"method\": \"aes-128-gcm\", \"password\": \"$password\"}"
+    port=18401
+  fi
+  cat >"$work/client-$form.json" <<EOF
+{
+  "log": {"loglevel": "warning"},
+  "inbounds": [{"listen": "127.0.0.1", "port": $port, "protocol": "socks", "settings": {"udp": false}}],
+  "outbounds": [{"protocol": "shadowsocks", "settings": $settings}]
+}
+EOF
+  "$xray" run -c "$work/client-$form.json" >"$work/client-$form.log" 2>&1 &
+  pids+=($!)
+  sleep 1
+  if curl -fsS --max-time 5 --socks5-hostname "127.0.0.1:$port" "http://$site_ip:$site_port/index.html" >/dev/null; then
+    echo "клиент xray ($form): узел отвечает"
+  else
+    echo "клиент xray ($form): узел НЕ отвечает"
+  fi
+done
 
 cat >"$work/config.toml" <<EOF
 [[subscription]]
