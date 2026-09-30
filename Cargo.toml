@@ -13,6 +13,7 @@ publish = false
 
 [workspace.dependencies]
 anyhow = "1"
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 brotli-decompressor = "5"
 clap = { version = "4.6", default-features = false, features = [
   "std",
