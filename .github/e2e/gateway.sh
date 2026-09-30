@@ -115,7 +115,8 @@ echo "$outside" | grep -q 'Address: 198\.1[89]\.' || fail "DNS к внешнем
 
 echo "== IPv6 наружу не выходит"
 table=$(gateway_run nft list table inet raycat)
-grep -q 'nfproto ipv6' <<<"$table" || fail "в таблице нет запрета IPv6"
+# IPv6 не перехватывается и с kill switch попадает под завершающий reject цепочки guard.
+grep -Eq '^[[:space:]]+reject$' <<<"$table" || fail "в таблице нет завершающего reject"
 if app_run wget -q -T 4 -O - 'http://[2606:4700:4700::1111]/' >/dev/null 2>&1; then
   fail "IPv6 вышел наружу"
 fi
