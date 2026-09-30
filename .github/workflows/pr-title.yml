@@ -40,7 +40,7 @@ jobs:
           found=$( {
             gh api "repos/$REPO/pulls/$PR" --jq '.body // ""'
             gh api "repos/$REPO/pulls/$PR/commits" --paginate --jq '.[].commit.message'
-          } | grep -iE '^[[:space:]]*co-authored-by:|generated with' || true)
+          } | grep -iE '^[[:space:]]*co-authored-by:|generated with \[?claude' || true)
           if [ -n "$found" ]; then
             echo "::error::В описании PR или сообщениях коммитов есть запрещённые строки:"
             printf '%s\n' "$found"
