@@ -120,15 +120,19 @@ impl Store {
         write_atomic(&dir.join("state.json"), &json)
     }
 
-    /// Закрепление, сделанное через API. `None` — файла нет (действует `selection.pin`
-    /// из настроек), `Some(None)` — закрепление снято (автоматика, даже если в настройках
-    /// есть `selection.pin`), `Some(Some(id))` — закреплён узел «подписка/имя».
-    pub(crate) fn load_pin(&self) -> Option<Option<String>> {
-        let bytes = fs::read(self.path(PIN_FILE)).ok()?;
-        serde_json::from_slice::<PinFile>(&bytes)
-            .inspect_err(|_| warn!("файл закрепления {PIN_FILE} повреждён и игнорируется"))
-            .ok()
-            .map(|file| file.node)
+    /// Закрепление, сделанное через API.
+    pub(crate) fn load_pin(&self) -> StoredPin {
+        let Ok(bytes) = fs::read(self.path(PIN_FILE)) else {
+            return StoredPin::Absent;
+        };
+        match serde_json::from_slice::<PinFile>(&bytes) {
+            Ok(PinFile { node: Some(id) }) => StoredPin::Node(id),
+            Ok(PinFile { node: None }) => StoredPin::Off,
+            Err(_) => {
+                warn!("файл закрепления {PIN_FILE} повреждён и игнорируется");
+                StoredPin::Absent
+            }
+        }
     }
 
     pub(crate) fn save_pin(&self, node: Option<&str>) -> Result<()> {
@@ -141,6 +145,17 @@ impl Store {
 }
 
 const PIN_FILE: &str = "pin.json";
+
+/// Что сохранено о закреплении узла.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StoredPin {
+    /// Файла нет: действует `selection.pin` из настроек.
+    Absent,
+    /// Закрепление снято: автоматика, даже если в настройках есть `selection.pin`.
+    Off,
+    /// Закреплён узел «подписка/имя».
+    Node(String),
+}
 
 #[derive(Serialize, Deserialize)]
 struct PinFile {
@@ -408,15 +423,18 @@ mod tests {
     fn the_pin_survives_a_reopen_and_can_be_switched_off() {
         let temp = TempDir::new("pin");
         let store = Store::open(temp.path().to_path_buf()).unwrap();
-        assert_eq!(store.load_pin(), None);
+        assert_eq!(store.load_pin(), StoredPin::Absent);
 
         store.save_pin(Some("основная/NL-1")).unwrap();
         assert_eq!(mode(&temp.path().join("pin.json")), 0o600);
         let reopened = Store::open(temp.path().to_path_buf()).unwrap();
-        assert_eq!(reopened.load_pin(), Some(Some("основная/NL-1".to_owned())));
+        assert_eq!(
+            reopened.load_pin(),
+            StoredPin::Node("основная/NL-1".to_owned())
+        );
 
         store.save_pin(None).unwrap();
-        assert_eq!(store.load_pin(), Some(None));
+        assert_eq!(store.load_pin(), StoredPin::Off);
     }
 
     #[test]
@@ -424,7 +442,7 @@ mod tests {
         let temp = TempDir::new("pin-corrupt");
         let store = Store::open(temp.path().to_path_buf()).unwrap();
         fs::write(temp.path().join("pin.json"), "{ not json").unwrap();
-        assert_eq!(store.load_pin(), None);
+        assert_eq!(store.load_pin(), StoredPin::Absent);
     }
 
     #[test]

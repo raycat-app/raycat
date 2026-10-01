@@ -437,7 +437,7 @@ mod tests {
         shared: Arc<Shared>,
     }
 
-    async fn fixture() -> Fixture {
+    fn fixture() -> Fixture {
         let temp = TempDir::new("api");
         let socket = temp.path().join("raycat.sock");
         let (shared, mut commands) = Shared::new(sample_status());
@@ -518,7 +518,7 @@ mod tests {
 
     #[tokio::test]
     async fn status_reports_the_published_state_and_uptime() {
-        let fixture = fixture().await;
+        let fixture = fixture();
         let (code, body) = json(&fixture.socket, "GET", "/v1/status", "").await;
         assert_eq!(code, 200);
         assert_eq!(body["version"], "0.1.0");
@@ -540,7 +540,7 @@ mod tests {
 
     #[tokio::test]
     async fn nodes_come_from_the_snapshot_without_xray_traffic() {
-        let fixture = fixture().await;
+        let fixture = fixture();
         let (code, body) = json(&fixture.socket, "GET", "/v1/nodes", "").await;
         assert_eq!(code, 200);
         assert_eq!(body["selected"], "main/NL-1");
@@ -551,7 +551,7 @@ mod tests {
 
     #[tokio::test]
     async fn pin_and_unpin_go_through_the_daemon() {
-        let fixture = fixture().await;
+        let fixture = fixture();
         let (code, body) = json(
             &fixture.socket,
             "POST",
@@ -571,7 +571,7 @@ mod tests {
 
     #[tokio::test]
     async fn pin_errors_are_json_in_russian() {
-        let fixture = fixture().await;
+        let fixture = fixture();
         let (code, body) = json(
             &fixture.socket,
             "POST",
@@ -593,7 +593,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_takes_an_optional_subscription() {
-        let fixture = fixture().await;
+        let fixture = fixture();
         for body in ["", "{}", r#"{"subscription":"main"}"#] {
             let (code, answer) = json(&fixture.socket, "POST", "/v1/update", body).await;
             assert_eq!(code, 200, "{body:?}");
@@ -613,7 +613,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_paths_get_a_json_error() {
-        let fixture = fixture().await;
+        let fixture = fixture();
         let (code, body) = json(&fixture.socket, "GET", "/v1/nothing", "").await;
         assert_eq!(code, 404);
         assert!(body["error"].is_string());
@@ -653,7 +653,7 @@ mod tests {
 
     #[tokio::test]
     async fn events_stream_starts_with_hello_and_carries_new_events() {
-        let fixture = fixture().await;
+        let fixture = fixture();
         let mut stream = UnixStream::connect(&fixture.socket).await.unwrap();
         stream
             .write_all(
@@ -687,7 +687,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_socket_is_private() {
-        let fixture = fixture().await;
+        let fixture = fixture();
         let mode = fs::metadata(&fixture.socket).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
     }

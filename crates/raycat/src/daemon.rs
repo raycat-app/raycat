@@ -31,7 +31,7 @@ use crate::paths;
 use crate::plan;
 use crate::schedule::{HEALTHY_UPTIME, RESTART_FIRST, next_restart_delay};
 use crate::selection;
-use crate::store::Store;
+use crate::store::{Store, StoredPin};
 use crate::updater::{self, Outcome, Refresh, Source};
 use crate::util::{format_duration, format_time, now_unix};
 use crate::xray::{Exit, Process};
@@ -255,8 +255,9 @@ impl Daemon {
         let now = Instant::now();
         let gateway = plan::gateway_rules(&config)?;
         let pin = match store.load_pin() {
-            Some(stored) => stored.as_deref().and_then(selection::parse_pin),
-            None => selection::config_pin(&config),
+            StoredPin::Node(id) => selection::parse_pin(&id),
+            StoredPin::Off => None,
+            StoredPin::Absent => selection::config_pin(&config),
         };
         let selector = Selector::new(selection::settings(&config, pin), Vec::new());
         let subs = config
@@ -608,7 +609,7 @@ impl Daemon {
                 );
             }
         }
-        self.complete_updates(index, result);
+        self.complete_updates(index, &result);
         if self.gather_until.is_some() && self.subs.iter().all(|sub| sub.first_done) {
             self.finish_gathering();
         }
@@ -620,6 +621,7 @@ mod tests {
     use std::fmt::Write as _;
 
     use raycat_config::Env;
+    use raycat_select::Health;
     use raycat_subscription::analyze;
 
     use super::*;
@@ -768,25 +770,43 @@ mod tests {
         let mut daemon = daemon(&["a"], &temp);
         daemon.load_caches();
         daemon.finished(0, applied(BOTH));
-        // Без закрепления первым идёт узел с рангом по маске priority.
-        assert_eq!(choice(&mut daemon).as_deref(), Some("a/Two"));
+        // Без данных о здоровье движок берёт первый узел списка.
+        assert_eq!(choice(&mut daemon).as_deref(), Some("a/One"));
 
         assert!(matches!(
-            daemon.set_pin(Some("a/Nope".to_owned())),
+            daemon.set_pin(Some("a/Nope")),
             Err(Refusal::NotFound(_))
         ));
         assert!(matches!(
-            daemon.set_pin(Some("плохо".to_owned())),
+            daemon.set_pin(Some("плохо")),
             Err(Refusal::Invalid(_))
         ));
-        assert_eq!(daemon.store.load_pin(), None);
+        assert_eq!(daemon.store.load_pin(), StoredPin::Absent);
 
-        let pinned = daemon.set_pin(Some("a/One".to_owned())).unwrap();
-        assert_eq!(pinned.node.as_deref(), Some("a/One"));
-        assert_eq!(daemon.store.load_pin(), Some(Some("a/One".to_owned())));
-        assert_eq!(choice(&mut daemon).as_deref(), Some("a/One"));
-        let status = daemon.status();
-        assert!(status.node.is_none() || status.node.is_some_and(|node| node.pinned));
+        let pinned = daemon.set_pin(Some("a/Two")).unwrap();
+        assert_eq!(pinned.node.as_deref(), Some("a/Two"));
+        assert_eq!(daemon.store.load_pin(), StoredPin::Node("a/Two".to_owned()));
+        assert_eq!(choice(&mut daemon).as_deref(), Some("a/Two"));
+        let node = daemon.status().node.unwrap();
+        assert_eq!((node.id.as_str(), node.pinned), ("a/Two", true));
+    }
+
+    #[test]
+    fn ranks_from_priority_masks_decide_among_live_nodes() {
+        let temp = TempDir::new("ranks");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished(0, applied(BOTH));
+        let alive = |tag: &str| Health {
+            tag: tag.to_owned(),
+            alive: true,
+            latency_ms: 50,
+            checked_at: Duration::from_secs(1_000),
+            error: None,
+        };
+        let health = [alive("node-001-main"), alive("node-002-main")];
+        let decision = daemon.selector.step(Duration::from_secs(1_001), &health);
+        assert_eq!(decision.selected_id.as_deref(), Some("a/Two"));
     }
 
     #[test]
@@ -796,41 +816,41 @@ mod tests {
             let mut first = daemon(&["a"], &temp);
             first.load_caches();
             first.finished(0, applied(BOTH));
-            first.set_pin(Some("a/One".to_owned())).unwrap();
+            first.set_pin(Some("a/Two")).unwrap();
         }
-        let mut second = daemon_with(&["a"], "[selection]\npin = \"a/Two\"\n", &temp);
-        second.load_caches();
-        second.finished(0, applied(BOTH));
-        assert_eq!(choice(&mut second).as_deref(), Some("a/One"));
-    }
-
-    #[test]
-    fn unpinning_overrides_the_pin_from_the_config() {
-        let temp = TempDir::new("pin-config");
-        let config = "[selection]\npin = \"a/One\"\n";
-        let mut first = daemon_with(&["a"], config, &temp);
-        first.load_caches();
-        first.finished(0, applied(BOTH));
-        assert_eq!(choice(&mut first).as_deref(), Some("a/One"));
-
-        assert_eq!(first.set_pin(None).unwrap().node, None);
-        assert_eq!(first.store.load_pin(), Some(None));
-        // Движок не прыгает без данных о здоровье: узел меняется, когда проверки покажут выигрыш.
-        assert_eq!(choice(&mut first).as_deref(), Some("a/One"));
-
-        let mut second = daemon_with(&["a"], config, &temp);
+        let mut second = daemon_with(&["a"], "[selection]\npin = \"a/One\"\n", &temp);
         second.load_caches();
         second.finished(0, applied(BOTH));
         assert_eq!(choice(&mut second).as_deref(), Some("a/Two"));
     }
 
     #[test]
+    fn unpinning_overrides_the_pin_from_the_config() {
+        let temp = TempDir::new("pin-config");
+        let config = "[selection]\npin = \"a/Two\"\n";
+        let mut first = daemon_with(&["a"], config, &temp);
+        first.load_caches();
+        first.finished(0, applied(BOTH));
+        assert_eq!(choice(&mut first).as_deref(), Some("a/Two"));
+
+        assert_eq!(first.set_pin(None).unwrap().node, None);
+        assert_eq!(first.store.load_pin(), StoredPin::Off);
+        // Движок не прыгает без данных о здоровье: узел меняется, когда проверки покажут выигрыш.
+        assert_eq!(choice(&mut first).as_deref(), Some("a/Two"));
+
+        let mut second = daemon_with(&["a"], config, &temp);
+        second.load_caches();
+        second.finished(0, applied(BOTH));
+        assert_eq!(choice(&mut second).as_deref(), Some("a/One"));
+    }
+
+    #[test]
     fn the_config_pin_applies_without_a_saved_one() {
         let temp = TempDir::new("pin-from-config");
-        let mut daemon = daemon_with(&["a"], "[selection]\npin = \"a/One\"\n", &temp);
+        let mut daemon = daemon_with(&["a"], "[selection]\npin = \"a/Two\"\n", &temp);
         daemon.load_caches();
         daemon.finished(0, applied(BOTH));
-        assert_eq!(choice(&mut daemon).as_deref(), Some("a/One"));
+        assert_eq!(choice(&mut daemon).as_deref(), Some("a/Two"));
     }
 
     #[test]
@@ -860,7 +880,7 @@ mod tests {
         let mut daemon = daemon(&["a", "b"], &temp);
         daemon.load_caches();
         let (reply, mut answer) = oneshot::channel();
-        daemon.start_update(Some("b".to_owned()), reply);
+        daemon.start_update(Some("b"), reply);
         daemon.finished(1, applied(TWO));
         let updates = answer.try_recv().unwrap().unwrap();
         assert_eq!(updates.results.len(), 1);
@@ -872,7 +892,7 @@ mod tests {
         let temp = TempDir::new("update-unknown");
         let mut daemon = daemon(&["a"], &temp);
         let (reply, mut answer) = oneshot::channel();
-        daemon.start_update(Some("x".to_owned()), reply);
+        daemon.start_update(Some("x"), reply);
         let refusal = answer.try_recv().unwrap().unwrap_err();
         assert!(matches!(refusal, Refusal::NotFound(ref text) if text.contains("«x»")));
         assert!(daemon.pending_updates.is_empty());
@@ -914,10 +934,10 @@ mod tests {
         daemon.finished(0, applied(BOTH));
         choice(&mut daemon);
         let view = daemon.nodes_view();
-        assert_eq!(view.selected.as_deref(), Some("a/Two"));
+        assert_eq!(view.selected.as_deref(), Some("a/One"));
         let names: Vec<&str> = view.nodes.iter().map(|node| node.name.as_str()).collect();
         assert_eq!(names, ["One", "Two"]);
-        assert!(view.nodes[1].selected);
+        assert!(view.nodes[0].selected && !view.nodes[1].selected);
         assert!(view.nodes.iter().all(|node| node.uplink_bytes.is_none()));
     }
 

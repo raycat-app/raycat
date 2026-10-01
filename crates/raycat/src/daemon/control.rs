@@ -30,19 +30,19 @@ impl Daemon {
     pub(super) fn command(&mut self, command: Command) {
         match command {
             Command::Pin { node, reply } => {
-                let _ = reply.send(self.set_pin(node));
+                let _ = reply.send(self.set_pin(node.as_deref()));
             }
             Command::Update {
                 subscription,
                 reply,
-            } => self.start_update(subscription, reply),
+            } => self.start_update(subscription.as_deref(), reply),
         }
     }
 
     /// Закрепляет узел «подписка/имя» или снимает закрепление. Выбор сохраняется в
     /// каталоге состояния и переживает перезапуск.
-    pub(super) fn set_pin(&mut self, node: Option<String>) -> Result<Pinned, Refusal> {
-        let target = match &node {
+    pub(super) fn set_pin(&mut self, node: Option<&str>) -> Result<Pinned, Refusal> {
+        let target = match node {
             Some(text) => {
                 let target = selection::parse_pin(text).ok_or_else(|| {
                     Refusal::Invalid("узел задаётся как «подписка/имя узла»".to_owned())
@@ -81,10 +81,10 @@ impl Daemon {
 
     pub(super) fn start_update(
         &mut self,
-        subscription: Option<String>,
+        subscription: Option<&str>,
         reply: oneshot::Sender<Result<Updates, Refusal>>,
     ) {
-        let indexes: Vec<usize> = match &subscription {
+        let indexes: Vec<usize> = match subscription {
             Some(name) => {
                 let Some(index) = self.subs.iter().position(|sub| sub.source.name() == name) else {
                     let _ = reply.send(Err(Refusal::NotFound(format!(
@@ -113,7 +113,7 @@ impl Daemon {
     }
 
     /// Отдаёт результат обновления подписки ждущим запросам `POST /v1/update`.
-    pub(super) fn complete_updates(&mut self, index: usize, result: UpdateResult) {
+    pub(super) fn complete_updates(&mut self, index: usize, result: &UpdateResult) {
         let mut finished = Vec::new();
         for (position, pending) in self.pending_updates.iter_mut().enumerate() {
             if let Some(slot) = pending.waiting.iter().position(|waiting| *waiting == index) {
