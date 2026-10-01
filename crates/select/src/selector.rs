@@ -193,20 +193,33 @@ impl Selector {
                 },
             };
         }
-        let first_not_dead =
-            (0..self.nodes.len()).find(|&index| self.status(index) != Status::Dead);
-        match first_not_dead {
+        match self.best_ranked(|status| status != Status::Dead) {
             Some(index) => Outcome {
                 target: Some(index),
                 reason: Reason::Initial {
                     node: self.name(index),
                 },
             },
-            None => Outcome {
-                target: Some(0),
-                reason: Reason::NoAliveNodes { node: self.name(0) },
-            },
+            None => {
+                let index = self.best_ranked(|_| true).unwrap_or_default();
+                Outcome {
+                    target: Some(index),
+                    reason: Reason::NoAliveNodes {
+                        node: self.name(index),
+                    },
+                }
+            }
         }
+    }
+
+    /// Лучший по приоритету подписки, рангу и месту в списке, без учёта задержки.
+    fn best_ranked(&self, allowed: impl Fn(Status) -> bool) -> Option<usize> {
+        (0..self.nodes.len())
+            .filter(|&index| allowed(self.status(index)))
+            .min_by_key(|&index| {
+                let (subscription, rank) = self.priority(index);
+                (subscription, rank, index)
+            })
     }
 
     fn replace_dead(&mut self, dead: usize) -> Outcome {
