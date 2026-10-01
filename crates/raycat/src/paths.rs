@@ -9,6 +9,8 @@ const CONFIG_VAR: &str = "RAYCAT_CONFIG";
 const STATE_VAR: &str = "RAYCAT_STATE_DIR";
 const DEFAULT_CONFIG: &str = "/etc/raycat/config.toml";
 const ROOT_STATE_DIR: &str = "/var/lib/raycat";
+const SOCKET_VAR: &str = "RAYCAT_SOCKET";
+const ROOT_SOCKET: &str = "/run/raycat/raycat.sock";
 
 pub(crate) fn environment() -> Env {
     std::env::vars_os()
@@ -60,10 +62,31 @@ pub(crate) fn state_dir(env: &Env, root: bool) -> Result<PathBuf> {
     bail!("не удалось выбрать каталог состояния: задайте {STATE_VAR}")
 }
 
+/// Сокет API: `RAYCAT_SOCKET`, иначе `/run/raycat/raycat.sock` для root, иначе
+/// `$XDG_RUNTIME_DIR/raycat.sock`, а без него — `raycat.sock` в каталоге состояния.
+pub(crate) fn socket_path(env: &Env, root: bool, state: &Path) -> PathBuf {
+    if let Some(path) = set(env, SOCKET_VAR) {
+        return PathBuf::from(path);
+    }
+    if root {
+        return PathBuf::from(ROOT_SOCKET);
+    }
+    if let Some(dir) = set(env, "XDG_RUNTIME_DIR")
+        && Path::new(dir).is_absolute()
+    {
+        return Path::new(dir).join("raycat.sock");
+    }
+    state.join("raycat.sock")
+}
+
 #[allow(unsafe_code)]
-pub(crate) fn is_root() -> bool {
+pub(crate) fn euid() -> u32 {
     // SAFETY: geteuid не принимает аргументов и не может завершиться ошибкой.
-    unsafe { libc::geteuid() == 0 }
+    unsafe { libc::geteuid() }
+}
+
+pub(crate) fn is_root() -> bool {
+    euid() == 0
 }
 
 #[cfg(test)]
@@ -136,6 +159,37 @@ mod tests {
         assert_eq!(
             state_dir(&relative, false).unwrap(),
             PathBuf::from("/home/u/.local/state/raycat")
+        );
+    }
+
+    #[test]
+    fn the_socket_path_follows_the_variable_then_the_user() {
+        let state = Path::new("/state");
+        let explicit = env(&[
+            ("RAYCAT_SOCKET", "/tmp/x.sock"),
+            ("XDG_RUNTIME_DIR", "/run/user/1000"),
+        ]);
+        assert_eq!(
+            socket_path(&explicit, true, state),
+            PathBuf::from("/tmp/x.sock")
+        );
+        assert_eq!(
+            socket_path(&env(&[]), true, state),
+            PathBuf::from("/run/raycat/raycat.sock")
+        );
+        let xdg = env(&[("XDG_RUNTIME_DIR", "/run/user/1000")]);
+        assert_eq!(
+            socket_path(&xdg, false, state),
+            PathBuf::from("/run/user/1000/raycat.sock")
+        );
+        let relative = env(&[("XDG_RUNTIME_DIR", "run")]);
+        assert_eq!(
+            socket_path(&relative, false, state),
+            PathBuf::from("/state/raycat.sock")
+        );
+        assert_eq!(
+            socket_path(&env(&[]), false, state),
+            PathBuf::from("/state/raycat.sock")
         );
     }
 

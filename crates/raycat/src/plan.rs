@@ -3,7 +3,7 @@
 use anyhow::{Context, Result, bail};
 use raycat_config::{Config, Mode, Subscription};
 use raycat_netfilter::{DEFAULT_OWN_MARK, Rules};
-use raycat_xray::{Node, Settings, compile};
+use raycat_xray::{Node, Settings, TagTable, compile};
 
 const LAN_UNAVAILABLE: &str = "шлюз для локальной сети (lan) появится в следующей версии";
 
@@ -60,11 +60,15 @@ fn xray_mode(config: &Config) -> Result<raycat_xray::Mode> {
     })
 }
 
+/// Тег балансировщика в конфиге xray: в нём демон закрепляет выбранный узел.
+pub(crate) const BALANCER: &str = "auto";
+
 pub(crate) struct Plan {
     pub(crate) json: Vec<u8>,
     /// Узлов в конфиге и узлов, которые xray не поддерживает.
     pub(crate) nodes: usize,
     pub(crate) skipped: usize,
+    pub(crate) tags: TagTable,
 }
 
 /// Собирает конфиг из узлов подписок в порядке настроек (это их приоритет), оставив
@@ -96,6 +100,7 @@ pub(crate) fn compile_config(
         json,
         nodes: compiled.tags.entries().len(),
         skipped: compiled.skipped.len(),
+        tags: compiled.tags,
     })
 }
 
@@ -196,6 +201,15 @@ mod tests {
         let tags = outbound_tags(&plan);
         assert!(tags.iter().any(|tag| tag == "node-001-main"));
         assert!(tags.iter().any(|tag| tag == "node-002-main"));
+    }
+
+    #[test]
+    fn the_balancer_tag_matches_the_constant() {
+        let config = config("type = \"proxy\"", "");
+        let plan = plan(&config, &nodes()).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&plan.json).unwrap();
+        assert_eq!(json["routing"]["balancers"][0]["tag"], BALANCER);
+        assert_eq!(plan.tags.entries().len(), 2);
     }
 
     #[test]
