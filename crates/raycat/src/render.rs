@@ -99,7 +99,9 @@ fn xray_text(term: Term, xray: &XrayStatus) -> String {
     if !xray.running {
         return term.paint(Tone::Red, "не запущен");
     }
-    let pid = xray.pid.map_or_else(String::new, |pid| format!(" (pid {pid})"));
+    let pid = xray
+        .pid
+        .map_or_else(String::new, |pid| format!(" (pid {pid})"));
     let restarts = if xray.restarts > 0 {
         term.paint(Tone::Yellow, &format!(", перезапусков: {}", xray.restarts))
     } else {
