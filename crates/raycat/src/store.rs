@@ -119,6 +119,32 @@ impl Store {
             serde_json::to_vec_pretty(state).context("не удалось сериализовать состояние")?;
         write_atomic(&dir.join("state.json"), &json)
     }
+
+    /// Закрепление, сделанное через API. `None` — файла нет (действует `selection.pin`
+    /// из настроек), `Some(None)` — закрепление снято (автоматика, даже если в настройках
+    /// есть `selection.pin`), `Some(Some(id))` — закреплён узел «подписка/имя».
+    pub(crate) fn load_pin(&self) -> Option<Option<String>> {
+        let bytes = fs::read(self.path(PIN_FILE)).ok()?;
+        serde_json::from_slice::<PinFile>(&bytes)
+            .inspect_err(|_| warn!("файл закрепления {PIN_FILE} повреждён и игнорируется"))
+            .ok()
+            .map(|file| file.node)
+    }
+
+    pub(crate) fn save_pin(&self, node: Option<&str>) -> Result<()> {
+        let json = serde_json::to_vec(&PinFile {
+            node: node.map(str::to_owned),
+        })
+        .context("не удалось сериализовать закрепление")?;
+        self.write_file(PIN_FILE, &json)
+    }
+}
+
+const PIN_FILE: &str = "pin.json";
+
+#[derive(Serialize, Deserialize)]
+struct PinFile {
+    node: Option<String>,
 }
 
 fn create_machine_id(path: &Path) -> Result<String> {
@@ -376,6 +402,29 @@ mod tests {
             .join("state.json");
         fs::write(&path, "{ not json").unwrap();
         assert_eq!(store.load("s").0, SubState::default());
+    }
+
+    #[test]
+    fn the_pin_survives_a_reopen_and_can_be_switched_off() {
+        let temp = TempDir::new("pin");
+        let store = Store::open(temp.path().to_path_buf()).unwrap();
+        assert_eq!(store.load_pin(), None);
+
+        store.save_pin(Some("основная/NL-1")).unwrap();
+        assert_eq!(mode(&temp.path().join("pin.json")), 0o600);
+        let reopened = Store::open(temp.path().to_path_buf()).unwrap();
+        assert_eq!(reopened.load_pin(), Some(Some("основная/NL-1".to_owned())));
+
+        store.save_pin(None).unwrap();
+        assert_eq!(store.load_pin(), Some(None));
+    }
+
+    #[test]
+    fn a_corrupt_pin_file_is_ignored() {
+        let temp = TempDir::new("pin-corrupt");
+        let store = Store::open(temp.path().to_path_buf()).unwrap();
+        fs::write(temp.path().join("pin.json"), "{ not json").unwrap();
+        assert_eq!(store.load_pin(), None);
     }
 
     #[test]

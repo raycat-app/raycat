@@ -1,3 +1,4 @@
+mod api;
 mod cli;
 mod commands;
 mod daemon;
@@ -6,6 +7,7 @@ mod log;
 mod paths;
 mod plan;
 mod schedule;
+mod selection;
 mod store;
 #[cfg(test)]
 mod testing;
@@ -49,7 +51,10 @@ fn run(matches: &ArgMatches) -> Result<()> {
     log::init(config.log.level.into());
     let store = Store::open(paths::state_dir(&env, paths::is_root())?)?;
     match name {
-        "daemon" => daemon::run(config, store),
+        "daemon" => {
+            let socket = paths::socket_path(&env, paths::is_root(), store.root());
+            daemon::run(config, store, socket)
+        }
         "check" => commands::check(&config, &store),
         "fetch" => {
             let subscription = sub
