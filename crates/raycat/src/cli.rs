@@ -181,6 +181,11 @@ fn control_commands(command: Command) -> Command {
             )
             .arg(json_flag()),
         )
+        .subcommand(subcommand(
+            "tui",
+            "Полноэкранный интерфейс: состояние, узлы, журнал событий; закрепление узла и обновление подписок",
+            "raycat tui [ПАРАМЕТРЫ]",
+        ))
         .subcommand(
             subcommand(
                 "completions",
@@ -227,7 +232,7 @@ mod tests {
 
     #[test]
     fn subcommands_parse() {
-        for name in ["daemon", "check", "identity"] {
+        for name in ["daemon", "check", "identity", "tui"] {
             let matches = command().try_get_matches_from(["raycat", name]).unwrap();
             assert_eq!(matches.subcommand_name(), Some(name));
         }
@@ -350,6 +355,8 @@ mod tests {
             vec!["raycat", "use"],
             vec!["raycat", "status", "--nope"],
             vec!["raycat", "nodes", "--all", "лишний"],
+            vec!["raycat", "tui", "--nope"],
+            vec!["raycat", "tui", "лишний"],
         ] {
             assert!(command().try_get_matches_from(args).is_err());
         }
@@ -389,6 +396,7 @@ mod tests {
             "use",
             "update",
             "events",
+            "tui",
             "completions",
         ] {
             assert!(help.contains(word), "{word}: {help}");

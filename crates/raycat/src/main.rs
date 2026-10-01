@@ -16,6 +16,7 @@ mod store;
 mod term;
 #[cfg(test)]
 mod testing;
+mod tui;
 mod updater;
 mod util;
 mod xray;
@@ -49,6 +50,7 @@ fn run(matches: &ArgMatches) -> Result<()> {
     let env = paths::environment();
     match name {
         "status" | "nodes" | "use" | "update" | "events" => return ctl::run(name, sub, &env),
+        "tui" => return tui::run(&env),
         "completions" => return manual::completions(sub),
         "man" => return manual::man(),
         _ => {}
