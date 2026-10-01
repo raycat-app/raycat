@@ -97,14 +97,24 @@ stop_daemon() {
   fi
 }
 
-api() { curl -fsS --max-time 20 --unix-socket "$RAYCAT_SOCKET" "http://localhost$1"; }
-api_code() {
-  local method=$1 path=$2 body=${3:-}
-  curl -sS --max-time 30 -o "$work/api-body" -w '%{http_code}' --unix-socket "$RAYCAT_SOCKET" \
-    -X "$method" -d "$body" "http://localhost$path"
+status_is() { "$raycat" status --json | jq -e "$1" >/dev/null; }
+nodes_are() { "$raycat" nodes --json | jq -e "$1" >/dev/null; }
+# Вывод команды (без цветов: stdout не терминал) должен содержать текст $1.
+shows() {
+  local text=$1 out
+  shift
+  out=$("$raycat" "$@") || fail "raycat $* завершилась ошибкой"
+  grep -q -- "$text" <<<"$out" || fail "raycat $*: в выводе нет «$text»: $out"
 }
-status_is() { api /v1/status | jq -e "$1" >/dev/null; }
-nodes_are() { api /v1/nodes | jq -e "$1" >/dev/null; }
+# Команда должна завершиться ошибкой, а её сообщение содержать текст $1.
+refuses() {
+  local text=$1
+  shift
+  if "$raycat" "$@" >"$work/refused.log" 2>&1; then
+    fail "raycat $* должна завершиться ошибкой"
+  fi
+  grep -q -- "$text" "$work/refused.log" || fail "raycat $*: в сообщении нет «$text»: $(cat "$work/refused.log")"
+}
 
 "$xray" version
 sudo ip addr add "$node_ip/32" dev lo
@@ -200,33 +210,64 @@ wait_for "трафик узла в /v1/nodes" nodes_are '.nodes[0].uplink_bytes 
 nodes_are '.nodes | length == 1 and .[0].id == "e2e/E2E" and .[0].selected == true and .[0].pinned == false' \
   || fail "nodes: список узлов"
 
+echo "  человекочитаемый вывод"
+shows 'raycat ' status
+shows 'режим: *прокси' status
+shows 'подписка: *e2e' status
+shows 'узлов: *1' status
+shows '«E2E»' status
+shows 'причина:' status
+if "$raycat" status | grep -q 'e2etoken'; then fail "status показал токен подписки"; fi
+shows 'E2E' nodes
+shows '▶' nodes
+if "$raycat" status | grep -q "$(printf '\033')"; then fail "вывод без терминала содержит цвета"; fi
+
 echo "  закрепление"
-[ "$(api_code POST /v1/pin '{"node":"e2e/Nope"}')" = 404 ] || fail "pin неизвестного узла должен давать 404"
-jq -e '.error | contains("нет среди")' "$work/api-body" >/dev/null || fail "ошибка pin не на русском"
-[ "$(api_code POST /v1/pin 'не json')" = 400 ] || fail "pin с мусором должен давать 400"
-[ "$(api_code POST /v1/pin '{"node":"e2e/E2E"}')" = 200 ] || fail "pin не принят"
+refuses 'нет среди узлов подписок' use Nope
+refuses 'нет среди узлов подписок' use e2e/Nope
+use_code=0
+"$raycat" use --nope >/dev/null 2>&1 || use_code=$?
+[ "$use_code" -eq 2 ] || fail "ошибка использования должна давать код 2, а не $use_code"
+"$raycat" use e2e >"$work/use.log" || fail "use по части имени не принят"
+grep -q 'закреплён' "$work/use.log" || fail "use не сообщил о закреплении: $(cat "$work/use.log")"
 wait_for "узел закреплён" status_is '.node.pinned == true'
 nodes_are '.nodes[0].pinned == true' || fail "nodes: узел не помечен закреплённым"
+shows '★' nodes
+shows 'закреплён вручную' status
+"$raycat" use e2e/E2E --json | jq -e '.node == "e2e/E2E"' >/dev/null || fail "use --json: ответ"
 expect_site http
-[ "$(api_code DELETE /v1/pin)" = 200 ] || fail "снятие закрепления не принято"
+"$raycat" use auto >"$work/use.log" || fail "use auto не принят"
+grep -q 'Закрепление снято' "$work/use.log" || fail "use auto не сообщил о снятии: $(cat "$work/use.log")"
 wait_for "закрепление снято" status_is '.node.pinned == false'
 
 echo "  обновление и события"
 requests_before=$(grep -c '^GET /sub' "$work/panel-requests.log")
 curl -sN --max-time 20 --unix-socket "$RAYCAT_SOCKET" http://localhost/v1/events >"$work/events.txt" 2>&1 &
 events_pid=$!
+"$raycat" events >"$work/cli-events.txt" 2>&1 &
+cli_events_pid=$!
 wait_for "поток событий открыт" grep -q 'event: hello' "$work/events.txt"
-[ "$(api_code POST /v1/update '{}')" = 200 ] || fail "update не выполнен"
-jq -e '.results[0].subscription == "e2e" and .results[0].ok == true and .results[0].nodes == 1' "$work/api-body" >/dev/null \
-  || fail "update: результат"
+wait_for "raycat events подключился" grep -q 'подключено к демону' "$work/cli-events.txt"
+"$raycat" update --json >"$work/update.json" || fail "update не выполнен"
+jq -e '.results[0].subscription == "e2e" and .results[0].ok == true and .results[0].nodes == 1' "$work/update.json" >/dev/null \
+  || fail "update --json: результат"
 [ "$(grep -c '^GET /sub' "$work/panel-requests.log")" -gt "$requests_before" ] || fail "update не дошёл до панели"
 wait_for "событие обновления подписки" grep -q 'event: subscription_updated' "$work/events.txt"
-[ "$(api_code POST /v1/update '{"subscription":"nope"}')" = 404 ] || fail "update неизвестной подписки должен давать 404"
-[ "$(api_code POST /v1/pin '{"node":"e2e/E2E"}')" = 200 ] || fail "pin не принят"
+wait_for "raycat events показал обновление" grep -q 'подписка «e2e» обновлена' "$work/cli-events.txt"
+"$raycat" update e2e >"$work/update.log" || fail "update по имени не выполнен"
+grep -q '✓ e2e: узлов: 1' "$work/update.log" || fail "update: нет итога по подписке: $(cat "$work/update.log")"
+refuses 'nope' update nope
+"$raycat" use e2e/E2E >/dev/null || fail "use не принят"
 wait_for "событие закрепления" grep -q 'event: pin' "$work/events.txt"
-kill "$events_pid" 2>/dev/null || true
-wait "$events_pid" 2>/dev/null || true
-[ "$(api_code GET /v1/nothing)" = 404 ] || fail "неизвестный путь должен давать 404"
+wait_for "raycat events показал закрепление" grep -q 'закреплён узел e2e/E2E' "$work/cli-events.txt"
+kill "$events_pid" "$cli_events_pid" 2>/dev/null || true
+wait "$events_pid" "$cli_events_pid" 2>/dev/null || true
+
+echo "  завершение, автодополнение, man"
+"$raycat" completions bash | grep -q 'raycat' || fail "completions bash пусто"
+"$raycat" completions zsh | grep -q 'raycat' || fail "completions zsh пусто"
+"$raycat" completions fish | grep -q 'raycat' || fail "completions fish пусто"
+"$raycat" man | grep -q '^\.TH' || fail "man не roff"
 
 echo "== панель остановлена, SIGHUP: демон живёт на кэше"
 kill "$panel_pid"
@@ -252,7 +293,7 @@ expect_site socks
 log_since "$mark" "кэш от" || fail "в логе нет строки о кэше"
 wait_for "ошибка обновления в логе" log_since "$mark" "не удалось обновить"
 wait_for "закрепление пережило перезапуск" status_is '.node.pinned == true and .node.id == "e2e/E2E"'
-[ "$(api_code DELETE /v1/pin)" = 200 ] || fail "снятие закрепления не принято"
+"$raycat" use auto >/dev/null || fail "снятие закрепления не принято"
 wait_for "закрепление снято" status_is '.node.pinned == false'
 status_is '.subscriptions[0].last_error | type == "string"' || fail "status: нет ошибки обновления подписки"
 stop_daemon

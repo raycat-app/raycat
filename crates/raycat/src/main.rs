@@ -1,14 +1,19 @@
 mod api;
 mod cli;
+mod client;
 mod commands;
+mod ctl;
 mod daemon;
 mod gateway;
 mod log;
+mod manual;
 mod paths;
 mod plan;
+mod render;
 mod schedule;
 mod selection;
 mod store;
+mod term;
 #[cfg(test)]
 mod testing;
 mod updater;
@@ -42,6 +47,12 @@ fn main() -> ExitCode {
 fn run(matches: &ArgMatches) -> Result<()> {
     let (name, sub) = matches.subcommand().context("не указана команда")?;
     let env = paths::environment();
+    match name {
+        "status" | "nodes" | "use" | "update" | "events" => return ctl::run(name, sub, &env),
+        "completions" => return manual::completions(sub),
+        "man" => return manual::man(),
+        _ => {}
+    }
     let file = paths::config_file(
         cli::config_path(matches, sub).map(std::path::PathBuf::as_path),
         &env,
