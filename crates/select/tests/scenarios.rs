@@ -121,8 +121,81 @@ fn node<'a>(snapshot: &'a Snapshot, tag: &str) -> &'a NodeInfo {
         .expect("узла нет в снимке")
 }
 
+/// Первый в списке узел без маски, лучший по рангу — третий; подписка `backup` последняя.
+fn ranked_nodes() -> Vec<Candidate> {
+    vec![
+        candidate("a1", 0, "main", "NL-1", Candidate::UNRANKED),
+        candidate("a2", 0, "main", "NL-2", 1),
+        candidate("a3", 0, "main", "NL-3", 0),
+        candidate("b1", 1, "backup", "DE-1", 0),
+    ]
+}
+
 #[test]
-fn start_without_health_picks_first_by_priority() {
+fn start_without_health_picks_the_best_ranked_node() {
+    let mut selector = Selector::new(settings(), ranked_nodes());
+    let first = selector.step(secs(0), &[]);
+    assert_eq!(first.selected.as_deref(), Some("a3"));
+    assert_eq!(first.previous, None);
+    assert!(first.changed);
+    assert_eq!(
+        first.reason,
+        Reason::Initial {
+            node: "NL-3".into()
+        }
+    );
+
+    let second = selector.step(secs(10), &[]);
+    assert_eq!(second.selected.as_deref(), Some("a3"));
+    assert!(!second.changed);
+}
+
+#[test]
+fn start_skips_dead_nodes_and_keeps_subscription_order() {
+    let one_failure = Settings {
+        failures: 1,
+        ..settings()
+    };
+
+    let mut selector = Selector::new(one_failure.clone(), ranked_nodes());
+    let partial = raw_health(0, &[("a3", DOWN)]);
+    let decision = selector.step(secs(0), &partial);
+    assert_eq!(decision.selected.as_deref(), Some("a2"));
+    assert_eq!(
+        decision.reason,
+        Reason::Initial {
+            node: "NL-2".into()
+        }
+    );
+
+    let mut selector = Selector::new(one_failure, ranked_nodes());
+    let main_down = raw_health(0, &[("a1", DOWN), ("a2", DOWN), ("a3", DOWN)]);
+    let decision = selector.step(secs(0), &main_down);
+    assert_eq!(decision.selected.as_deref(), Some("b1"));
+}
+
+#[test]
+fn all_dead_at_first_data_selects_the_best_ranked_node() {
+    let mut selector = Selector::new(
+        Settings {
+            failures: 1,
+            ..settings()
+        },
+        ranked_nodes(),
+    );
+    let decision = step(&mut selector, 0, [DOWN; 4]);
+    assert_eq!(decision.selected.as_deref(), Some("a3"));
+    assert!(decision.changed);
+    assert_eq!(
+        decision.reason,
+        Reason::NoAliveNodes {
+            node: "NL-3".into()
+        }
+    );
+}
+
+#[test]
+fn start_without_health_keeps_list_order_among_equal_ranks() {
     let mut selector = selector();
     let first = selector.step(secs(0), &[]);
     assert_eq!(first.selected.as_deref(), Some("a1"));
@@ -556,13 +629,7 @@ fn subscription_priority_beats_latency() {
 
 #[test]
 fn node_priority_masks_beat_latency_and_keep_their_order() {
-    let ranked = vec![
-        candidate("a1", 0, "main", "NL-1", Candidate::UNRANKED),
-        candidate("a2", 0, "main", "NL-2", 1),
-        candidate("a3", 0, "main", "NL-3", 0),
-        candidate("b1", 1, "backup", "DE-1", 0),
-    ];
-    let mut selector = Selector::new(settings(), ranked);
+    let mut selector = Selector::new(settings(), ranked_nodes());
     let all = [up(10), up(20), up(300), up(5)];
     let no_a3 = [up(10), up(20), DOWN, up(5)];
     let no_a2 = [up(10), DOWN, DOWN, up(5)];

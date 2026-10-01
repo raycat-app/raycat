@@ -770,8 +770,8 @@ mod tests {
         let mut daemon = daemon(&["a"], &temp);
         daemon.load_caches();
         daemon.finished(0, applied(BOTH));
-        // Без данных о здоровье движок берёт первый узел списка.
-        assert_eq!(choice(&mut daemon).as_deref(), Some("a/One"));
+        // Без данных о здоровье движок берёт лучший по рангу узел: маска `Two` стоит первой.
+        assert_eq!(choice(&mut daemon).as_deref(), Some("a/Two"));
 
         assert!(matches!(
             daemon.set_pin(Some("a/Nope")),
@@ -783,12 +783,12 @@ mod tests {
         ));
         assert_eq!(daemon.store.load_pin(), StoredPin::Absent);
 
-        let pinned = daemon.set_pin(Some("a/Two")).unwrap();
-        assert_eq!(pinned.node.as_deref(), Some("a/Two"));
-        assert_eq!(daemon.store.load_pin(), StoredPin::Node("a/Two".to_owned()));
-        assert_eq!(choice(&mut daemon).as_deref(), Some("a/Two"));
+        let pinned = daemon.set_pin(Some("a/One")).unwrap();
+        assert_eq!(pinned.node.as_deref(), Some("a/One"));
+        assert_eq!(daemon.store.load_pin(), StoredPin::Node("a/One".to_owned()));
+        assert_eq!(choice(&mut daemon).as_deref(), Some("a/One"));
         let node = daemon.status().node.unwrap();
-        assert_eq!((node.id.as_str(), node.pinned), ("a/Two", true));
+        assert_eq!((node.id.as_str(), node.pinned), ("a/One", true));
     }
 
     #[test]
@@ -816,41 +816,41 @@ mod tests {
             let mut first = daemon(&["a"], &temp);
             first.load_caches();
             first.finished(0, applied(BOTH));
-            first.set_pin(Some("a/Two")).unwrap();
+            first.set_pin(Some("a/One")).unwrap();
         }
-        let mut second = daemon_with(&["a"], "[selection]\npin = \"a/One\"\n", &temp);
-        second.load_caches();
-        second.finished(0, applied(BOTH));
-        assert_eq!(choice(&mut second).as_deref(), Some("a/Two"));
-    }
-
-    #[test]
-    fn unpinning_overrides_the_pin_from_the_config() {
-        let temp = TempDir::new("pin-config");
-        let config = "[selection]\npin = \"a/Two\"\n";
-        let mut first = daemon_with(&["a"], config, &temp);
-        first.load_caches();
-        first.finished(0, applied(BOTH));
-        assert_eq!(choice(&mut first).as_deref(), Some("a/Two"));
-
-        assert_eq!(first.set_pin(None).unwrap().node, None);
-        assert_eq!(first.store.load_pin(), StoredPin::Off);
-        // Движок не прыгает без данных о здоровье: узел меняется, когда проверки покажут выигрыш.
-        assert_eq!(choice(&mut first).as_deref(), Some("a/Two"));
-
-        let mut second = daemon_with(&["a"], config, &temp);
+        let mut second = daemon_with(&["a"], "[selection]\npin = \"a/Two\"\n", &temp);
         second.load_caches();
         second.finished(0, applied(BOTH));
         assert_eq!(choice(&mut second).as_deref(), Some("a/One"));
     }
 
     #[test]
+    fn unpinning_overrides_the_pin_from_the_config() {
+        let temp = TempDir::new("pin-config");
+        let config = "[selection]\npin = \"a/One\"\n";
+        let mut first = daemon_with(&["a"], config, &temp);
+        first.load_caches();
+        first.finished(0, applied(BOTH));
+        assert_eq!(choice(&mut first).as_deref(), Some("a/One"));
+
+        assert_eq!(first.set_pin(None).unwrap().node, None);
+        assert_eq!(first.store.load_pin(), StoredPin::Off);
+        // Движок не прыгает без данных о здоровье: узел меняется, когда проверки покажут выигрыш.
+        assert_eq!(choice(&mut first).as_deref(), Some("a/One"));
+
+        let mut second = daemon_with(&["a"], config, &temp);
+        second.load_caches();
+        second.finished(0, applied(BOTH));
+        assert_eq!(choice(&mut second).as_deref(), Some("a/Two"));
+    }
+
+    #[test]
     fn the_config_pin_applies_without_a_saved_one() {
         let temp = TempDir::new("pin-from-config");
-        let mut daemon = daemon_with(&["a"], "[selection]\npin = \"a/Two\"\n", &temp);
+        let mut daemon = daemon_with(&["a"], "[selection]\npin = \"a/One\"\n", &temp);
         daemon.load_caches();
         daemon.finished(0, applied(BOTH));
-        assert_eq!(choice(&mut daemon).as_deref(), Some("a/Two"));
+        assert_eq!(choice(&mut daemon).as_deref(), Some("a/One"));
     }
 
     #[test]
@@ -934,10 +934,10 @@ mod tests {
         daemon.finished(0, applied(BOTH));
         choice(&mut daemon);
         let view = daemon.nodes_view();
-        assert_eq!(view.selected.as_deref(), Some("a/One"));
+        assert_eq!(view.selected.as_deref(), Some("a/Two"));
         let names: Vec<&str> = view.nodes.iter().map(|node| node.name.as_str()).collect();
         assert_eq!(names, ["One", "Two"]);
-        assert!(view.nodes[0].selected && !view.nodes[1].selected);
+        assert!(!view.nodes[0].selected && view.nodes[1].selected);
         assert!(view.nodes.iter().all(|node| node.uplink_bytes.is_none()));
     }
 
