@@ -242,13 +242,7 @@ fn subscription_lines(app: &App) -> Vec<Vec<Seg>> {
     lines
 }
 
-fn subscriptions(
-    canvas: &mut Canvas<'_>,
-    y0: usize,
-    room: usize,
-    lines: Vec<Vec<Seg>>,
-    app: &App,
-) {
+fn subscriptions(canvas: &mut Canvas<'_>, y0: usize, room: usize, lines: Vec<Vec<Seg>>, app: &App) {
     canvas.line(y0, 0, vec![Seg::new("Подписки", Tone::Header, 0)]);
     let capacity = room.saturating_sub(1);
     if lines.is_empty() {
@@ -776,8 +770,18 @@ mod tests {
         press(&mut app, KeyCode::Down);
         let terminal = paint(&mut app, 80, 20, false);
         let buffer = terminal.backend().buffer();
-        assert!(!buffer[(5, 8)].style().add_modifier.contains(Modifier::REVERSED));
-        assert!(buffer[(5, 9)].style().add_modifier.contains(Modifier::REVERSED));
+        assert!(
+            !buffer[(5, 8)]
+                .style()
+                .add_modifier
+                .contains(Modifier::REVERSED)
+        );
+        assert!(
+            buffer[(5, 9)]
+                .style()
+                .add_modifier
+                .contains(Modifier::REVERSED)
+        );
     }
 
     #[test]
@@ -815,7 +819,11 @@ mod tests {
         assert_eq!(lines[0], "демон недоступен: обрыв связи");
         assert_eq!(lines[1], "повторное подключение через 1 с");
         assert!(lines.iter().any(|line| line.contains("NL-1")));
-        assert!(lines.iter().any(|line| line.contains("демон недоступен: обрыв")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("демон недоступен: обрыв"))
+        );
         let dimmed = |y: u16| buffer[(0, y)].style().add_modifier.contains(Modifier::DIM);
         assert!(!dimmed(0));
         assert!(dimmed(2));
@@ -927,8 +935,16 @@ mod tests {
             press(&mut app, KeyCode::Char(c));
         }
         let lines = screen(&mut app, 80, 20);
-        assert!(lines.last().unwrap().starts_with("/de█"), "{:?}", lines.last());
-        assert!(lines.iter().any(|line| line == "Узлы  показано 1 из 3  фильтр: «de»"));
+        assert!(
+            lines.last().unwrap().starts_with("/de█"),
+            "{:?}",
+            lines.last()
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Узлы  показано 1 из 3  фильтр: «de»")
+        );
         assert!(lines.iter().any(|line| line.contains("DE-2")));
         assert!(!lines.iter().any(|line| line.contains("US-3")));
 
@@ -946,7 +962,11 @@ mod tests {
         press(&mut empty, KeyCode::Char('/'));
         press(&mut empty, KeyCode::Char('я'));
         let lines = screen(&mut empty, 80, 20);
-        assert!(lines.iter().any(|line| line.starts_with("Под фильтр ничего не подошло")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("Под фильтр ничего не подошло"))
+        );
     }
 
     #[test]
@@ -958,12 +978,18 @@ mod tests {
         let lines = screen(&mut app, 80, 20);
         assert!(lines.iter().any(|line| line.contains("N00")));
         assert!(!lines.iter().any(|line| line.contains("N39")));
-        assert!(lines.iter().any(|line| line.starts_with("Узлы  1–")), "{lines:?}");
+        assert!(
+            lines.iter().any(|line| line.starts_with("Узлы  1–")),
+            "{lines:?}"
+        );
         press(&mut app, KeyCode::End);
         let lines = screen(&mut app, 80, 20);
         assert!(lines.iter().any(|line| line.contains("N39")));
         assert!(!lines.iter().any(|line| line.contains("N00")));
-        assert!(lines.iter().any(|line| line.ends_with("из 40")), "{lines:?}");
+        assert!(
+            lines.iter().any(|line| line.ends_with("из 40")),
+            "{lines:?}"
+        );
     }
 
     #[test]
@@ -996,7 +1022,11 @@ mod tests {
         let mut app = app_with(status, sample_nodes());
         let lines = screen(&mut app, 100, 24);
         let at = lines.iter().position(|line| line == "Подписки").unwrap();
-        assert!(lines[at + 1].contains("⟳ идёт обновление"), "{:?}", lines[at + 1]);
+        assert!(
+            lines[at + 1].contains("⟳ идёт обновление"),
+            "{:?}",
+            lines[at + 1]
+        );
         assert_eq!(lines[at + 2], "    ✗ панель ответила 403");
     }
 
@@ -1022,7 +1052,16 @@ mod tests {
         let lines = screen(&mut app, 80, 24);
         assert_eq!(lines[0], "raycat tui: клавиши");
         let text = lines.join("\n");
-        for word in ["Enter", "PgUp", "Home", "Tab", "Esc", "Ctrl+C", "U  ", "закрепить"] {
+        for word in [
+            "Enter",
+            "PgUp",
+            "Home",
+            "Tab",
+            "Esc",
+            "Ctrl+C",
+            "U  ",
+            "закрепить",
+        ] {
             assert!(text.contains(word), "{word}: {text}");
         }
         assert!(text.contains("▶ выбран   ★ закреплён вручную"));
@@ -1091,8 +1130,8 @@ mod tests {
         let refs: Vec<&Node> = nodes.iter().collect();
         for width in 24..160 {
             let cols = columns(&refs, width);
-            let total: usize =
-                cols.iter().map(|col| col.width).sum::<usize>() + GAP * cols.len().saturating_sub(1);
+            let total: usize = cols.iter().map(|col| col.width).sum::<usize>()
+                + GAP * cols.len().saturating_sub(1);
             assert!(total <= width, "{width}: {total}");
             assert!(cols.iter().any(|col| col.kind == Kind::Name));
         }

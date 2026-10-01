@@ -794,7 +794,10 @@ mod tests {
     #[test]
     fn update_keys_ask_for_all_or_for_the_subscription_of_the_cursor() {
         let mut app = app_with(sample());
-        assert_eq!(press(&mut app, KeyCode::Char('u')), Some(Effect::Update(None)));
+        assert_eq!(
+            press(&mut app, KeyCode::Char('u')),
+            Some(Effect::Update(None))
+        );
         assert!(app.update.is_some());
         app.apply(Msg::Updated(Ok(Updates {
             results: Vec::new(),
@@ -868,7 +871,13 @@ mod tests {
         assert_eq!(notice.tone, Tone::Yellow);
         assert!(notice.text.contains("не отвечает"));
         app.apply(Msg::Pinned(Ok(Pinned { node: None })));
-        assert!(app.notice.as_ref().unwrap().text.contains("Закрепление снято"));
+        assert!(
+            app.notice
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("Закрепление снято")
+        );
     }
 
     #[test]
@@ -989,7 +998,11 @@ mod tests {
             retry_in: Duration::from_secs(4),
         });
         assert_eq!(app.log.len(), 1);
-        assert!(app.log[0].text.starts_with("демон недоступен: демон не запущен"));
+        assert!(
+            app.log[0]
+                .text
+                .starts_with("демон недоступен: демон не запущен")
+        );
         app.apply(Msg::Connected);
         assert_eq!(app.link, Link::Up);
         app.apply(Msg::Down {

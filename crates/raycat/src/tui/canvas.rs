@@ -288,7 +288,10 @@ mod tests {
 
     #[test]
     fn wrap_breaks_on_words_and_cuts_long_words() {
-        assert_eq!(wrap("раз два три четыре", 9, 5), ["раз два", "три", "четыре"]);
+        assert_eq!(
+            wrap("раз два три четыре", 9, 5),
+            ["раз два", "три", "четыре"]
+        );
         assert_eq!(wrap("абвгдежзик", 4, 5), ["абвг", "дежз", "ик"]);
         assert!(wrap("текст", 0, 5).is_empty());
         assert!(wrap("текст", 5, 0).is_empty());
@@ -355,8 +358,18 @@ mod tests {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 4, 1));
         let mut canvas = Canvas::new(&mut buffer, Palette::new(true));
         canvas.set_dim(true);
-        assert!(canvas.style(Tone::Green).add_modifier.contains(Modifier::DIM));
+        assert!(
+            canvas
+                .style(Tone::Green)
+                .add_modifier
+                .contains(Modifier::DIM)
+        );
         canvas.set_dim(false);
-        assert!(!canvas.style(Tone::Green).add_modifier.contains(Modifier::DIM));
+        assert!(
+            !canvas
+                .style(Tone::Green)
+                .add_modifier
+                .contains(Modifier::DIM)
+        );
     }
 }
