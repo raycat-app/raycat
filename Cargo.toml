@@ -27,7 +27,7 @@ clap = { version = "4.6", default-features = false, features = [
 ] }
 clap_complete = { version = "4.6", default-features = false }
 clap_mangen = { version = "0.3", default-features = false }
-flate2 ={ version = "1", default-features = false, features = ["rust_backend"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 libc = "0.2"
 prost = "0.14"
 protox = "0.9"
