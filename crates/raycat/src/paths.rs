@@ -79,6 +79,22 @@ pub(crate) fn socket_path(env: &Env, root: bool, state: &Path) -> PathBuf {
     state.join("raycat.sock")
 }
 
+/// Сокет для клиентских команд: тот же путь, что выбирает демон, но каталог
+/// состояния нужен, только если сокет лежит в нём.
+pub(crate) fn client_socket(env: &Env, root: bool) -> Result<PathBuf> {
+    match state_dir(env, root) {
+        Ok(state) => Ok(socket_path(env, root, &state)),
+        Err(error) => {
+            let path = socket_path(env, root, Path::new(""));
+            if path.parent().is_some_and(|parent| !parent.as_os_str().is_empty()) {
+                Ok(path)
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
 #[allow(unsafe_code)]
 pub(crate) fn euid() -> u32 {
     // SAFETY: geteuid не принимает аргументов и не может завершиться ошибкой.
@@ -191,6 +207,26 @@ mod tests {
             socket_path(&env(&[]), false, state),
             PathBuf::from("/state/raycat.sock")
         );
+    }
+
+    #[test]
+    fn the_client_needs_a_state_dir_only_when_the_socket_is_there() {
+        let explicit = env(&[("RAYCAT_SOCKET", "/tmp/x.sock")]);
+        assert_eq!(
+            client_socket(&explicit, false).unwrap(),
+            PathBuf::from("/tmp/x.sock")
+        );
+        let xdg = env(&[("XDG_RUNTIME_DIR", "/run/user/1000")]);
+        assert_eq!(
+            client_socket(&xdg, false).unwrap(),
+            PathBuf::from("/run/user/1000/raycat.sock")
+        );
+        assert_eq!(
+            client_socket(&env(&[]), true).unwrap(),
+            PathBuf::from("/run/raycat/raycat.sock")
+        );
+        let error = client_socket(&env(&[]), false).unwrap_err();
+        assert!(error.to_string().contains("RAYCAT_STATE_DIR"));
     }
 
     #[test]
