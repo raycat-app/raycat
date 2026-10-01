@@ -148,17 +148,33 @@ pub enum XrayState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
-    Hello { version: String },
+    Hello {
+        version: String,
+    },
     NodeChanged {
         from: Option<String>,
         to: Option<String>,
         reason: String,
     },
-    Pin { node: Option<String> },
-    SubscriptionUpdated { subscription: String, nodes: usize },
-    SubscriptionFailed { subscription: String, error: String },
-    Xray { state: XrayState, message: String },
-    Warning { level: String, message: String },
+    Pin {
+        node: Option<String>,
+    },
+    SubscriptionUpdated {
+        subscription: String,
+        nodes: usize,
+    },
+    SubscriptionFailed {
+        subscription: String,
+        error: String,
+    },
+    Xray {
+        state: XrayState,
+        message: String,
+    },
+    Warning {
+        level: String,
+        message: String,
+    },
 }
 
 impl Event {
@@ -196,12 +212,26 @@ mod tests {
     #[test]
     fn every_event_round_trips() {
         let events = [
-            Event::Hello { version: "1".into() },
+            Event::Hello {
+                version: "1".into(),
+            },
             Event::Pin { node: None },
-            Event::SubscriptionUpdated { subscription: "a".into(), nodes: 3 },
-            Event::SubscriptionFailed { subscription: "a".into(), error: "x".into() },
-            Event::Xray { state: XrayState::Exited, message: "упал".into() },
-            Event::Warning { level: "warn".into(), message: "m".into() },
+            Event::SubscriptionUpdated {
+                subscription: "a".into(),
+                nodes: 3,
+            },
+            Event::SubscriptionFailed {
+                subscription: "a".into(),
+                error: "x".into(),
+            },
+            Event::Xray {
+                state: XrayState::Exited,
+                message: "упал".into(),
+            },
+            Event::Warning {
+                level: "warn".into(),
+                message: "m".into(),
+            },
         ];
         for event in events {
             let text = serde_json::to_string(&event).unwrap();
@@ -217,7 +247,11 @@ mod tests {
             mode: Mode::Gateway,
             uptime_secs: 5,
             kill_switch: Some(true),
-            xray: XrayStatus { running: true, pid: Some(7), restarts: 0 },
+            xray: XrayStatus {
+                running: true,
+                pid: Some(7),
+                restarts: 0,
+            },
             node: None,
             subscriptions: Vec::new(),
         };

@@ -165,8 +165,14 @@ mod tests {
     #[test]
     fn the_socket_path_follows_the_variable_then_the_user() {
         let state = Path::new("/state");
-        let explicit = env(&[("RAYCAT_SOCKET", "/tmp/x.sock"), ("XDG_RUNTIME_DIR", "/run/user/1000")]);
-        assert_eq!(socket_path(&explicit, true, state), PathBuf::from("/tmp/x.sock"));
+        let explicit = env(&[
+            ("RAYCAT_SOCKET", "/tmp/x.sock"),
+            ("XDG_RUNTIME_DIR", "/run/user/1000"),
+        ]);
+        assert_eq!(
+            socket_path(&explicit, true, state),
+            PathBuf::from("/tmp/x.sock")
+        );
         assert_eq!(
             socket_path(&env(&[]), true, state),
             PathBuf::from("/run/raycat/raycat.sock")

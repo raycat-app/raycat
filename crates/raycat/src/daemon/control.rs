@@ -52,7 +52,9 @@ impl Daemon {
                     .snapshot(selection::now())
                     .nodes
                     .iter()
-                    .any(|node| node.subscription == target.subscription && node.name == target.node);
+                    .any(|node| {
+                        node.subscription == target.subscription && node.name == target.node
+                    });
                 if !known {
                     return Err(Refusal::NotFound(format!(
                         "узла «{}» нет среди узлов подписок",

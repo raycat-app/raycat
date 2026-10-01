@@ -13,9 +13,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use raycat_config::{Config, Mode, Subscription};
 use raycat_netfilter::Rules;
-use raycat_proto::{
-    Event, Mode as ApiMode, Status, UpdateResult, Updates, XrayState, XrayStatus,
-};
+use raycat_proto::{Event, Mode as ApiMode, Status, UpdateResult, Updates, XrayState, XrayStatus};
 use raycat_select::Selector;
 use raycat_subscription::{Usage, redact_in};
 use raycat_xray::Node;
@@ -761,10 +759,7 @@ mod tests {
     }
 
     fn choice(daemon: &mut Daemon) -> Option<String> {
-        daemon
-            .selector
-            .step(selection::now(), &[])
-            .selected_id
+        daemon.selector.step(selection::now(), &[]).selected_id
     }
 
     #[test]

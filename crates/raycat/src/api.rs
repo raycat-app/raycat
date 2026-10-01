@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -18,7 +19,6 @@ use axum::http::StatusCode;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::Json;
 use raycat_proto::{ErrorBody, Event, Nodes, PinRequest, Pinned, Status, UpdateRequest, Updates};
 use raycat_xray_api::XrayApi;
 use serde::Serialize;
@@ -215,10 +215,7 @@ async fn ask<T: Serialize>(
     }
 }
 
-async fn pin(
-    State(shared): State<Arc<Shared>>,
-    body: Bytes,
-) -> Result<Json<Pinned>, ApiError> {
+async fn pin(State(shared): State<Arc<Shared>>, body: Bytes) -> Result<Json<Pinned>, ApiError> {
     let request: PinRequest = parse(&body)?;
     ask(&shared, |reply| Command::Pin {
         node: Some(request.node),
@@ -231,10 +228,7 @@ async fn unpin(State(shared): State<Arc<Shared>>) -> Result<Json<Pinned>, ApiErr
     ask(&shared, |reply| Command::Pin { node: None, reply }).await
 }
 
-async fn update(
-    State(shared): State<Arc<Shared>>,
-    body: Bytes,
-) -> Result<Json<Updates>, ApiError> {
+async fn update(State(shared): State<Arc<Shared>>, body: Bytes) -> Result<Json<Updates>, ApiError> {
     let request: UpdateRequest = if body.iter().all(u8::is_ascii_whitespace) {
         UpdateRequest::default()
     } else {
@@ -309,11 +303,8 @@ fn remove_stale(path: &Path) -> Result<()> {
             "на {} уже слушает другой демон raycat: остановите его или задайте другой RAYCAT_SOCKET",
             path.display()
         ),
-        Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => {
-            fs::remove_file(path).with_context(|| {
-                format!("не удалось удалить старый сокет {}", path.display())
-            })
-        }
+        Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => fs::remove_file(path)
+            .with_context(|| format!("не удалось удалить старый сокет {}", path.display())),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error)
             .with_context(|| format!("не удалось проверить старый сокет {}", path.display())),
@@ -356,7 +347,11 @@ impl axum::serve::Listener for Guarded {
 }
 
 /// Обслуживает API, пока задачу не остановят. `daemon_uid` — пользователь демона.
-pub(crate) async fn serve(listener: UnixListener, router: Router, daemon_uid: u32) -> io::Result<()> {
+pub(crate) async fn serve(
+    listener: UnixListener,
+    router: Router,
+    daemon_uid: u32,
+) -> io::Result<()> {
     axum::serve(
         Guarded {
             listener,
@@ -484,7 +479,11 @@ mod tests {
             }
         });
         let listener = bind(&socket).unwrap();
-        tokio::spawn(serve(listener, router(Arc::clone(&shared)), crate::paths::euid()));
+        tokio::spawn(serve(
+            listener,
+            router(Arc::clone(&shared)),
+            crate::paths::euid(),
+        ));
         Fixture {
             _temp: temp,
             socket,
@@ -507,7 +506,12 @@ mod tests {
         (status, body.to_owned())
     }
 
-    async fn json(socket: &Path, method: &str, target: &str, body: &str) -> (u16, serde_json::Value) {
+    async fn json(
+        socket: &Path,
+        method: &str,
+        target: &str,
+        body: &str,
+    ) -> (u16, serde_json::Value) {
         let (status, text) = request(socket, method, target, body).await;
         (status, serde_json::from_str(&text).unwrap())
     }
@@ -521,7 +525,10 @@ mod tests {
         assert_eq!(body["mode"], "proxy");
         assert_eq!(body["xray"]["pid"], 42);
         assert_eq!(body["node"]["id"], "main/NL-1");
-        assert_eq!(body["subscriptions"][0]["url"], "https://sub.example.com/…1234");
+        assert_eq!(
+            body["subscriptions"][0]["url"],
+            "https://sub.example.com/…1234"
+        );
         assert!(body["uptime_secs"].as_u64().is_some());
 
         let mut changed = sample_status();
@@ -545,9 +552,17 @@ mod tests {
     #[tokio::test]
     async fn pin_and_unpin_go_through_the_daemon() {
         let fixture = fixture().await;
-        let (code, body) =
-            json(&fixture.socket, "POST", "/v1/pin", r#"{"node":"main/NL-1"}"#).await;
-        assert_eq!((code, &body["node"]), (200, &serde_json::json!("main/NL-1")));
+        let (code, body) = json(
+            &fixture.socket,
+            "POST",
+            "/v1/pin",
+            r#"{"node":"main/NL-1"}"#,
+        )
+        .await;
+        assert_eq!(
+            (code, &body["node"]),
+            (200, &serde_json::json!("main/NL-1"))
+        );
 
         let (code, body) = json(&fixture.socket, "DELETE", "/v1/pin", "").await;
         assert_eq!(code, 200);
@@ -557,8 +572,13 @@ mod tests {
     #[tokio::test]
     async fn pin_errors_are_json_in_russian() {
         let fixture = fixture().await;
-        let (code, body) =
-            json(&fixture.socket, "POST", "/v1/pin", r#"{"node":"main/NL-9"}"#).await;
+        let (code, body) = json(
+            &fixture.socket,
+            "POST",
+            "/v1/pin",
+            r#"{"node":"main/NL-9"}"#,
+        )
+        .await;
         assert_eq!(code, 404);
         assert!(body["error"].as_str().unwrap().contains("нет среди узлов"));
 
@@ -605,7 +625,11 @@ mod tests {
         let socket = temp.path().join("raycat.sock");
         let (shared, commands) = Shared::new(sample_status());
         drop(commands);
-        tokio::spawn(serve(bind(&socket).unwrap(), router(shared), crate::paths::euid()));
+        tokio::spawn(serve(
+            bind(&socket).unwrap(),
+            router(shared),
+            crate::paths::euid(),
+        ));
         let (code, body) = json(&socket, "DELETE", "/v1/pin", "").await;
         assert_eq!(code, 503);
         assert!(body["error"].as_str().unwrap().contains("останавливается"));
@@ -632,7 +656,9 @@ mod tests {
         let fixture = fixture().await;
         let mut stream = UnixStream::connect(&fixture.socket).await.unwrap();
         stream
-            .write_all(b"GET /v1/events HTTP/1.1\r\nHost: raycat\r\nAccept: text/event-stream\r\n\r\n")
+            .write_all(
+                b"GET /v1/events HTTP/1.1\r\nHost: raycat\r\nAccept: text/event-stream\r\n\r\n",
+            )
             .await
             .unwrap();
         let mut lines = BufReader::new(stream).lines();
@@ -652,7 +678,9 @@ mod tests {
         let (name, data) = next_event(&mut lines).await;
         assert_eq!(name, "node_changed");
         let event: Event = serde_json::from_str(&data).unwrap();
-        assert!(matches!(event, Event::NodeChanged { ref to, .. } if to.as_deref() == Some("main/DE-2")));
+        assert!(
+            matches!(event, Event::NodeChanged { ref to, .. } if to.as_deref() == Some("main/DE-2"))
+        );
         let (name, _) = next_event(&mut lines).await;
         assert_eq!(name, "xray");
     }
@@ -707,7 +735,10 @@ mod tests {
         let temp = TempDir::new("api-parent");
         let path = temp.path().join("run/raycat/raycat.sock");
         let _listener = bind(&path).unwrap();
-        let mode = fs::metadata(path.parent().unwrap()).unwrap().permissions().mode();
+        let mode = fs::metadata(path.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o700);
     }
 }

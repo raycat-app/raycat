@@ -102,9 +102,9 @@ pub(crate) fn health(statuses: &[OutboundHealth]) -> Vec<Health> {
             Some(Health {
                 tag: status.tag.clone(),
                 alive: status.alive,
-                latency_ms: status
-                    .delay
-                    .map_or(0, |delay| u64::try_from(delay.as_millis()).unwrap_or(u64::MAX)),
+                latency_ms: status.delay.map_or(0, |delay| {
+                    u64::try_from(delay.as_millis()).unwrap_or(u64::MAX)
+                }),
                 checked_at,
                 error: status.last_error.clone(),
             })
@@ -173,7 +173,8 @@ mod tests {
         assert_eq!(pin.subscription, "основная");
         assert_eq!(pin.node, "NL/1");
         assert_eq!(pin_id(&pin), "основная/NL/1");
-        for bad in ["", "без-косой", "/узел", "подписка/", "подписка/  "] {
+        for bad in ["", "без-косой", "/узел", "подписка/", "подписка/  "]
+        {
             assert_eq!(parse_pin(bad), None, "{bad:?}");
         }
     }
@@ -191,7 +192,12 @@ mod tests {
         assert_eq!(settings.pin.unwrap().subscription, "a");
     }
 
-    fn observed(tag: &str, alive: bool, delay_ms: Option<u64>, seen: Option<u64>) -> OutboundHealth {
+    fn observed(
+        tag: &str,
+        alive: bool,
+        delay_ms: Option<u64>,
+        seen: Option<u64>,
+    ) -> OutboundHealth {
         OutboundHealth {
             tag: tag.to_owned(),
             alive,
