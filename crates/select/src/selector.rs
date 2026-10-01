@@ -193,22 +193,20 @@ impl Selector {
                 },
             };
         }
-        match self.best_ranked(|status| status != Status::Dead) {
-            Some(index) => Outcome {
+        if let Some(index) = self.best_ranked(|status| status != Status::Dead) {
+            return Outcome {
                 target: Some(index),
                 reason: Reason::Initial {
                     node: self.name(index),
                 },
+            };
+        }
+        let index = self.best_ranked(|_| true).unwrap_or_default();
+        Outcome {
+            target: Some(index),
+            reason: Reason::NoAliveNodes {
+                node: self.name(index),
             },
-            None => {
-                let index = self.best_ranked(|_| true).unwrap_or_default();
-                Outcome {
-                    target: Some(index),
-                    reason: Reason::NoAliveNodes {
-                        node: self.name(index),
-                    },
-                }
-            }
         }
     }
 
