@@ -49,6 +49,10 @@ impl Term {
         Self::new(color_allowed(tty, env), tty.then(|| terminal_width(env)))
     }
 
+    pub(crate) fn color(self) -> bool {
+        self.color
+    }
+
     pub(crate) fn paint(self, tone: Tone, text: &str) -> String {
         match tone.code() {
             Some(code) if self.color && !text.is_empty() => format!("\x1b[{code}m{text}\x1b[0m"),
@@ -85,7 +89,7 @@ fn terminal_width(env: &Env) -> usize {
 
 /// Ширина символа в ячейках терминала: без таблиц Unicode, по основным диапазонам.
 /// Пара региональных индикаторов (флаг) занимает две ячейки, как и в терминалах.
-fn char_width(c: char) -> usize {
+pub(crate) fn char_width(c: char) -> usize {
     match u32::from(c) {
         0x0300..=0x036F
         | 0x200B..=0x200F

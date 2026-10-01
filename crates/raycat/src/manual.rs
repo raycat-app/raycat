@@ -54,7 +54,7 @@ mod tests {
     fn completions_know_the_commands_of_every_shell() {
         for shell in [Shell::Bash, Shell::Zsh, Shell::Fish] {
             let text = String::from_utf8(completions_for(shell)).unwrap();
-            for word in ["raycat", "status", "nodes", "completions"] {
+            for word in ["raycat", "status", "nodes", "tui", "completions"] {
                 assert!(text.contains(word), "{shell}: нет «{word}»");
             }
             assert!(!text.contains("--nope"));
@@ -65,7 +65,7 @@ mod tests {
     fn the_man_page_is_roff_with_our_commands() {
         let text = String::from_utf8(man_page().unwrap()).unwrap();
         assert!(text.contains(".TH raycat"), "{text}");
-        for word in ["status", "nodes", "events"] {
+        for word in ["status", "nodes", "events", "tui"] {
             assert!(text.contains(word), "нет «{word}»");
         }
     }

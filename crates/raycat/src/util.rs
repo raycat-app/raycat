@@ -45,6 +45,11 @@ pub(crate) fn format_date(unix: u64) -> String {
     format_time(unix).chars().take(10).collect()
 }
 
+/// `12:00:00` (UTC)
+pub(crate) fn format_clock(unix: u64) -> String {
+    format_time(unix).chars().skip(11).take(8).collect()
+}
+
 /// Двоичные единицы с одним знаком после точки: `1.5 КиБ`.
 pub(crate) fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["Б", "КиБ", "МиБ", "ГиБ", "ТиБ"];
@@ -110,6 +115,7 @@ mod tests {
         assert_eq!(format_time(1_790_596_800), "2026-09-28T12:00:00Z");
         assert_eq!(format_date(1_790_596_800 + 43_199), "2026-09-28");
         assert_eq!(format_date(1_790_596_800 + 43_200), "2026-09-29");
+        assert_eq!(format_clock(1_790_596_800 + 3_661), "13:01:01");
     }
 
     #[test]

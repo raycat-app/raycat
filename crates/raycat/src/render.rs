@@ -24,7 +24,7 @@ fn field(term: Term, indent: usize, label: &str, value: &str) -> String {
     )
 }
 
-fn span(secs: u64) -> String {
+pub(crate) fn span(secs: u64) -> String {
     if secs >= 2 * DAY {
         format!("{} д", secs / DAY)
     } else {
@@ -32,7 +32,7 @@ fn span(secs: u64) -> String {
     }
 }
 
-fn ago(now: u64, then: u64) -> String {
+pub(crate) fn ago(now: u64, then: u64) -> String {
     let secs = now.saturating_sub(then);
     if secs < 10 {
         "только что".to_owned()
@@ -41,7 +41,7 @@ fn ago(now: u64, then: u64) -> String {
     }
 }
 
-fn ahead(now: u64, then: u64) -> String {
+pub(crate) fn ahead(now: u64, then: u64) -> String {
     if then <= now {
         "скоро".to_owned()
     } else {
@@ -49,11 +49,11 @@ fn ahead(now: u64, then: u64) -> String {
     }
 }
 
-fn traffic(term: Term, used: u64, total: Option<u64>) -> String {
+pub(crate) fn traffic_text(used: u64, total: Option<u64>) -> (String, Tone) {
     let used_text = format_bytes(used);
     match total {
-        None => used_text,
-        Some(0) => format!("{used_text} (без ограничения)"),
+        None => (used_text, Tone::Plain),
+        Some(0) => (format!("{used_text} (без ограничения)"), Tone::Plain),
         Some(total) => {
             let percent = u128::from(used) * 100 / u128::from(total);
             let tone = if percent >= 100 {
@@ -63,21 +63,26 @@ fn traffic(term: Term, used: u64, total: Option<u64>) -> String {
             } else {
                 Tone::Plain
             };
-            term.paint(
+            (
+                format!("{used_text} из {} ({percent}%)", format_bytes(total)),
                 tone,
-                &format!("{used_text} из {} ({percent}%)", format_bytes(total)),
             )
         }
     }
 }
 
-fn expiry(term: Term, expire: u64, now: u64) -> String {
+fn traffic(term: Term, used: u64, total: Option<u64>) -> String {
+    let (text, tone) = traffic_text(used, total);
+    term.paint(tone, &text)
+}
+
+pub(crate) fn expiry_text(expire: u64, now: u64) -> (String, Tone) {
     if expire == 0 {
-        return "бессрочно".to_owned();
+        return ("бессрочно".to_owned(), Tone::Plain);
     }
     let date = format_date(expire);
     if expire <= now {
-        return term.paint(Tone::Red, &format!("истёк {date}"));
+        return (format!("истёк {date}"), Tone::Red);
     }
     let left = expire - now;
     let tone = if left < WARN_BEFORE_EXPIRY {
@@ -85,10 +90,15 @@ fn expiry(term: Term, expire: u64, now: u64) -> String {
     } else {
         Tone::Plain
     };
-    term.paint(tone, &format!("до {date}, осталось {}", span(left)))
+    (format!("до {date}, осталось {}", span(left)), tone)
 }
 
-fn mode_name(mode: Mode) -> &'static str {
+fn expiry(term: Term, expire: u64, now: u64) -> String {
+    let (text, tone) = expiry_text(expire, now);
+    term.paint(tone, &text)
+}
+
+pub(crate) fn mode_name(mode: Mode) -> &'static str {
     match mode {
         Mode::Proxy => "прокси",
         Mode::Gateway => "шлюз",
@@ -290,44 +300,57 @@ fn node_columns() -> Vec<Column> {
     ]
 }
 
-fn node_row(node: &Node) -> Vec<Cell> {
-    let marker = if node.pinned {
-        Cell::new("★", Tone::Yellow)
+/// Маркер строки узла: закреплён, выбран или пусто.
+pub(crate) fn node_marker(node: &Node) -> (&'static str, Tone) {
+    if node.pinned {
+        ("★", Tone::Yellow)
     } else if node.selected {
-        Cell::new("▶", Tone::Green)
+        ("▶", Tone::Green)
     } else {
-        Cell::new("", Tone::Plain)
-    };
+        ("", Tone::Plain)
+    }
+}
+
+pub(crate) fn node_status(status: NodeStatus) -> (&'static str, Tone) {
+    match status {
+        NodeStatus::Alive => ("жив", Tone::Green),
+        NodeStatus::Dead => ("не отвечает", Tone::Red),
+        NodeStatus::Unknown => ("не проверен", Tone::Dim),
+    }
+}
+
+pub(crate) fn latency_text(latency_ms: Option<u64>) -> String {
+    latency_ms.map_or_else(|| "—".to_owned(), |ms| format!("{ms} мс"))
+}
+
+pub(crate) fn node_traffic(node: &Node) -> String {
+    match (node.uplink_bytes, node.downlink_bytes) {
+        (Some(up), Some(down)) => format!("↑{} ↓{}", format_bytes(up), format_bytes(down)),
+        _ => "—".to_owned(),
+    }
+}
+
+fn node_row(node: &Node) -> Vec<Cell> {
+    let (mark, mark_tone) = node_marker(node);
     let name_tone = if node.selected {
         Tone::Bold
     } else {
         Tone::Plain
     };
-    let status = match node.status {
-        NodeStatus::Alive => Cell::new("жив", Tone::Green),
-        NodeStatus::Dead => Cell::new("не отвечает", Tone::Red),
-        NodeStatus::Unknown => Cell::new("не проверен", Tone::Dim),
-    };
-    let latency = node
-        .latency_ms
-        .map_or_else(|| "—".to_owned(), |ms| format!("{ms} мс"));
+    let (status_text, status_tone) = node_status(node.status);
     let failures_tone = if node.failures > 0 {
         Tone::Yellow
     } else {
         Tone::Dim
     };
-    let traffic = match (node.uplink_bytes, node.downlink_bytes) {
-        (Some(up), Some(down)) => format!("↑{} ↓{}", format_bytes(up), format_bytes(down)),
-        _ => "—".to_owned(),
-    };
     vec![
-        marker,
+        Cell::new(mark, mark_tone),
         Cell::new(sanitize(&node.subscription), Tone::Plain),
         Cell::new(sanitize(&node.name), name_tone),
-        status,
-        Cell::new(latency, Tone::Plain),
+        Cell::new(status_text, status_tone),
+        Cell::new(latency_text(node.latency_ms), Tone::Plain),
         Cell::new(node.failures.to_string(), failures_tone),
-        Cell::new(traffic, Tone::Plain),
+        Cell::new(node_traffic(node), Tone::Plain),
     ]
 }
 
@@ -397,7 +420,8 @@ fn node_or_dash(node: Option<&str>) -> String {
     node.map_or_else(|| "—".to_owned(), sanitize)
 }
 
-fn event_text(event: &Event) -> (Tone, String) {
+/// Текст события без времени и его тон; строки от провайдера очищены.
+pub(crate) fn event_text(event: &Event) -> (Tone, String) {
     match event {
         Event::Hello { version } => (
             Tone::Dim,
