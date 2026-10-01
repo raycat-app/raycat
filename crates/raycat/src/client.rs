@@ -173,19 +173,19 @@ impl Client {
         accept: &str,
     ) -> Result<Response, ClientError> {
         let mut stream = self.connect().await?;
-        let mut request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: raycat\r\nUser-Agent: raycat/{}\r\nAccept: {accept}\r\nConnection: close\r\n",
-            env!("CARGO_PKG_VERSION")
-        );
-        if method == "GET" {
-            request.push_str("\r\n");
+        let payload = if method == "GET" {
+            "\r\n".to_owned()
         } else {
             let body = body.unwrap_or_default();
-            request.push_str(&format!(
+            format!(
                 "Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
                 body.len()
-            ));
-        }
+            )
+        };
+        let request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: raycat\r\nUser-Agent: raycat/{}\r\nAccept: {accept}\r\nConnection: close\r\n{payload}",
+            env!("CARGO_PKG_VERSION")
+        );
         stream.write_all(request.as_bytes()).await.map_err(map_io)?;
         read_head(BufReader::new(stream)).await
     }

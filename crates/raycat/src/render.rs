@@ -99,14 +99,13 @@ fn xray_text(term: Term, xray: &XrayStatus) -> String {
     if !xray.running {
         return term.paint(Tone::Red, "не запущен");
     }
-    let mut text = term.paint(Tone::Green, "работает");
-    if let Some(pid) = xray.pid {
-        text.push_str(&format!(" (pid {pid})"));
-    }
-    if xray.restarts > 0 {
-        text.push_str(&term.paint(Tone::Yellow, &format!(", перезапусков: {}", xray.restarts)));
-    }
-    text
+    let pid = xray.pid.map_or_else(String::new, |pid| format!(" (pid {pid})"));
+    let restarts = if xray.restarts > 0 {
+        term.paint(Tone::Yellow, &format!(", перезапусков: {}", xray.restarts))
+    } else {
+        String::new()
+    };
+    format!("{}{pid}{restarts}", term.paint(Tone::Green, "работает"))
 }
 
 fn header_lines(term: Term, status: &Status) -> Vec<String> {
@@ -173,10 +172,15 @@ fn node_lines(term: Term, node: Option<&CurrentNode>) -> Vec<String> {
 }
 
 fn subscription_lines(term: Term, sub: &SubscriptionStatus, now: u64) -> Vec<String> {
-    let mut title = format!("  {}", term.paint(Tone::Bold, &sanitize(&sub.name)));
-    if let Some(provider) = sub.title.as_deref().filter(|text| !text.is_empty()) {
-        title.push_str(&format!("  «{}»", sanitize(provider)));
-    }
+    let provider = sub
+        .title
+        .as_deref()
+        .filter(|text| !text.is_empty())
+        .map_or_else(String::new, |text| format!("  «{}»", sanitize(text)));
+    let title = format!(
+        "  {}{provider}",
+        term.paint(Tone::Bold, &sanitize(&sub.name))
+    );
     let mut lines = vec![title, field(term, 4, "узлов:", &sub.nodes.to_string())];
     if let Some(used) = sub.used_bytes {
         lines.push(field(
