@@ -51,7 +51,7 @@ impl fmt::Display for Reason {
             Self::NoCandidates => f.write_str("нет узлов для выбора"),
             Self::Initial { node } => write!(
                 f,
-                "выбран первый по приоритету узел «{node}»: данных о здоровье ещё нет"
+                "выбран лучший по приоритету узел «{node}»: данных о здоровье ещё нет"
             ),
             Self::Chosen { node } => write!(f, "выбран лучший живой узел «{node}»"),
             Self::Pinned { node } => write!(f, "закреплён вручную: «{node}»"),
