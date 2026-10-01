@@ -21,7 +21,7 @@ pub(crate) enum Level {
 }
 
 impl Level {
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Error => "ERROR",
             Self::Warn => "WARN",
@@ -103,13 +103,24 @@ struct Logger {
     dedup: Dedup,
     /// Полная ссылка подписки и её маска: ссылка не должна попасть в лог ни в каком виде.
     secrets: Vec<(String, String)>,
+    /// Получатель предупреждений и ошибок (поток событий API); вызывается под
+    /// блокировкой логгера, поэтому сам писать в лог не должен.
+    tap: Option<Tap>,
 }
+
+type Tap = Box<dyn Fn(Level, &str) + Send>;
 
 static LOGGER: Mutex<Logger> = Mutex::new(Logger {
     level: Level::Info,
     dedup: Dedup { last: None },
     secrets: Vec::new(),
+    tap: None,
 });
+
+/// Подписывает `tap` на предупреждения и ошибки, которые попадают в лог.
+pub(crate) fn set_tap(tap: impl Fn(Level, &str) + Send + 'static) {
+    lock().tap = Some(Box::new(tap));
+}
 
 fn lock() -> MutexGuard<'static, Logger> {
     LOGGER.lock().unwrap_or_else(PoisonError::into_inner)
@@ -140,6 +151,11 @@ pub(crate) fn write(level: Level, args: fmt::Arguments<'_>) {
         text = text.replace(secret.as_str(), masked);
     }
     let lines = logger.dedup.push(Instant::now(), level, text);
+    if let Some(tap) = &logger.tap {
+        for line in lines.iter().filter(|line| line.level <= Level::Warn) {
+            tap(line.level, &line.text);
+        }
+    }
     emit(&lines);
 }
 

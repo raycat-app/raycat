@@ -44,6 +44,11 @@ impl Process {
         }
     }
 
+    /// Номер процесса, пока xray работает.
+    pub(crate) fn pid(&self) -> Option<u32> {
+        self.running.as_ref().and_then(|running| running.child.id())
+    }
+
     /// `xray run -c <файл>`; должен вызываться внутри рантайма tokio.
     pub(crate) fn start(&mut self) -> Result<()> {
         let mut command = Command::new(&self.bin);

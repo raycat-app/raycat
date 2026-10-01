@@ -97,6 +97,15 @@ stop_daemon() {
   fi
 }
 
+api() { curl -fsS --max-time 20 --unix-socket "$RAYCAT_SOCKET" "http://localhost$1"; }
+api_code() {
+  local method=$1 path=$2 body=${3:-}
+  curl -sS --max-time 30 -o "$work/api-body" -w '%{http_code}' --unix-socket "$RAYCAT_SOCKET" \
+    -X "$method" -d "$body" "http://localhost$path"
+}
+status_is() { api /v1/status | jq -e "$1" >/dev/null; }
+nodes_are() { api /v1/nodes | jq -e "$1" >/dev/null; }
+
 "$xray" version
 sudo ip addr add "$node_ip/32" dev lo
 sudo ip addr add "$site_ip/32" dev lo
@@ -152,6 +161,7 @@ path = "$xray"
 level = "debug"
 EOF
 export RAYCAT_STATE_DIR="$work/state"
+export RAYCAT_SOCKET="$work/raycat.sock"
 : >"$work/raycat.log"
 : >"$work/panel-requests.log"
 
@@ -175,6 +185,49 @@ echo "== raycat check с кэшем"
 "$raycat" check --config "$work/config.toml" || fail "check с кэшем завершился ошибкой"
 "$raycat" identity --config "$work/config.toml" | grep -q 'HWID: ' || fail "identity не показал HWID"
 
+echo "== API демона по unix-сокету"
+[ "$(stat -c %a "$RAYCAT_SOCKET")" = 600 ] || fail "права сокета API не 0600"
+wait_for "узел выбран" status_is '.node.id == "e2e/E2E"'
+status_is '.mode == "proxy" and .kill_switch == null and .xray.running == true and (.xray.pid | type) == "number"' \
+  || fail "status: режим или xray"
+status_is '.subscriptions[0].name == "e2e" and .subscriptions[0].title == "E2E" and .subscriptions[0].total_bytes == 1073741824' \
+  || fail "status: сведения подписки"
+status_is '.subscriptions[0].url | (contains("…1234") and (contains("e2etoken") | not))' \
+  || fail "status: ссылка подписки не замаскирована"
+status_is '.node.reason | type == "string"' || fail "status: нет причины выбора узла"
+expect_site http
+wait_for "трафик узла в /v1/nodes" nodes_are '.nodes[0].uplink_bytes | type == "number"'
+nodes_are '.nodes | length == 1 and .[0].id == "e2e/E2E" and .[0].selected == true and .[0].pinned == false' \
+  || fail "nodes: список узлов"
+
+echo "  закрепление"
+[ "$(api_code POST /v1/pin '{"node":"e2e/Nope"}')" = 404 ] || fail "pin неизвестного узла должен давать 404"
+jq -e '.error | contains("нет среди")' "$work/api-body" >/dev/null || fail "ошибка pin не на русском"
+[ "$(api_code POST /v1/pin 'не json')" = 400 ] || fail "pin с мусором должен давать 400"
+[ "$(api_code POST /v1/pin '{"node":"e2e/E2E"}')" = 200 ] || fail "pin не принят"
+wait_for "узел закреплён" status_is '.node.pinned == true'
+nodes_are '.nodes[0].pinned == true' || fail "nodes: узел не помечен закреплённым"
+expect_site http
+[ "$(api_code DELETE /v1/pin)" = 200 ] || fail "снятие закрепления не принято"
+wait_for "закрепление снято" status_is '.node.pinned == false'
+
+echo "  обновление и события"
+requests_before=$(grep -c '^GET /sub' "$work/panel-requests.log")
+curl -sN --max-time 20 --unix-socket "$RAYCAT_SOCKET" http://localhost/v1/events >"$work/events.txt" 2>&1 &
+events_pid=$!
+wait_for "поток событий открыт" grep -q 'event: hello' "$work/events.txt"
+[ "$(api_code POST /v1/update '{}')" = 200 ] || fail "update не выполнен"
+jq -e '.results[0].subscription == "e2e" and .results[0].ok == true and .results[0].nodes == 1' "$work/api-body" >/dev/null \
+  || fail "update: результат"
+[ "$(grep -c '^GET /sub' "$work/panel-requests.log")" -gt "$requests_before" ] || fail "update не дошёл до панели"
+wait_for "событие обновления подписки" grep -q 'event: subscription_updated' "$work/events.txt"
+[ "$(api_code POST /v1/update '{"subscription":"nope"}')" = 404 ] || fail "update неизвестной подписки должен давать 404"
+[ "$(api_code POST /v1/pin '{"node":"e2e/E2E"}')" = 200 ] || fail "pin не принят"
+wait_for "событие закрепления" grep -q 'event: pin' "$work/events.txt"
+kill "$events_pid" 2>/dev/null || true
+wait "$events_pid" 2>/dev/null || true
+[ "$(api_code GET /v1/nothing)" = 404 ] || fail "неизвестный путь должен давать 404"
+
 echo "== панель остановлена, SIGHUP: демон живёт на кэше"
 kill "$panel_pid"
 wait "$panel_pid" 2>/dev/null || true
@@ -187,8 +240,10 @@ expect_site http
 
 echo "== остановка демона"
 stop_daemon
+[ ! -e "$RAYCAT_SOCKET" ] || fail "сокет API остался после остановки"
+[ -s "$work/state/pin.json" ] || fail "закрепление не сохранено в каталоге состояния"
 
-echo "== перезапуск демона при недоступной панели: прокси из кэша"
+echo "== перезапуск демона при недоступной панели: прокси из кэша, закрепление на месте"
 mark=$(log_lines)
 start_daemon
 wait_for "прокси отвечает из кэша" via_http
@@ -196,6 +251,10 @@ expect_site http
 expect_site socks
 log_since "$mark" "кэш от" || fail "в логе нет строки о кэше"
 wait_for "ошибка обновления в логе" log_since "$mark" "не удалось обновить"
+wait_for "закрепление пережило перезапуск" status_is '.node.pinned == true and .node.id == "e2e/E2E"'
+[ "$(api_code DELETE /v1/pin)" = 200 ] || fail "снятие закрепления не принято"
+wait_for "закрепление снято" status_is '.node.pinned == false'
+status_is '.subscriptions[0].last_error | type == "string"' || fail "status: нет ошибки обновления подписки"
 stop_daemon
 
 echo "e2e прокси: успех"

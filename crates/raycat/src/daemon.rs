@@ -2,24 +2,36 @@
 //! сигналы, результаты обновлений и завершение xray; сетевые запросы идут в
 //! `spawn_blocking`.
 
+mod control;
+
+use std::fs;
 use std::net::{Ipv4Addr, TcpListener};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use raycat_config::{Config, Mode, Subscription};
 use raycat_netfilter::Rules;
-use raycat_subscription::redact_in;
+use raycat_proto::{Event, Mode as ApiMode, Status, UpdateResult, Updates, XrayState, XrayStatus};
+use raycat_select::Selector;
+use raycat_subscription::{Usage, redact_in};
 use raycat_xray::Node;
+use raycat_xray_api::XrayApi;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::oneshot;
 use tokio::time::Instant;
 
+use self::control::FIRST_SELECT_DELAY;
+use crate::api::{self, Refusal, Shared};
 use crate::gateway;
-use crate::log::{error, info, warn};
+use crate::log::{self, error, info, warn};
+use crate::paths;
 use crate::plan;
 use crate::schedule::{HEALTHY_UPTIME, RESTART_FIRST, next_restart_delay};
-use crate::store::Store;
+use crate::selection;
+use crate::store::{Store, StoredPin};
 use crate::updater::{self, Outcome, Refresh, Source};
 use crate::util::{format_duration, format_time, now_unix};
 use crate::xray::{Exit, Process};
@@ -32,19 +44,49 @@ const RESTART_DEBOUNCE: Duration = Duration::from_secs(3);
 
 type Finished = (usize, Refresh);
 
-/// Блокирует поток до сигнала остановки.
-pub(crate) fn run(config: Config, store: Store) -> Result<()> {
+/// Блокирует поток до сигнала остановки. `socket` — путь сокета API.
+pub(crate) fn run(config: Config, store: Store, socket: PathBuf) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("не удалось запустить рантайм tokio")?;
-    let result = runtime.block_on(serve(config, store));
+    let result = runtime.block_on(serve(config, store, socket));
     // Запрос к панели в spawn_blocking нельзя прервать: не ждём его дольше секунды.
     runtime.shutdown_timeout(Duration::from_secs(1));
     result
 }
 
-async fn serve(config: Config, store: Store) -> Result<()> {
+/// Удаляет файл сокета при любом выходе из `serve`.
+struct SocketFile(PathBuf);
+
+impl Drop for SocketFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+/// Состояние для `GET /v1/status` до первого обновления демоном.
+fn initial_status(config: &Config) -> Status {
+    let (mode, kill_switch) = match config.mode {
+        Mode::Proxy { .. } => (ApiMode::Proxy, None),
+        Mode::Gateway { kill_switch, .. } => (ApiMode::Gateway, Some(kill_switch)),
+    };
+    Status {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        mode,
+        uptime_secs: 0,
+        kill_switch,
+        xray: XrayStatus {
+            running: false,
+            pid: None,
+            restarts: 0,
+        },
+        node: None,
+        subscriptions: Vec::new(),
+    }
+}
+
+async fn serve(config: Config, store: Store, socket: PathBuf) -> Result<()> {
     match config.mode {
         Mode::Proxy { listen } if !listen.ip().is_loopback() => warn!(
             "прокси слушает {listen} без пароля: им сможет пользоваться любой, кто до него дотянется"
@@ -53,17 +95,41 @@ async fn serve(config: Config, store: Store) -> Result<()> {
         Mode::Gateway { .. } => gateway::preflight()?,
     }
     let machine_id = store.machine_id()?;
-    let mut daemon = Daemon::new(config, store, &machine_id, free_port()?)?;
+    let (shared, mut commands) = Shared::new(initial_status(&config));
+    let mut daemon = Daemon::new(
+        config,
+        store,
+        &machine_id,
+        free_port()?,
+        Arc::clone(&shared),
+    )?;
+    let listener = api::bind(&socket)?;
+    let _socket_file = SocketFile(socket.clone());
+    let server = tokio::spawn(api::serve(
+        listener,
+        api::router(Arc::clone(&shared)),
+        paths::euid(),
+    ));
+    log::set_tap({
+        let shared = Arc::clone(&shared);
+        move |level, text| {
+            shared.emit(Event::Warning {
+                level: level.label().to_ascii_lowercase(),
+                message: text.to_owned(),
+            });
+        }
+    });
     // Правила ставятся до запуска xray, а при сбое подписки они остаются: это kill switch.
     if let Some(rules) = &daemon.gateway {
         gateway::install(rules)?;
     }
     info!(
-        "raycat {} запущен: {}, подписок: {}, состояние: {}",
+        "raycat {} запущен: {}, подписок: {}, состояние: {}, API: {}",
         env!("CARGO_PKG_VERSION"),
         plan::describe_mode(&daemon.config),
         daemon.subs.len(),
-        daemon.store.root().display()
+        daemon.store.root().display(),
+        socket.display()
     );
     daemon.load_caches();
 
@@ -88,10 +154,12 @@ async fn serve(config: Config, store: Store) -> Result<()> {
                 daemon.refresh_all();
             }
             Some((index, refresh)) = rx.recv() => daemon.finished(index, refresh),
+            Some(command) = commands.recv() => daemon.command(command),
             exit = daemon.process.exited() => daemon.crashed(&exit),
             () = wait_until(wake) => {}
         }
     }
+    server.abort();
     daemon.process.stop().await;
     // Только при штатной остановке: после аварии правила остаются и держат kill switch.
     if let Some(rules) = &daemon.gateway {
@@ -124,6 +192,19 @@ struct Sub {
     announce: Option<String>,
     /// Первая попытка получения (успешная или нет) уже закончилась.
     first_done: bool,
+    /// Сведения провайдера для `GET /v1/status`.
+    title: Option<String>,
+    usage: Option<Usage>,
+    updated_at: Option<u64>,
+    next_update: Option<u64>,
+    last_error: Option<String>,
+}
+
+/// Запрос `POST /v1/update`, ждущий результата обновления подписок.
+struct PendingUpdate {
+    waiting: Vec<usize>,
+    results: Vec<UpdateResult>,
+    reply: oneshot::Sender<Result<Updates, Refusal>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,12 +230,36 @@ struct Daemon {
     /// Правила перехвата в режиме шлюза и время следующей проверки, что они на месте.
     gateway: Option<Rules>,
     next_guard: Instant,
+    shared: Arc<Shared>,
+    selector: Selector,
+    /// Тег, закреплённый сейчас в балансировщике xray; `None` после его запуска.
+    pinned_in_xray: Option<String>,
+    xray_api: Option<XrayApi>,
+    /// xray запущен с тем же конфигом, который собран сейчас: теги узлов совпадают.
+    xray_current: bool,
+    xray_started: Option<Instant>,
+    xray_starts: u32,
+    next_select: Instant,
+    last_reason: Option<String>,
+    pending_updates: Vec<PendingUpdate>,
 }
 
 impl Daemon {
-    fn new(config: Config, store: Store, machine_id: &str, api_port: u16) -> Result<Self> {
+    fn new(
+        config: Config,
+        store: Store,
+        machine_id: &str,
+        api_port: u16,
+        shared: Arc<Shared>,
+    ) -> Result<Self> {
         let now = Instant::now();
         let gateway = plan::gateway_rules(&config)?;
+        let pin = match store.load_pin() {
+            StoredPin::Node(id) => selection::parse_pin(&id),
+            StoredPin::Off => None,
+            StoredPin::Absent => selection::config_pin(&config),
+        };
+        let selector = Selector::new(selection::settings(&config, pin), Vec::new());
         let subs = config
             .subscriptions
             .iter()
@@ -167,6 +272,11 @@ impl Daemon {
                     failures: 0,
                     announce: None,
                     first_done: false,
+                    title: None,
+                    usage: None,
+                    updated_at: None,
+                    next_update: None,
+                    last_error: None,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -188,6 +298,16 @@ impl Daemon {
             gather_until: None,
             gateway,
             next_guard: now + gateway::GUARD_INTERVAL,
+            shared,
+            selector,
+            pinned_in_xray: None,
+            xray_api: None,
+            xray_current: false,
+            xray_started: None,
+            xray_starts: 0,
+            next_select: now,
+            last_reason: None,
+            pending_updates: Vec::new(),
         })
     }
 
@@ -204,6 +324,9 @@ impl Daemon {
                     cached.nodes.len()
                 );
                 sub.nodes = cached.nodes;
+                sub.title = cached.info.title;
+                sub.usage = cached.info.usage;
+                sub.updated_at = Some(cached.fetched_at);
             } else {
                 info!("подписка «{name}»: кэша нет, получаю с сервера");
             }
@@ -257,6 +380,10 @@ impl Daemon {
             );
         }
         let first = self.applied.is_none();
+        self.selector
+            .set_candidates(selection::candidates(&self.config, &plan.tags));
+        // Теги узлов в запущенном xray теперь не те: выбор ждёт его перезапуска.
+        self.xray_current = false;
         self.applied = Some(plan.json);
         self.applied_nodes = plan.nodes;
         if first {
@@ -280,6 +407,10 @@ impl Daemon {
             self.next_guard = now + gateway::GUARD_INTERVAL;
         }
         self.restart_process().await;
+        if self.selecting() && self.next_select <= now {
+            self.next_select = now + self.config.selection.check_interval;
+            self.select_step().await;
+        }
         let due: Vec<usize> = self
             .subs
             .iter()
@@ -290,6 +421,12 @@ impl Daemon {
         for index in due {
             self.spawn_refresh(index, tx);
         }
+        self.publish();
+    }
+
+    /// Выбор узла идёт, пока работает xray, запущенный с текущим конфигом.
+    fn selecting(&self) -> bool {
+        self.xray_current && self.process.pid().is_some()
     }
 
     async fn restart_process(&mut self) {
@@ -303,10 +440,20 @@ impl Daemon {
         }
         self.restart = Restart::Idle;
         self.process.stop().await;
+        self.drop_api();
         if let Err(error) = self.process.start() {
             error!("{error:#}");
             self.schedule_restart();
+            return;
         }
+        self.xray_current = true;
+        self.xray_started = Some(Instant::now());
+        self.xray_starts = self.xray_starts.saturating_add(1);
+        self.next_select = Instant::now() + FIRST_SELECT_DELAY;
+        self.shared.emit(Event::Xray {
+            state: XrayState::Started,
+            message: format!("pid {}", self.process.pid().unwrap_or_default()),
+        });
     }
 
     fn schedule_restart(&mut self) {
@@ -318,6 +465,11 @@ impl Daemon {
         if exit.uptime >= HEALTHY_UPTIME {
             self.backoff = RESTART_FIRST;
         }
+        self.drop_api();
+        self.shared.emit(Event::Xray {
+            state: XrayState::Exited,
+            message: exit.status.clone(),
+        });
         error!(
             "xray завершился ({}) через {}, перезапуск через {}",
             exit.status,
@@ -336,6 +488,7 @@ impl Daemon {
             Restart::At(at) => Some(at),
         };
         let guard = self.gateway.as_ref().map(|_| self.next_guard);
+        let select = self.selecting().then_some(self.next_select);
         self.subs
             .iter()
             .filter(|sub| !sub.in_flight)
@@ -343,6 +496,7 @@ impl Daemon {
             .chain(restart)
             .chain(self.gather_until)
             .chain(guard)
+            .chain(select)
             .min()
     }
 
@@ -377,10 +531,43 @@ impl Daemon {
         sub.first_done = true;
         sub.due = Some(Instant::now() + refresh.next_in);
         let name = sub.source.config().name.clone();
+        sub.next_update = Some(now_unix().saturating_add(refresh.next_in.as_secs()));
+        let result = match &refresh.outcome {
+            Outcome::Applied(analysis) => UpdateResult {
+                subscription: name.clone(),
+                ok: true,
+                message: format!("узлов: {}", analysis.nodes.len()),
+                nodes: Some(analysis.nodes.len()),
+            },
+            Outcome::Rejected(message) | Outcome::Failed(message) => UpdateResult {
+                subscription: name.clone(),
+                ok: false,
+                message: message.clone(),
+                nodes: None,
+            },
+        };
+        self.shared.emit(if result.ok {
+            Event::SubscriptionUpdated {
+                subscription: name.clone(),
+                nodes: result.nodes.unwrap_or_default(),
+            }
+        } else {
+            Event::SubscriptionFailed {
+                subscription: name.clone(),
+                error: result.message.clone(),
+            }
+        });
+        let Some(sub) = self.subs.get_mut(index) else {
+            return;
+        };
         match refresh.outcome {
             Outcome::Applied(analysis) => {
                 let analysis = *analysis;
                 sub.failures = 0;
+                sub.last_error = None;
+                sub.updated_at = Some(now_unix());
+                sub.title.clone_from(&analysis.info.title);
+                sub.usage.clone_from(&analysis.info.usage);
                 let url = sub.source.config().url.expose();
                 info!(
                     "подписка «{name}» обновлена: {}; следующее обновление через {}",
@@ -407,6 +594,7 @@ impl Daemon {
             }
             Outcome::Rejected(reason) => {
                 sub.failures = sub.failures.saturating_add(1);
+                sub.last_error = Some(reason.clone());
                 warn!(
                     "подписка «{name}»: ответ не применён ({reason}), остаются прежние узлы; повтор через {}",
                     format_duration(refresh.next_in)
@@ -414,12 +602,14 @@ impl Daemon {
             }
             Outcome::Failed(message) => {
                 sub.failures = sub.failures.saturating_add(1);
+                sub.last_error = Some(message.clone());
                 warn!(
                     "подписка «{name}»: не удалось обновить ({message}); повтор через {}",
                     format_duration(refresh.next_in)
                 );
             }
         }
+        self.complete_updates(index, &result);
         if self.gather_until.is_some() && self.subs.iter().all(|sub| sub.first_done) {
             self.finish_gathering();
         }
@@ -431,6 +621,7 @@ mod tests {
     use std::fmt::Write as _;
 
     use raycat_config::Env;
+    use raycat_select::Health;
     use raycat_subscription::analyze;
 
     use super::*;
@@ -441,16 +632,30 @@ mod tests {
     const BOTH: &str = "ss://aes-128-gcm:secret@203.0.113.5:8388#One\nss://aes-128-gcm:secret@203.0.113.6:8388#Two\n";
 
     fn daemon(names: &[&str], temp: &TempDir) -> Daemon {
+        daemon_with(names, "", temp)
+    }
+
+    /// `extra` дописывается в конец настроек (например, раздел `[selection]`).
+    fn daemon_with(names: &[&str], extra: &str, temp: &TempDir) -> Daemon {
         let mut text = String::new();
         for name in names {
             let _ = write!(
                 text,
-                "[[subscription]]\nname = \"{name}\"\nurl = \"https://{name}.example.com/sub/token1234\"\napp = \"happ\"\nplatform = \"windows\"\n"
+                "[[subscription]]\nname = \"{name}\"\nurl = \"https://{name}.example.com/sub/token1234\"\napp = \"happ\"\nplatform = \"windows\"\npriority = [\"Two\"]\n"
             );
         }
+        text.push_str(extra);
         let config = Config::from_toml_str(&text, &Env::new()).unwrap();
         let store = Store::open(temp.path().to_path_buf()).unwrap();
-        Daemon::new(config, store, "0d0af05ee8fd4dc29275718f2ce4dff1", 10_085).unwrap()
+        let (shared, _commands) = Shared::new(initial_status(&config));
+        Daemon::new(
+            config,
+            store,
+            "0d0af05ee8fd4dc29275718f2ce4dff1",
+            10_085,
+            shared,
+        )
+        .unwrap()
     }
 
     fn applied(links: &str) -> Refresh {
@@ -553,5 +758,210 @@ mod tests {
         assert_eq!(daemon.restart, Restart::Now);
         daemon.finished(0, applied(BOTH));
         assert_eq!(daemon.restart, Restart::Now);
+    }
+
+    fn choice(daemon: &mut Daemon) -> Option<String> {
+        daemon.selector.step(selection::now(), &[]).selected_id
+    }
+
+    #[test]
+    fn a_pin_is_validated_saved_and_applied() {
+        let temp = TempDir::new("pin-set");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished(0, applied(BOTH));
+        // Без данных о здоровье движок берёт первый узел списка.
+        assert_eq!(choice(&mut daemon).as_deref(), Some("a/One"));
+
+        assert!(matches!(
+            daemon.set_pin(Some("a/Nope")),
+            Err(Refusal::NotFound(_))
+        ));
+        assert!(matches!(
+            daemon.set_pin(Some("плохо")),
+            Err(Refusal::Invalid(_))
+        ));
+        assert_eq!(daemon.store.load_pin(), StoredPin::Absent);
+
+        let pinned = daemon.set_pin(Some("a/Two")).unwrap();
+        assert_eq!(pinned.node.as_deref(), Some("a/Two"));
+        assert_eq!(daemon.store.load_pin(), StoredPin::Node("a/Two".to_owned()));
+        assert_eq!(choice(&mut daemon).as_deref(), Some("a/Two"));
+        let node = daemon.status().node.unwrap();
+        assert_eq!((node.id.as_str(), node.pinned), ("a/Two", true));
+    }
+
+    #[test]
+    fn ranks_from_priority_masks_decide_among_live_nodes() {
+        let temp = TempDir::new("ranks");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished(0, applied(BOTH));
+        let alive = |tag: &str| Health {
+            tag: tag.to_owned(),
+            alive: true,
+            latency_ms: 50,
+            checked_at: Duration::from_secs(1_000),
+            error: None,
+        };
+        let health = [alive("node-001-main"), alive("node-002-main")];
+        let decision = daemon.selector.step(Duration::from_secs(1_001), &health);
+        assert_eq!(decision.selected_id.as_deref(), Some("a/Two"));
+    }
+
+    #[test]
+    fn a_saved_pin_survives_a_restart_and_beats_the_config() {
+        let temp = TempDir::new("pin-saved");
+        {
+            let mut first = daemon(&["a"], &temp);
+            first.load_caches();
+            first.finished(0, applied(BOTH));
+            first.set_pin(Some("a/Two")).unwrap();
+        }
+        let mut second = daemon_with(&["a"], "[selection]\npin = \"a/One\"\n", &temp);
+        second.load_caches();
+        second.finished(0, applied(BOTH));
+        assert_eq!(choice(&mut second).as_deref(), Some("a/Two"));
+    }
+
+    #[test]
+    fn unpinning_overrides_the_pin_from_the_config() {
+        let temp = TempDir::new("pin-config");
+        let config = "[selection]\npin = \"a/Two\"\n";
+        let mut first = daemon_with(&["a"], config, &temp);
+        first.load_caches();
+        first.finished(0, applied(BOTH));
+        assert_eq!(choice(&mut first).as_deref(), Some("a/Two"));
+
+        assert_eq!(first.set_pin(None).unwrap().node, None);
+        assert_eq!(first.store.load_pin(), StoredPin::Off);
+        // Движок не прыгает без данных о здоровье: узел меняется, когда проверки покажут выигрыш.
+        assert_eq!(choice(&mut first).as_deref(), Some("a/Two"));
+
+        let mut second = daemon_with(&["a"], config, &temp);
+        second.load_caches();
+        second.finished(0, applied(BOTH));
+        assert_eq!(choice(&mut second).as_deref(), Some("a/One"));
+    }
+
+    #[test]
+    fn the_config_pin_applies_without_a_saved_one() {
+        let temp = TempDir::new("pin-from-config");
+        let mut daemon = daemon_with(&["a"], "[selection]\npin = \"a/Two\"\n", &temp);
+        daemon.load_caches();
+        daemon.finished(0, applied(BOTH));
+        assert_eq!(choice(&mut daemon).as_deref(), Some("a/Two"));
+    }
+
+    #[test]
+    fn an_update_request_waits_for_every_subscription() {
+        let temp = TempDir::new("update-all");
+        let mut daemon = daemon(&["a", "b"], &temp);
+        daemon.load_caches();
+        let (reply, mut answer) = oneshot::channel();
+        daemon.start_update(None, reply);
+        assert!(answer.try_recv().is_err());
+
+        daemon.finished(0, applied(ONE));
+        assert!(answer.try_recv().is_err());
+        daemon.finished(1, failed());
+        let updates = answer.try_recv().unwrap().unwrap();
+        assert_eq!(updates.results.len(), 2);
+        assert!(updates.results[0].ok && updates.results[0].nodes == Some(1));
+        assert_eq!(updates.results[0].subscription, "a");
+        assert!(!updates.results[1].ok);
+        assert_eq!(updates.results[1].message, "нет связи");
+        assert!(daemon.pending_updates.is_empty());
+    }
+
+    #[test]
+    fn an_update_request_can_name_one_subscription() {
+        let temp = TempDir::new("update-one");
+        let mut daemon = daemon(&["a", "b"], &temp);
+        daemon.load_caches();
+        let (reply, mut answer) = oneshot::channel();
+        daemon.start_update(Some("b"), reply);
+        daemon.finished(1, applied(TWO));
+        let updates = answer.try_recv().unwrap().unwrap();
+        assert_eq!(updates.results.len(), 1);
+        assert_eq!(updates.results[0].subscription, "b");
+    }
+
+    #[test]
+    fn updating_an_unknown_subscription_is_refused() {
+        let temp = TempDir::new("update-unknown");
+        let mut daemon = daemon(&["a"], &temp);
+        let (reply, mut answer) = oneshot::channel();
+        daemon.start_update(Some("x"), reply);
+        let refusal = answer.try_recv().unwrap().unwrap_err();
+        assert!(matches!(refusal, Refusal::NotFound(ref text) if text.contains("«x»")));
+        assert!(daemon.pending_updates.is_empty());
+    }
+
+    #[test]
+    fn status_shows_masked_links_errors_and_the_current_node() {
+        let temp = TempDir::new("status");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished(0, applied(ONE));
+        assert!(daemon.status().node.is_none());
+        choice(&mut daemon);
+
+        let status = daemon.status();
+        assert_eq!(status.mode, ApiMode::Proxy);
+        assert_eq!(status.kill_switch, None);
+        assert!(!status.xray.running);
+        let node = status.node.unwrap();
+        assert_eq!((node.id.as_str(), node.pinned), ("a/One", false));
+        assert!(node.reason.is_none());
+        let sub = &status.subscriptions[0];
+        assert_eq!(sub.url, "https://a.example.com/…1234");
+        assert_eq!(sub.nodes, 1);
+        assert!(sub.last_error.is_none() && sub.updated_at.is_some() && !sub.updating);
+        assert!(sub.next_update.is_some());
+
+        daemon.finished(0, failed());
+        let sub = &daemon.status().subscriptions[0];
+        assert_eq!(sub.last_error.as_deref(), Some("нет связи"));
+        assert_eq!(sub.nodes, 1);
+    }
+
+    #[test]
+    fn nodes_view_lists_the_candidates() {
+        let temp = TempDir::new("nodes-view");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished(0, applied(BOTH));
+        choice(&mut daemon);
+        let view = daemon.nodes_view();
+        assert_eq!(view.selected.as_deref(), Some("a/One"));
+        let names: Vec<&str> = view.nodes.iter().map(|node| node.name.as_str()).collect();
+        assert_eq!(names, ["One", "Two"]);
+        assert!(view.nodes[0].selected && !view.nodes[1].selected);
+        assert!(view.nodes.iter().all(|node| node.uplink_bytes.is_none()));
+    }
+
+    #[test]
+    fn subscription_events_reach_the_stream() {
+        let temp = TempDir::new("events");
+        let mut daemon = daemon(&["a"], &temp);
+        let mut events = daemon.shared.subscribe();
+        daemon.load_caches();
+        daemon.finished(0, applied(ONE));
+        daemon.finished(0, failed());
+        assert_eq!(
+            events.try_recv().unwrap(),
+            Event::SubscriptionUpdated {
+                subscription: "a".to_owned(),
+                nodes: 1
+            }
+        );
+        assert_eq!(
+            events.try_recv().unwrap(),
+            Event::SubscriptionFailed {
+                subscription: "a".to_owned(),
+                error: "нет связи".to_owned()
+            }
+        );
     }
 }

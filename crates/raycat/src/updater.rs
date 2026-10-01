@@ -201,6 +201,7 @@ impl Source {
         Some(Cached {
             fetched_at: state.fetched_at,
             nodes: analysis.nodes,
+            info: analysis.info,
         })
     }
 
@@ -230,6 +231,7 @@ impl Source {
 pub(crate) struct Cached {
     pub(crate) fetched_at: u64,
     pub(crate) nodes: Vec<Node>,
+    pub(crate) info: ProviderInfo,
 }
 
 pub(crate) struct Fetched {
