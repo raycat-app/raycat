@@ -272,8 +272,17 @@ mod tests {
             Some("main/NL-1")
         );
 
-        let matches = command().try_get_matches_from(["raycat", "update"]).unwrap();
-        assert_eq!(matches.subcommand().unwrap().1.get_one::<String>("subscription"), None);
+        let matches = command()
+            .try_get_matches_from(["raycat", "update"])
+            .unwrap();
+        assert_eq!(
+            matches
+                .subcommand()
+                .unwrap()
+                .1
+                .get_one::<String>("subscription"),
+            None
+        );
         let matches = command()
             .try_get_matches_from(["raycat", "update", "main"])
             .unwrap();

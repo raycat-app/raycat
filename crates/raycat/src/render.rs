@@ -104,24 +104,19 @@ fn xray_text(term: Term, xray: &XrayStatus) -> String {
         text.push_str(&format!(" (pid {pid})"));
     }
     if xray.restarts > 0 {
-        text.push_str(&term.paint(
-            Tone::Yellow,
-            &format!(", перезапусков: {}", xray.restarts),
-        ));
+        text.push_str(&term.paint(Tone::Yellow, &format!(", перезапусков: {}", xray.restarts)));
     }
     text
 }
 
 fn header_lines(term: Term, status: &Status) -> Vec<String> {
     let mut lines = vec![
-        term.paint(Tone::Header, &format!("raycat {}", sanitize(&status.version))),
-        field(term, 2, "режим:", mode_name(status.mode)),
-        field(
-            term,
-            2,
-            "работает:",
-            &span(status.uptime_secs),
+        term.paint(
+            Tone::Header,
+            &format!("raycat {}", sanitize(&status.version)),
         ),
+        field(term, 2, "режим:", mode_name(status.mode)),
+        field(term, 2, "работает:", &span(status.uptime_secs)),
         field(term, 2, "xray:", &xray_text(term, &status.xray)),
     ];
     match status.kill_switch {
@@ -184,7 +179,12 @@ fn subscription_lines(term: Term, sub: &SubscriptionStatus, now: u64) -> Vec<Str
     }
     let mut lines = vec![title, field(term, 4, "узлов:", &sub.nodes.to_string())];
     if let Some(used) = sub.used_bytes {
-        lines.push(field(term, 4, "трафик:", &traffic(term, used, sub.total_bytes)));
+        lines.push(field(
+            term,
+            4,
+            "трафик:",
+            &traffic(term, used, sub.total_bytes),
+        ));
     }
     if let Some(expire) = sub.expire {
         lines.push(field(term, 4, "срок:", &expiry(term, expire, now)));
@@ -750,7 +750,12 @@ mod tests {
         );
         assert_eq!(failed(&data), 1);
         assert_eq!(
-            updates(plain(), &Updates { results: Vec::new() }),
+            updates(
+                plain(),
+                &Updates {
+                    results: Vec::new()
+                }
+            ),
             "Подписок для обновления нет"
         );
     }

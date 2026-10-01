@@ -293,12 +293,16 @@ mod tests {
         };
         assert_eq!(ids.len(), 3);
         let by_subscription = resolve(&nodes, "backup").unwrap_err();
-        assert!(matches!(by_subscription, ResolveError::Ambiguous { ref ids, .. } if ids.len() == 2));
+        assert!(
+            matches!(by_subscription, ResolveError::Ambiguous { ref ids, .. } if ids.len() == 2)
+        );
     }
 
     #[test]
     fn a_long_list_of_candidates_is_cut() {
-        let nodes: Vec<Node> = (0..15).map(|index| node("main", &format!("DE-{index:02}"))).collect();
+        let nodes: Vec<Node> = (0..15)
+            .map(|index| node("main", &format!("DE-{index:02}")))
+            .collect();
         let text = resolve(&nodes, "de").unwrap_err().to_string();
         assert_eq!(text.lines().count(), 1 + MAX_LISTED + 1);
         assert!(text.ends_with("… и ещё 5"));
@@ -310,8 +314,14 @@ mod tests {
         let error = resolve(&nodes, "Токио").unwrap_err();
         assert_eq!(error, ResolveError::NotFound("Токио".to_owned()));
         assert!(error.to_string().contains("raycat nodes --all"));
-        assert!(matches!(resolve(&nodes, "  ").unwrap_err(), ResolveError::NotFound(_)));
-        assert!(matches!(resolve(&[], "x").unwrap_err(), ResolveError::NotFound(_)));
+        assert!(matches!(
+            resolve(&nodes, "  ").unwrap_err(),
+            ResolveError::NotFound(_)
+        ));
+        assert!(matches!(
+            resolve(&[], "x").unwrap_err(),
+            ResolveError::NotFound(_)
+        ));
     }
 
     #[test]

@@ -86,7 +86,10 @@ pub(crate) fn client_socket(env: &Env, root: bool) -> Result<PathBuf> {
         Ok(state) => Ok(socket_path(env, root, &state)),
         Err(error) => {
             let path = socket_path(env, root, Path::new(""));
-            if path.parent().is_some_and(|parent| !parent.as_os_str().is_empty()) {
+            if path
+                .parent()
+                .is_some_and(|parent| !parent.as_os_str().is_empty())
+            {
                 Ok(path)
             } else {
                 Err(error)

@@ -186,10 +186,7 @@ impl Client {
                 body.len()
             ));
         }
-        stream
-            .write_all(request.as_bytes())
-            .await
-            .map_err(map_io)?;
+        stream.write_all(request.as_bytes()).await.map_err(map_io)?;
         read_head(BufReader::new(stream)).await
     }
 
@@ -515,9 +512,7 @@ mod tests {
     }
 
     fn reply(status: &str, body: &str) -> Vec<Vec<u8>> {
-        vec![
-            http_response(status, &[("Content-Type", "application/json")], body).into_bytes(),
-        ]
+        vec![http_response(status, &[("Content-Type", "application/json")], body).into_bytes()]
     }
 
     const STATUS: &str = r#"{"version":"0.1.0","mode":"gateway","uptime_secs":5,"kill_switch":true,
@@ -533,7 +528,10 @@ mod tests {
         assert_eq!(status.kill_switch, Some(true));
         assert_eq!(status.node.unwrap().id, "main/NL-1");
         let request = &fake.requests()[0];
-        assert!(request.starts_with("GET /v1/status HTTP/1.1\r\n"), "{request}");
+        assert!(
+            request.starts_with("GET /v1/status HTTP/1.1\r\n"),
+            "{request}"
+        );
         assert!(request.contains("Host: raycat"));
     }
 
@@ -593,14 +591,19 @@ mod tests {
         let requests = fake.requests();
         assert!(requests[0].starts_with("POST /v1/pin HTTP/1.1\r\n"));
         assert!(requests[0].contains("Content-Type: application/json"));
-        assert!(requests[0].ends_with(r#"{"node":"main/NL-1"}"#), "{}", requests[0]);
+        assert!(
+            requests[0].ends_with(r#"{"node":"main/NL-1"}"#),
+            "{}",
+            requests[0]
+        );
         assert!(requests[1].starts_with("DELETE /v1/pin HTTP/1.1\r\n"));
         assert!(requests[1].contains("Content-Length: 0"));
     }
 
     #[tokio::test]
     async fn update_names_the_subscription_when_asked() {
-        let body = r#"{"results":[{"subscription":"main","ok":true,"message":"узлов: 12","nodes":12}]}"#;
+        let body =
+            r#"{"results":[{"subscription":"main","ok":true,"message":"узлов: 12","nodes":12}]}"#;
         let fake = fake(move |_| reply("200 OK", body));
         let client = fake.client();
         let all = client.update(None).await.unwrap();
@@ -641,7 +644,10 @@ mod tests {
         let error = Client::new(socket.clone()).status().await.unwrap_err();
         assert!(matches!(error, ClientError::NotRunning(ref path) if *path == socket));
         let text = error.to_string();
-        assert!(text.contains("не запущен") && text.contains("none.sock"), "{text}");
+        assert!(
+            text.contains("не запущен") && text.contains("none.sock"),
+            "{text}"
+        );
     }
 
     #[tokio::test]
@@ -757,7 +763,12 @@ mod tests {
 
     #[tokio::test]
     async fn an_error_on_the_event_stream_is_reported() {
-        let fake = fake(|_| reply("503 Service Unavailable", r#"{"error":"демон останавливается"}"#));
+        let fake = fake(|_| {
+            reply(
+                "503 Service Unavailable",
+                r#"{"error":"демон останавливается"}"#,
+            )
+        });
         let Err(error) = fake.client().events().await else {
             panic!("поток не должен открываться");
         };
@@ -767,7 +778,15 @@ mod tests {
     #[test]
     fn socket_path_is_shown_in_the_errors() {
         let path = Path::new("/run/raycat/raycat.sock").to_path_buf();
-        assert!(ClientError::Denied(path.clone()).to_string().contains("sudo"));
-        assert!(ClientError::NotRunning(path).to_string().contains("/run/raycat/raycat.sock"));
+        assert!(
+            ClientError::Denied(path.clone())
+                .to_string()
+                .contains("sudo")
+        );
+        assert!(
+            ClientError::NotRunning(path)
+                .to_string()
+                .contains("/run/raycat/raycat.sock")
+        );
     }
 }

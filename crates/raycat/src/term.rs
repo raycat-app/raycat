@@ -46,10 +46,7 @@ impl Term {
 
     pub(crate) fn detect(env: &Env) -> Self {
         let tty = io::stdout().is_terminal();
-        Self::new(
-            color_allowed(tty, env),
-            tty.then(|| terminal_width(env)),
-        )
+        Self::new(color_allowed(tty, env), tty.then(|| terminal_width(env)))
     }
 
     pub(crate) fn paint(self, tone: Tone, text: &str) -> String {
