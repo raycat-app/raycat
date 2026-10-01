@@ -31,3 +31,18 @@ jobs:
           subjectPattern: ^[^A-ZА-ЯЁ].+$
           subjectPatternError: |
             Описание после типа начинается со строчной буквы: «feat: автопереключение узлов».
+      - name: Без соавторов
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          found=$( {
+            gh api "repos/$REPO/pulls/$PR" --jq '.body // ""'
+            gh api "repos/$REPO/pulls/$PR/commits" --paginate --jq '.[].commit.message'
+          } | grep -i '^[[:space:]]*co-authored-by:' || true)
+          if [ -n "$found" ]; then
+            echo "::error::В описании PR или сообщениях коммитов есть запрещённые строки:"
+            printf '%s\n' "$found"
+            exit 1
+          fi
