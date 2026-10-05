@@ -78,6 +78,8 @@ pub(crate) struct RawRouting {
 pub(crate) struct RawXray {
     pub(crate) path: Option<String>,
     pub(crate) memory_limit: Option<String>,
+    pub(crate) tcp_congestion: Option<String>,
+    pub(crate) xhttp_connections: Option<i64>,
 }
 
 #[derive(Default, Deserialize)]

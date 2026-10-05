@@ -82,14 +82,14 @@
           "shortId": "0000000000000000",
           "spiderX": "/"
         },
-        "sockopt": {"dialerProxy": "node-001-x-fragment", "domainStrategy": "UseIPv4", "mark": 255}
+        "sockopt": {"dialerProxy": "node-001-x-fragment", "domainStrategy": "UseIPv4", "mark": 255, "tcpCongestion": "bbr"}
       }
     },
     {
       "tag": "node-001-x-fragment",
       "protocol": "freedom",
       "settings": {"fragment": {"packets": "tlshello", "length": "100-200", "interval": "10-20"}},
-      "streamSettings": {"sockopt": {"domainStrategy": "UseIPv4", "mark": 255}}
+      "streamSettings": {"sockopt": {"domainStrategy": "UseIPv4", "mark": 255, "tcpCongestion": "bbr"}}
     },
     {
       "tag": "node-002-main",
@@ -107,8 +107,13 @@
         "network": "xhttp",
         "security": "tls",
         "tlsSettings": {"serverName": "xhttp.example.com", "fingerprint": "chrome", "alpn": ["h2"]},
-        "xhttpSettings": {"path": "/", "host": "xhttp.example.com", "mode": "auto"},
-        "sockopt": {"dialerProxy": "node-002-x-hop", "domainStrategy": "UseIPv4", "mark": 255}
+        "xhttpSettings": {
+          "path": "/",
+          "host": "xhttp.example.com",
+          "mode": "auto",
+          "xmux": {"maxConnections": 4, "hMaxRequestTimes": "600-900", "hMaxReusableSecs": "1800-3000"}
+        },
+        "sockopt": {"dialerProxy": "node-002-x-hop", "domainStrategy": "UseIPv4", "mark": 255, "tcpCongestion": "bbr"}
       }
     },
     {
@@ -133,7 +138,7 @@
           "shortId": "0000000000000000",
           "spiderX": "/"
         },
-        "sockopt": {"domainStrategy": "UseIPv4", "mark": 255}
+        "sockopt": {"domainStrategy": "UseIPv4", "mark": 255, "tcpCongestion": "bbr"}
       }
     },
     {
@@ -158,7 +163,7 @@
         "network": "tcp",
         "security": "tls",
         "tlsSettings": {"serverName": "example.com", "fingerprint": "chrome"},
-        "sockopt": {"dialerProxy": "node-004-x-relay", "domainStrategy": "UseIPv4", "mark": 255}
+        "sockopt": {"dialerProxy": "node-004-x-relay", "domainStrategy": "UseIPv4", "mark": 255, "tcpCongestion": "bbr"}
       }
     },
     {
@@ -183,7 +188,7 @@
           "shortId": "0000000000000000",
           "spiderX": "/"
         },
-        "sockopt": {"domainStrategy": "UseIPv4", "mark": 255}
+        "sockopt": {"domainStrategy": "UseIPv4", "mark": 255, "tcpCongestion": "bbr"}
       }
     },
     {"tag": "direct", "protocol": "freedom", "settings": {}, "streamSettings": {"sockopt": {"mark": 255}}},

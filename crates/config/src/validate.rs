@@ -8,7 +8,7 @@ use crate::error::{Error, Problems};
 use crate::link::{self, Scheme};
 use crate::model::{
     App, Config, Device, Dns, LogLevel, Logging, Mode, Pin, Platform, Routing, Secret, Selection,
-    Subscription, Xray,
+    Subscription, TcpCongestion, Xray,
 };
 use crate::pattern::Pattern;
 use crate::raw::{Raw, RawDevice, RawDns, RawLog, RawMode, RawSelection, RawSubscription, RawXray};
@@ -31,6 +31,9 @@ const RETURN_DELAY_RANGE: RangeInclusive<Duration> =
     Duration::ZERO..=Duration::from_secs(24 * 3_600);
 const FAILURES_RANGE: RangeInclusive<u32> = 1..=20;
 const MEMORY_RANGE: RangeInclusive<u64> = (16 << 20)..=(16 << 30);
+const XHTTP_CONNECTIONS_RANGE: RangeInclusive<u8> = 1..=16;
+// Имя алгоритма в ядре хранится в 16 байтах вместе с завершающим нулём.
+const MAX_CONGESTION_CHARS: usize = 15;
 
 const DEFAULT_CHECK_URL: &str = "https://www.gstatic.com/generate_204";
 const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_secs(30);
@@ -39,7 +42,7 @@ const DEFAULT_SWITCH_GAIN: Duration = Duration::from_millis(150);
 const DEFAULT_RETURN_DELAY: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_LISTEN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 7890);
 const DEFAULT_XRAY_PATH: &str = "/usr/libexec/raycat/xray";
-const DEFAULT_MEMORY_LIMIT: u64 = 48 << 20;
+const DEFAULT_MEMORY_LIMIT: u64 = 96 << 20;
 
 pub(crate) const APP_HINT: &str = "допустимо: happ или incy";
 pub(crate) const PLATFORM_HINT: &str = "допустимо: windows или android";
@@ -47,6 +50,7 @@ pub(crate) const MODE_HINT: &str = "допустимо: proxy или gateway";
 pub(crate) const LISTEN_HINT: &str = "ожидается адрес вида 127.0.0.1:7890 или [::1]:7890";
 pub(crate) const LEVEL_HINT: &str = "допустимо: error, warn, info или debug";
 pub(crate) const BOOL_HINT: &str = "ожидается true или false (также 1/0, yes/no, on/off)";
+const CONGESTION_HINT: &str = "допустимо: auto, off или имя алгоритма ядра (bbr, cubic): латиница, цифры, «-» и «_», до 15 символов";
 const IP_HINT: &str = "ожидается IP-адрес, например 1.1.1.1";
 const DURATION_HINT: &str = "ожидается длительность вроде 500ms, 30s, 5m, 6h или 1d";
 
@@ -103,6 +107,20 @@ pub(crate) fn parse_bool(value: &str) -> Option<bool> {
         "1" | "true" | "yes" | "on" => Some(true),
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,
+    }
+}
+
+fn parse_congestion(value: &str) -> Option<TcpCongestion> {
+    let name = value.trim().to_ascii_lowercase();
+    match name.as_str() {
+        "auto" => Some(TcpCongestion::Auto),
+        "off" => Some(TcpCongestion::Off),
+        _ => (!name.is_empty()
+            && name.len() <= MAX_CONGESTION_CHARS
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'_')))
+        .then_some(TcpCongestion::Algorithm(name)),
     }
 }
 
@@ -563,7 +581,7 @@ fn xray(raw: &RawXray, p: &mut Problems) -> Xray {
             None => {
                 p.add(
                     "xray.memory_limit",
-                    "ожидается размер вроде 48MiB (единицы: B, KiB, MiB, GiB)",
+                    "ожидается размер вроде 96MiB (единицы: B, KiB, MiB, GiB)",
                 );
                 DEFAULT_MEMORY_LIMIT
             }
@@ -581,9 +599,38 @@ fn xray(raw: &RawXray, p: &mut Problems) -> Xray {
             }
         },
     };
+    let tcp_congestion = match raw.tcp_congestion.as_deref() {
+        None => TcpCongestion::Auto,
+        Some(value) => parsed(
+            "xray.tcp_congestion",
+            value,
+            parse_congestion,
+            CONGESTION_HINT,
+            p,
+        )
+        .unwrap_or(TcpCongestion::Auto),
+    };
+    let xhttp_connections = raw.xhttp_connections.and_then(|value| {
+        let valid = u8::try_from(value)
+            .ok()
+            .filter(|value| XHTTP_CONNECTIONS_RANGE.contains(value));
+        if valid.is_none() {
+            p.add(
+                "xray.xhttp_connections",
+                format!(
+                    "должно быть целым числом от {} до {} (или не задано)",
+                    XHTTP_CONNECTIONS_RANGE.start(),
+                    XHTTP_CONNECTIONS_RANGE.end()
+                ),
+            );
+        }
+        valid
+    });
     Xray {
         path: PathBuf::from(path),
         memory_limit,
+        tcp_congestion,
+        xhttp_connections,
     }
 }
 

@@ -135,7 +135,7 @@ mod tests {
             (&config.subscriptions[0], nodes.as_slice()),
             (&config.subscriptions[1], &nodes[..1]),
         ];
-        compile_config(config, &inputs, 10_085).unwrap().tags
+        compile_config(config, &inputs, 10_085, None).unwrap().tags
     }
 
     #[test]

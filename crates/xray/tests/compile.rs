@@ -510,11 +510,151 @@ fn proxy_on_a_concrete_address_tells_it_to_udp_clients() {
 }
 
 #[test]
-fn log_level_is_warning() {
+fn log_is_quiet_and_has_no_access_log() {
+    for mode in [proxy_mode(), gateway_mode()] {
+        assert_eq!(
+            build(mode).config["log"],
+            json!({"loglevel": "warning", "access": "none"})
+        );
+    }
+}
+
+fn tuned_settings(mode: Mode) -> Settings {
+    let mut settings = Settings::new(mode, 10085);
+    settings.tcp_congestion = Some("bbr".to_owned());
+    settings.xhttp_connections = Some(4);
+    settings
+}
+
+fn build_tuned(mode: Mode) -> Compiled {
+    compile(&subscriptions(), &tuned_settings(mode)).unwrap()
+}
+
+fn sockopt<'a>(config: &'a Value, tag: &str) -> &'a Value {
+    &outbound(config, tag)["streamSettings"]["sockopt"]
+}
+
+#[test]
+fn nothing_is_tuned_by_default() {
+    let compiled = build(proxy_mode());
+    let text = serde_json::to_string(&compiled.config).unwrap();
+
+    assert!(!text.contains("tcpCongestion"));
+    assert!(!text.contains("xmux"));
+    assert!(compiled.quic);
+}
+
+#[test]
+fn bbr_goes_to_tcp_node_outbounds_only() {
+    let config = build_tuned(proxy_mode()).config;
+
+    for tag in MAIN_TAGS
+        .iter()
+        .filter(|tag| **tag != "node-003-main")
+        .chain(&["node-001-x-fragment", "node-002-x-hop", "node-004-x-relay"])
+    {
+        assert_eq!(sockopt(&config, tag)["tcpCongestion"], "bbr", "{tag}");
+    }
+    assert!(sockopt(&config, "node-003-main")["tcpCongestion"].is_null());
+    for tag in ["direct", "block", "dns-out"] {
+        let text = serde_json::to_string(outbound(&config, tag)).unwrap();
+        assert!(!text.contains("tcpCongestion"), "{tag}");
+    }
+}
+
+#[test]
+fn providers_congestion_is_not_overwritten() {
+    let mut vless = vless_reality("proxy", "reality.example.com");
+    vless["streamSettings"]["sockopt"] = json!({"tcpCongestion": "cubic"});
+    let subs = vec![Subscription {
+        id: "s".to_owned(),
+        nodes: vec![node("свой", vec![vless])],
+    }];
+    let config = compile(&subs, &tuned_settings(proxy_mode()))
+        .unwrap()
+        .config;
+
+    assert_eq!(sockopt(&config, "node-001-main")["tcpCongestion"], "cubic");
+}
+
+#[test]
+fn xmux_is_added_to_xhttp_nodes_without_one() {
+    let config = build_tuned(proxy_mode()).config;
+
     assert_eq!(
-        build(proxy_mode()).config["log"],
-        json!({"loglevel": "warning"})
+        outbound(&config, "node-002-main")["streamSettings"]["xhttpSettings"],
+        json!({
+            "path": "/",
+            "host": "xhttp.example.com",
+            "mode": "auto",
+            "xmux": {"maxConnections": 4, "hMaxRequestTimes": "600-900", "hMaxReusableSecs": "1800-3000"}
+        })
     );
+    for tag in ["node-001-main", "node-003-main", "node-004-main"] {
+        let stream = &outbound(&config, tag)["streamSettings"];
+        assert!(stream.get("xhttpSettings").is_none(), "{tag}");
+    }
+}
+
+#[test]
+fn providers_xmux_is_kept() {
+    let mut hop = vless_xhttp_through_hop();
+    hop[0]["streamSettings"]["xhttpSettings"]["xmux"] = json!({"maxConcurrency": "16-32"});
+    let subs = vec![Subscription {
+        id: "s".to_owned(),
+        nodes: vec![node("свой xmux", hop)],
+    }];
+    let config = compile(&subs, &tuned_settings(proxy_mode()))
+        .unwrap()
+        .config;
+
+    assert_eq!(
+        outbound(&config, "node-001-main")["streamSettings"]["xhttpSettings"]["xmux"],
+        json!({"maxConcurrency": "16-32"})
+    );
+}
+
+#[test]
+fn xhttp_over_h3_gets_xmux_but_no_bbr() {
+    let mut h3 = vless_xhttp_through_hop();
+    h3[0]["streamSettings"]["tlsSettings"]["alpn"] = json!(["h3"]);
+    let subs = vec![Subscription {
+        id: "s".to_owned(),
+        nodes: vec![node("h3", h3)],
+    }];
+    let compiled = compile(&subs, &tuned_settings(proxy_mode())).unwrap();
+
+    let main = outbound(&compiled.config, "node-001-main");
+    assert!(main["streamSettings"]["sockopt"]["tcpCongestion"].is_null());
+    assert_eq!(
+        main["streamSettings"]["xhttpSettings"]["xmux"]["maxConnections"],
+        4
+    );
+    assert!(compiled.quic);
+}
+
+#[test]
+fn quic_flag_follows_udp_transports() {
+    let tcp_only = vec![Subscription {
+        id: "s".to_owned(),
+        nodes: vec![node(
+            "tcp",
+            vec![vless_reality("proxy", "reality.example.com")],
+        )],
+    }];
+    let settings = Settings::new(proxy_mode(), 10085);
+    assert!(!compile(&tcp_only, &settings).unwrap().quic);
+
+    let with_hysteria = vec![Subscription {
+        id: "s".to_owned(),
+        nodes: vec![node("hy2", vec![hysteria2()])],
+    }];
+    assert!(compile(&with_hysteria, &settings).unwrap().quic);
+}
+
+#[test]
+fn golden_tuned_config() {
+    assert_golden("tuned.json", &build_tuned(gateway_mode()).config);
 }
 
 #[test]

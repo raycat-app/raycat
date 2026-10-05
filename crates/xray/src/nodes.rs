@@ -160,7 +160,7 @@ fn rewrite(
 
 /// Выполняет `f` над объектом `map[key]`; отсутствующее или не объект значение
 /// заменяется пустым объектом (данные подписки недоверенные).
-fn with_object<R>(
+pub(crate) fn with_object<R>(
     map: &mut Map<String, Value>,
     key: &str,
     f: impl FnOnce(&mut Map<String, Value>) -> R,

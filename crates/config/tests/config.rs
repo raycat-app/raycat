@@ -5,7 +5,9 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use raycat_config::{App, Config, DEFAULT_UPDATE_INTERVAL, Env, Error, LogLevel, Mode, Platform};
+use raycat_config::{
+    App, Config, DEFAULT_UPDATE_INTERVAL, Env, Error, LogLevel, Mode, Platform, TcpCongestion,
+};
 
 const FULL: &str = r#"
 [device]
@@ -56,6 +58,8 @@ provider = true
 [xray]
 path = "/opt/xray/xray"
 memory_limit = "64MiB"
+tcp_congestion = "Cubic"
+xhttp_connections = 4
 
 [log]
 level = "debug"
@@ -169,6 +173,11 @@ fn full_example() {
     assert!(config.routing.provider);
     assert_eq!(config.xray.path, PathBuf::from("/opt/xray/xray"));
     assert_eq!(config.xray.memory_limit, 64 << 20);
+    assert_eq!(
+        config.xray.tcp_congestion,
+        TcpCongestion::Algorithm("cubic".to_owned())
+    );
+    assert_eq!(config.xray.xhttp_connections, Some(4));
     assert_eq!(config.log.level, LogLevel::Debug);
 }
 
@@ -209,8 +218,75 @@ fn defaults() {
     );
     assert!(!config.routing.provider);
     assert_eq!(config.xray.path, PathBuf::from("/usr/libexec/raycat/xray"));
-    assert_eq!(config.xray.memory_limit, 48 << 20);
+    assert_eq!(config.xray.memory_limit, 96 << 20);
+    assert_eq!(config.xray.tcp_congestion, TcpCongestion::Auto);
+    assert_eq!(config.xray.xhttp_connections, None);
     assert_eq!(config.log.level, LogLevel::Info);
+}
+
+#[test]
+fn tcp_congestion_values() {
+    let cases = [
+        ("auto", TcpCongestion::Auto),
+        ("OFF", TcpCongestion::Off),
+        (" Auto ", TcpCongestion::Auto),
+        ("bbr", TcpCongestion::Algorithm("bbr".to_owned())),
+        ("BBR", TcpCongestion::Algorithm("bbr".to_owned())),
+        ("my_cc-2", TcpCongestion::Algorithm("my_cc-2".to_owned())),
+        (
+            "abcdefghijklmno",
+            TcpCongestion::Algorithm("abcdefghijklmno".to_owned()),
+        ),
+    ];
+    for (value, expected) in cases {
+        let config = parse(&format!("{OK_SUB}\n[xray]\ntcp_congestion = \"{value}\"\n"));
+        assert_eq!(config.xray.tcp_congestion, expected, "{value}");
+    }
+}
+
+#[test]
+fn xhttp_connections_bounds_are_inclusive() {
+    for (value, expected) in [(1, 1), (8, 8), (16, 16)] {
+        let config = parse(&format!("{OK_SUB}\n[xray]\nxhttp_connections = {value}\n"));
+        assert_eq!(config.xray.xhttp_connections, Some(expected));
+    }
+}
+
+#[test]
+fn performance_option_errors_are_in_russian_and_name_the_field() {
+    let cases = [
+        ("tcp_congestion = \"\"", "xray.tcp_congestion"),
+        ("tcp_congestion = \"bbr!\"", "xray.tcp_congestion"),
+        (
+            "tcp_congestion = \"abcdefghijklmnop\"",
+            "xray.tcp_congestion",
+        ),
+        ("tcp_congestion = \"bbr cubic\"", "xray.tcp_congestion"),
+        ("xhttp_connections = 0", "xray.xhttp_connections"),
+        ("xhttp_connections = 17", "xray.xhttp_connections"),
+        ("xhttp_connections = -1", "xray.xhttp_connections"),
+        ("xhttp_connections = 300", "xray.xhttp_connections"),
+    ];
+    for (line, field) in cases {
+        let list = problems(&format!("{OK_SUB}\n[xray]\n{line}\n"));
+        assert_eq!(list.len(), 1, "{line}: {list:?}");
+        assert!(has(&list, field), "{line}: {list:?}");
+    }
+    let list = problems(&format!("{OK_SUB}\n[xray]\nxhttp_connections = 0\n"));
+    assert!(list[0].contains("от 1 до 16"), "{list:?}");
+    let list = problems(&format!("{OK_SUB}\n[xray]\ntcp_congestion = \"x!\"\n"));
+    assert!(list[0].contains("допустимо"), "{list:?}");
+}
+
+#[test]
+fn xhttp_connections_must_be_a_number() {
+    assert!(
+        Config::from_toml_str(
+            &format!("{OK_SUB}\n[xray]\nxhttp_connections = \"4\"\n"),
+            &Env::new()
+        )
+        .is_err()
+    );
 }
 
 #[test]
