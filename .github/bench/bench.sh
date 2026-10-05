@@ -2,7 +2,8 @@
 # Бенчмарк версий xray на одном раннере. Клиент (socks), сервер (vless+reality и
 # shadowsocks 2022), сайт и TLS-заглушка для reality работают на этой же машине.
 #
-#   VERSIONS="26.3.27 26.9.9" SIZE_MIB=500 OUT_DIR=bench-out bash .github/bench/bench.sh
+#   VERSIONS="26.3.27 26.9.30" SIZE_MIB=500 OUT_DIR=bench-out bash .github/bench/bench.sh
+#   XRAY_BUILD=noaes NOAES_VERSION=26.9.30 NOAES_BIN=путь/к/xray ...  (arm64: добавляет 26.9.30-noaes)
 #   bash .github/bench/bench.sh summary bench-out [другой-каталог ...]
 #
 # Версии замеряются вперемешку: сначала по одному скачиванию у каждой, потом
@@ -60,6 +61,25 @@ case "$(uname -m)" in
   *) fail "неподдерживаемая архитектура: $(uname -m)" ;;
 esac
 
+# Сборка для процессоров без AES есть только на arm64: к версиям добавляется
+# <NOAES_VERSION>-noaes, бинарник берётся из NOAES_BIN. На других архитектурах
+# замеряются только релизные версии.
+noaes_label=
+case "${XRAY_BUILD:-release}" in
+  release) ;;
+  noaes)
+    if [ "$arch" = aarch64 ]; then
+      [[ ${NOAES_VERSION:-} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "не задана NOAES_VERSION"
+      [ -x "${NOAES_BIN:-}" ] || fail "NOAES_BIN не указывает на исполняемый файл"
+      noaes_label="$NOAES_VERSION-noaes"
+      vers+=("$noaes_label")
+    else
+      echo "сборки noaes для $arch нет, замеряются только релизные версии" >&2
+    fi
+    ;;
+  *) fail "неизвестная сборка xray: ${XRAY_BUILD}" ;;
+esac
+
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
 work=$(mktemp -d)
@@ -110,12 +130,16 @@ fetch() {
   local version=$1 dir="$work/xray-$1" base want
   base="https://github.com/XTLS/Xray-core/releases/download/v$version"
   mkdir -p "$dir"
-  curl -fsSL --retry 3 -o "$dir/$archive" "$base/$archive"
-  curl -fsSL --retry 3 -o "$dir/$archive.dgst" "$base/$archive.dgst"
-  want=$(awk -F= 'toupper($1) ~ /^SHA(2-)?256/ {gsub(/[[:space:]]/, "", $2); print tolower($2); exit}' "$dir/$archive.dgst")
-  [ "${#want}" -eq 64 ] || fail "в $archive.dgst для $version нет sha256"
-  echo "$want  $dir/$archive" | sha256sum -c - >/dev/null || fail "sha256 $archive $version не совпал с .dgst"
-  unzip -q "$dir/$archive" xray -d "$dir"
+  if [ "$version" = "$noaes_label" ]; then
+    cp "$NOAES_BIN" "$dir/xray"
+  else
+    curl -fsSL --retry 3 -o "$dir/$archive" "$base/$archive"
+    curl -fsSL --retry 3 -o "$dir/$archive.dgst" "$base/$archive.dgst"
+    want=$(awk -F= 'toupper($1) ~ /^SHA(2-)?256/ {gsub(/[[:space:]]/, "", $2); print tolower($2); exit}' "$dir/$archive.dgst")
+    [ "${#want}" -eq 64 ] || fail "в $archive.dgst для $version нет sha256"
+    echo "$want  $dir/$archive" | sha256sum -c - >/dev/null || fail "sha256 $archive $version не совпал с .dgst"
+    unzip -q "$dir/$archive" xray -d "$dir"
+  fi
   "$dir/xray" version >"$dir/version.txt"
   head -n 1 "$dir/version.txt"
 }
@@ -286,6 +310,9 @@ model=$(lscpu | awk -F': *' '/^Model name/ {print $2; exit}')
 {
   printf '%s\n' "- ${arch}: ${model:-процессор неизвестен}, ядер $(nproc), ядро $(uname -r), ${size} МиБ на скачивание, ${repeats} повтора"
   [ -z "${GODEBUG:-}" ] || printf '%s\n' "- GODEBUG=${GODEBUG} (у xray, сайта и curl)"
+  for v in "${vers[@]}"; do
+    printf '%s\n' "- ${v}: $(head -n 1 "$work/xray-$v/version.txt")"
+  done
 } >"$out/info.md"
 
 bash "$0" summary "$out"

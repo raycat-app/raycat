@@ -8,7 +8,12 @@ on:
     inputs:
       versions:
         description: Версии xray через пробел
-        default: "26.3.27 26.9.9"
+        default: "26.3.27 26.9.30"
+      xray_build:
+        description: "noaes — к версиям добавляется сборка xray для процессоров без AES из versions.toml (только arm64)"
+        type: choice
+        options: [release, noaes]
+        default: release
       size_mib:
         description: Объём одного скачивания, МиБ
         default: "500"
@@ -33,14 +38,26 @@ jobs:
           - {arch: arm64, runner: ubuntu-24.04-arm}
     env:
       VERSIONS: ${{ inputs.versions }}
+      XRAY_BUILD: ${{ inputs.xray_build }}
       SIZE_MIB: ${{ inputs.size_mib }}
-      GODEBUG: ${{ inputs.godebug }}
       OUT_DIR: bench-out
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Сборка xray для процессоров без AES
+        id: noaes
+        if: ${{ inputs.xray_build == 'noaes' && matrix.arch == 'arm64' }}
+        run: |
+          bash .github/build/docker-args.sh aarch64 Xray-linux-arm64-v8a.zip noaes > "$RUNNER_TEMP/docker-args.txt"
+          mapfile -t args < "$RUNNER_TEMP/docker-args.txt"
+          docker build "${args[@]}" --target xray-noaes --output "type=local,dest=$RUNNER_TEMP/noaes" .
+          echo "version=$(sed -n 's/^version = "\(.*\)"/\1/p' versions.toml)" >> "$GITHUB_OUTPUT"
       - name: Замер
+        env:
+          NOAES_BIN: ${{ runner.temp }}/noaes/out/xray
+          NOAES_VERSION: ${{ steps.noaes.outputs.version }}
+          GODEBUG: ${{ inputs.godebug }}
         run: bash .github/bench/bench.sh
       - name: Сводка
         run: bash .github/bench/bench.sh summary "$OUT_DIR" >> "$GITHUB_STEP_SUMMARY"
