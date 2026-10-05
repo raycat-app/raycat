@@ -197,7 +197,7 @@ jobs:
           if-no-files-found: error
 
   image:
-    name: Образ Docker (${{ matrix.arch }})
+    name: Образ Docker (${{ matrix.arch }}${{ matrix.suffix }})
     needs: build
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -207,19 +207,31 @@ jobs:
       matrix:
         include:
           - arch: amd64
+            suffix: ""
             runner: ubuntu-24.04
             target: x86_64-unknown-linux-musl
             xray_key: x86_64
             xray_archive: Xray-linux-64.zip
+            xray_build: release
           - arch: arm64
+            suffix: ""
             runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
             xray_key: aarch64
             xray_archive: Xray-linux-arm64-v8a.zip
+            xray_build: release
+          - arch: arm64
+            suffix: -noaes
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            xray_key: aarch64
+            xray_archive: Xray-linux-arm64-v8a.zip
+            xray_build: noaes
     env:
-      ARCH: ${{ matrix.arch }}
+      ARCH: ${{ matrix.arch }}${{ matrix.suffix }}
       XRAY_KEY: ${{ matrix.xray_key }}
       XRAY_ARCHIVE: ${{ matrix.xray_archive }}
+      XRAY_BUILD: ${{ matrix.xray_build }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -230,18 +242,24 @@ jobs:
           path: dist/${{ matrix.arch }}
       - name: Сборка образа
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' versions.toml)
-          sha256=$(sed -n "s/^${XRAY_KEY} = \"\(.*\)\"/\1/p" versions.toml)
-          test -n "$version" && test -n "$sha256"
-          docker build \
-            --build-arg "XRAY_VERSION=${version}" \
-            --build-arg "XRAY_ARCHIVE=${XRAY_ARCHIVE}" \
-            --build-arg "XRAY_SHA256=${sha256}" \
-            --tag raycat:ci .
+          bash .github/build/docker-args.sh "$XRAY_KEY" "$XRAY_ARCHIVE" "$XRAY_BUILD" > "$RUNNER_TEMP/docker-args.txt"
+          mapfile -t args < "$RUNNER_TEMP/docker-args.txt"
+          docker build "${args[@]}" --tag raycat:ci .
       - name: Дымовая проверка
         run: |
           docker run --rm raycat:ci --version
-          docker run --rm --entrypoint /usr/libexec/raycat/xray raycat:ci version
+          version_output=$(docker run --rm --entrypoint /usr/libexec/raycat/xray raycat:ci version)
+          echo "$version_output"
+          if [ "$XRAY_BUILD" = noaes ]; then
+            go_version=$(sed -n 's/^go_version = "\(.*\)"/\1/p' versions.toml)
+            grep -qF "(go${go_version} " <<<"$version_output"
+          fi
+          for config in crates/xray/tests/golden/*.json; do
+            echo "::group::${config}"
+            docker run --rm -v "$PWD/crates/xray/tests/golden:/golden:ro" \
+              --entrypoint /usr/libexec/raycat/xray raycat:ci run -test -c "/golden/$(basename "$config")"
+            echo "::endgroup::"
+          done
           docker run --rm --entrypoint nft raycat:ci --version
           docker run --rm --entrypoint ip raycat:ci -V
           volumes=$(docker image inspect -f '{{json .Config.Volumes}}' raycat:ci)
@@ -255,10 +273,48 @@ jobs:
         run: docker save raycat:ci | gzip -9 > "$RUNNER_TEMP/image-${ARCH}.tar.gz"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: image-${{ matrix.arch }}
-          path: ${{ runner.temp }}/image-${{ matrix.arch }}.tar.gz
+          name: image-${{ matrix.arch }}${{ matrix.suffix }}
+          path: ${{ runner.temp }}/image-${{ matrix.arch }}${{ matrix.suffix }}.tar.gz
           retention-days: 7
           compression-level: 0
+          if-no-files-found: error
+
+  xray-noaes-armv7:
+    name: xray для процессоров без AES (armv7)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: qemu
+        run: sudo apt-get update -q && sudo apt-get install -y -q qemu-user-static
+      - name: Сборка
+        run: |
+          bash .github/build/docker-args.sh armv7 Xray-linux-arm32-v7a.zip noaes > "$RUNNER_TEMP/docker-args.txt"
+          mapfile -t args < "$RUNNER_TEMP/docker-args.txt"
+          docker build --platform linux/arm/v7 "${args[@]}" --target xray-noaes --output type=local,dest=out .
+      - name: Проверка
+        run: |
+          bin=out/out/xray
+          file "$bin"
+          ls -l "$bin"
+          file "$bin" | grep -q 'ELF 32-bit.*ARM, EABI5'
+          version_output=$(qemu-arm-static "$bin" version)
+          echo "$version_output"
+          go_version=$(sed -n 's/^go_version = "\(.*\)"/\1/p' versions.toml)
+          grep -qF "(go${go_version} " <<<"$version_output"
+          for config in crates/xray/tests/golden/*.json; do
+            echo "::group::${config}"
+            qemu-arm-static "$bin" run -test -c "$config"
+            echo "::endgroup::"
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: xray-noaes-armv7
+          path: out/out/xray
+          retention-days: 7
           if-no-files-found: error
 
   xray-config:
@@ -379,7 +435,7 @@ jobs:
   result:
     name: Итог
     if: ${{ always() }}
-    needs: [lint, lockfile, test, msrv, deny, workflows, build, image, xray-config, xray-api, e2e-proxy, nftables, e2e-gateway]
+    needs: [lint, lockfile, test, msrv, deny, workflows, build, image, xray-noaes-armv7, xray-config, xray-api, e2e-proxy, nftables, e2e-gateway]
     runs-on: ubuntu-24.04
     permissions: {}
     steps:
