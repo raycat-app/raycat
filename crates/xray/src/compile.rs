@@ -6,6 +6,7 @@ use std::net::IpAddr;
 use serde_json::{Value, json};
 
 use crate::nodes::compile_node;
+use crate::tuning::{self, Tuning};
 use crate::{Mode, Node, Settings};
 
 const PRIVATE_NETWORKS: [&str; 7] = [
@@ -71,6 +72,8 @@ pub struct Compiled {
     pub config: Value,
     pub tags: TagTable,
     pub skipped: Vec<SkippedNode>,
+    /// В конфиге есть узлы на UDP-транспортах (hysteria, XHTTP поверх h3, mKCP).
+    pub quic: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,15 +112,25 @@ pub fn compile(
     let mut seen_hosts = HashSet::new();
     let mut entries = Vec::new();
     let mut skipped = Vec::new();
+    let mut quic = false;
+    let tuning = Tuning {
+        tcp_congestion: settings.tcp_congestion.as_deref(),
+        xhttp_connections: settings.xhttp_connections,
+    };
     for subscription in subscriptions {
         for node in &subscription.nodes {
-            let Some(compiled) = compile_node(entries.len() + 1, node, mark) else {
+            let Some(mut compiled) = compile_node(entries.len() + 1, node, mark) else {
                 skipped.push(SkippedNode {
                     subscription: subscription.id.clone(),
                     name: node.name.clone(),
                 });
                 continue;
             };
+            for outbound in &mut compiled.outbounds {
+                if let Some(outbound) = outbound.as_object_mut() {
+                    quic |= tuning::apply(outbound, &tuning);
+                }
+            }
             for host in compiled.hosts {
                 if seen_hosts.insert(host.clone()) {
                     hosts.push(host);
@@ -142,7 +155,7 @@ pub fn compile(
 
     let api_listen = format!("127.0.0.1:{}", settings.api_port);
     let config = json!({
-        "log": {"loglevel": "warning"},
+        "log": {"loglevel": "warning", "access": "none"},
         "api": {"tag": "api", "listen": api_listen, "services": API_SERVICES},
         "stats": {},
         "policy": {"system": {"statsOutboundUplink": true, "statsOutboundDownlink": true}},
@@ -171,6 +184,7 @@ pub fn compile(
         config,
         tags: TagTable { entries },
         skipped,
+        quic,
     })
 }
 

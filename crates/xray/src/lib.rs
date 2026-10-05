@@ -2,6 +2,7 @@ mod compile;
 mod node;
 mod nodes;
 mod settings;
+mod tuning;
 
 pub use compile::{
     CompileError, Compiled, NodeEntry, SkippedNode, Subscription, TagTable, compile,

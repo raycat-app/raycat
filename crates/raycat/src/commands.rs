@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::daemon::free_port;
 use crate::plan;
 use crate::store::Store;
+use crate::tuning;
 use crate::updater::{self, Source};
 use crate::util::{format_bytes, format_date, format_duration, format_time, now_unix, sanitize};
 use crate::xray;
@@ -61,12 +62,16 @@ pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
         .zip(&cached)
         .map(|(subscription, nodes)| (subscription, nodes.as_slice()))
         .collect();
-    let plan = plan::compile_config(config, &inputs, free_port()?)?;
+    let congestion = tuning::congestion(&config.xray.tcp_congestion);
+    let plan = plan::compile_config(config, &inputs, free_port()?, congestion.algorithm())?;
     say!(
         "Конфиг xray собран: узлов {}, пропущено (xray не поддерживает): {}",
         plan.nodes,
         plan.skipped
     );
+    if let Some(line) = congestion.describe() {
+        say!("{line}");
+    }
     store.write_file(CHECK_CONFIG, &plan.json)?;
     let path = store.path(CHECK_CONFIG);
     let tested = xray::test_config(&config.xray.path, &path);

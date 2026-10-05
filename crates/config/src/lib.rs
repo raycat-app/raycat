@@ -14,6 +14,6 @@ pub use error::{Error, Problem};
 pub use load::Env;
 pub use model::{
     App, Config, DEFAULT_UPDATE_INTERVAL, Device, Dns, LogLevel, Logging, Mode, Pin, Platform,
-    Routing, Secret, Selection, Subscription, Xray,
+    Routing, Secret, Selection, Subscription, TcpCongestion, Xray,
 };
 pub use pattern::Pattern;
