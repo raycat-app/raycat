@@ -16,8 +16,8 @@ jobs:
     steps:
       - id: meta
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
-      # Squash-слияние берёт сообщение коммита из заголовка PR, а Dependabot пишет его по-английски.
       - name: Заголовок по-русски
+        id: title
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.html_url }}
@@ -31,9 +31,15 @@ jobs:
             title="chore(deps): обновить $NAMES"
           fi
           gh pr edit "$PR" --title "$title"
+          printf 'title=%s\n' "$title" >> "$GITHUB_OUTPUT"
       - name: Автослияние после зелёного CI
         if: ${{ steps.meta.outputs.update-type != 'version-update:semver-major' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge "$PR" --auto --squash
+          NUMBER: ${{ github.event.pull_request.number }}
+          TITLE: ${{ steps.title.outputs.title }}
+        run: |
+          gh pr merge "$PR" --auto --squash \
+            --subject "$TITLE (#$NUMBER)" \
+            --body "Обновление зависимости."
