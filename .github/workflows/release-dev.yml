@@ -131,9 +131,12 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - name: skopeo
+        run: command -v skopeo || { sudo apt-get update -q && sudo apt-get install -y -q skopeo; }
       - name: Публикация образов
         id: push
         env:
+          INSECURE_REGISTRY: ${{ inputs.dry_run }}
           REPO: ${{ steps.registry.outputs.name }}
           ROLLING: dev
           IMAGES: images

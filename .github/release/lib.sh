@@ -31,3 +31,22 @@ fingerprint() {
     find . -printf '%m %y %p\n' | LC_ALL=C sort
   )
 }
+
+# digest_of <образ>: digest манифеста по тегу или ссылке.
+digest_of() {
+  echo "sha256:$(docker buildx imagetools inspect --raw "$1" | sha256sum | cut -d' ' -f1)"
+}
+
+# retag <репозиторий> <digest> <тег>...: новые теги на тот же манифест без изменения digest.
+# imagetools create заворачивает одиночный образ в новый список, поэтому копирует skopeo.
+retag() {
+  local repo=$1 digest=$2 tag
+  shift 2
+  local args=(--all --preserve-digests)
+  if [ "${INSECURE_REGISTRY:-}" = true ]; then
+    args+=(--src-tls-verify=false --dest-tls-verify=false)
+  fi
+  for tag in "$@"; do
+    skopeo copy "${args[@]}" "docker://$repo@$digest" "docker://$repo:$tag"
+  done
+}

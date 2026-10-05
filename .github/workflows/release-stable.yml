@@ -124,6 +124,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - name: skopeo
+        run: command -v skopeo || { sudo apt-get update -q && sudo apt-get install -y -q skopeo; }
       - name: Образы
         run: |
           REGISTRY="ghcr.io/${REPOSITORY,,}" REPO="$REPOSITORY" DEV_VERSION="${DEV_TAG#v}" \

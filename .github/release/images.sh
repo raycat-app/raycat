@@ -23,20 +23,16 @@ push_image() {
   docker rmi "$repo:$2" raycat:ci
 }
 
-digest_of() {
-  echo "sha256:$(docker buildx imagetools inspect --raw "$1" | sha256sum | cut -d' ' -f1)"
-}
-
 push_image image-amd64.tar.gz "$version-amd64"
 push_image image-arm64.tar.gz "$version-arm64"
-docker buildx imagetools create --tag "$repo:$version" --tag "$repo:$rolling" \
-  "$repo:$version-amd64" "$repo:$version-arm64"
+docker buildx imagetools create --tag "$repo:$version" "$repo:$version-amd64" "$repo:$version-arm64"
+index=$(digest_of "$repo:$version")
+retag "$repo" "$index" "$rolling"
 
 push_image image-arm64-noaes.tar.gz "$version-noaes"
-docker buildx imagetools create --tag "$repo:$rolling-noaes" "$repo:$version-noaes"
-
-index=$(digest_of "$repo:$version")
 noaes=$(digest_of "$repo:$version-noaes")
+retag "$repo" "$noaes" "$rolling-noaes"
+
 amd64=$(docker buildx imagetools inspect --raw "$repo:$version" \
   | jq -r '[.manifests[] | select(.platform.architecture == "amd64") | .digest] | first // empty')
 arm64=$(docker buildx imagetools inspect --raw "$repo:$version" \

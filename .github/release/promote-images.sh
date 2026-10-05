@@ -14,10 +14,6 @@ dev=${DEV_VERSION:?не задана DEV_VERSION}
 version=${VERSION:?не задана VERSION}
 minor=${version%.*}
 
-digest_of() {
-  echo "sha256:$(docker buildx imagetools inspect --raw "$1" | sha256sum | cut -d' ' -f1)"
-}
-
 index=$(digest_of "$registry:$dev")
 noaes=$(digest_of "$registry:$dev-noaes")
 echo "dev $dev: список $index, noaes $noaes"
@@ -32,8 +28,8 @@ if [ "${DRY_RUN:-false}" = true ]; then
   exit 0
 fi
 
-docker buildx imagetools create --tag "$registry:latest" --tag "$registry:$version" --tag "$registry:$minor" "$registry@$index"
-docker buildx imagetools create --tag "$registry:latest-noaes" --tag "$registry:$version-noaes" "$registry@$noaes"
+retag "$registry" "$index" latest "$version" "$minor"
+retag "$registry" "$noaes" latest-noaes "$version-noaes"
 
 for tag in latest "$version" "$minor"; do
   [ "$(digest_of "$registry:$tag")" = "$index" ] || fail "тег $tag указывает не на $index"
