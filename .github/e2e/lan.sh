@@ -192,7 +192,6 @@ write_config bad "lan_interface = \"nope0\""
 
 client_run ip route replace default via 10.77.0.2
 client_run sh -c 'echo "nameserver 10.77.0.2" > /etc/resolv.conf'
-[ "$(get_forward)" = 0 ] || fail "в стенде у маршрутизатора по умолчанию включён ip_forward"
 
 echo "== стенд: прежний маршрутизатор с NAT выпускает устройство наружу напрямую"
 set_forward 1

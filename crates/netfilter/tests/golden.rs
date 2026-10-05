@@ -48,17 +48,17 @@ fn interception_with_ipv6_and_kill_switch() {
     );
 }
 
-fn lan() -> Option<Lan> {
-    Some(Lan {
+fn lan() -> Lan {
+    Lan {
         interface: "rcnft-c".to_owned(),
         subnets: nets(&["10.99.0.0/24"]),
-    })
+    }
 }
 
 #[test]
 fn lan_gateway() {
     let rules = Rules {
-        lan: lan(),
+        lan: Some(lan()),
         ..Rules::default()
     };
     assert_eq!(ruleset(&rules).unwrap(), include_str!("golden/lan.nft"));
@@ -68,7 +68,7 @@ fn lan_gateway() {
 fn lan_gateway_with_kill_switch() {
     let rules = Rules {
         kill_switch: true,
-        lan: lan(),
+        lan: Some(lan()),
         ..Rules::default()
     };
     assert_eq!(
