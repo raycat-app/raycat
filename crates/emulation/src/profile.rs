@@ -128,7 +128,7 @@ pub(crate) struct Profile {
     pub(crate) manufacturer: Option<String>,
     pub(crate) hwid: HwidAlgorithm,
     pub(crate) locale: LocaleRule,
-    builds: BTreeMap<String, Release>,
+    pub(crate) builds: BTreeMap<String, Release>,
     pub(crate) headers: Vec<(String, Template)>,
 }
 

@@ -1,6 +1,7 @@
 app = "happ"
 platform = "android"
 arch = "x64"
+release = "4.6.0"
 url = "http://127.0.0.1:{PORT}/sub/abc"
 # 2026-09-28 12:00 UTC: чётное число по Москве, маркер «6» как в захвате.
 unix = 1_790_596_800

@@ -3,6 +3,9 @@ name: Захват запросов приложений
 # Лаборатория: настоящие приложения (Happ, INCY) запрашивают подписку у локального
 # сервера .github/capture/capture_server.py, запросы сохраняются как артефакты и
 # служат образцами для профилей запросов raycat. Ничего не публикуется.
+#
+# Вызывается и вручную, и из client-update.yml (бот обновляет профили). Значение none
+# вместо версии пропускает приложение, пустое значение (запуск по push) — latest.
 
 on:
   push:
@@ -10,20 +13,35 @@ on:
   workflow_dispatch:
     inputs:
       happ_windows:
-        description: Версия Happ для Windows (тег релиза Happ-proxy/happ-desktop или latest)
+        description: Версия Happ для Windows (тег релиза Happ-proxy/happ-desktop, latest или none)
         default: latest
       happ_android:
-        description: Версия Happ для Android (тег релиза Happ-proxy/happ-android или latest)
+        description: Версия Happ для Android (тег релиза Happ-proxy/happ-android, latest или none)
         default: latest
       incy_android:
-        description: Версия INCY для Android (тег релиза INCY-DEV/incy-platforms или latest)
+        description: Версия INCY для Android (тег релиза INCY-DEV/incy-platforms, latest или none)
         default: latest
+  workflow_call:
+    inputs:
+      happ_windows:
+        description: Тег релиза Happ-proxy/happ-desktop или none
+        type: string
+        default: none
+      happ_android:
+        description: Тег релиза Happ-proxy/happ-android или none
+        type: string
+        default: none
+      incy_android:
+        description: Тег релиза INCY-DEV/incy-platforms или none
+        type: string
+        default: none
 
 permissions: {}
 
 jobs:
   happ-windows:
-    name: Happ Windows ${{ matrix.arch }}${{ matrix.date && ' (нечётный день)' || '' }}
+    name: Happ Windows ${{ matrix.arch }}${{ matrix.odd && ' (нечётный день)' || '' }}
+    if: ${{ inputs.happ_windows != 'none' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     permissions:
@@ -32,10 +50,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {arch: x64, runner: windows-latest}
-          - {arch: arm64, runner: windows-11-arm}
-          # Нечётное число по Москве: маркер дня в User-Agent должен смениться.
-          - {arch: x64, runner: windows-latest, date: "2026-09-29 12:00:00"}
+          # Часы ставятся всегда: чётное число по Москве даёт маркер «6», нечётное — «5»,
+          # и по паре запросов видно, где в User-Agent маркер. Дата не зависит от дня запуска.
+          - {arch: x64, runner: windows-latest, date: "2026-09-28 12:00:00"}
+          - {arch: arm64, runner: windows-11-arm, date: "2026-09-28 12:00:00"}
+          - {arch: x64, runner: windows-latest, date: "2026-09-29 12:00:00", odd: true}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -70,15 +89,40 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ always() }}
         with:
-          name: capture-happ-windows-${{ matrix.arch }}-${{ steps.app.outputs.version }}${{ matrix.date && '-odd-day' || '' }}
+          name: capture-happ-windows-${{ matrix.arch }}-${{ steps.app.outputs.version }}${{ matrix.odd && '-odd-day' || '' }}
           path: captures
           if-no-files-found: error
       - name: Есть ли захват
         shell: bash
         run: ls captures/*.http
 
+  # Какие из прогонов Android нужны: пропущенное приложение (none) в матрицу не попадает.
+  plan:
+    name: План захвата Android
+    runs-on: ubuntu-24.04
+    permissions: {}
+    outputs:
+      android: ${{ steps.matrix.outputs.android }}
+    steps:
+      - id: matrix
+        env:
+          HAPP: ${{ inputs.happ_android }}
+          INCY: ${{ inputs.incy_android }}
+        run: |
+          # Чётное и нечётное число: маркер дня в User-Agent меняется, по паре видно его место.
+          happ='{"app":"Happ","repo":"Happ-proxy/happ-android","asset":"Happ.apk","scheme":"happ","hosts":"10.0.2.2","date":"092812002026.00"}'
+          happ_odd='{"app":"Happ","repo":"Happ-proxy/happ-android","asset":"Happ.apk","scheme":"happ","hosts":"10.0.2.2","date":"092912002026.00","odd":true}'
+          incy='{"app":"INCY","repo":"INCY-DEV/incy-platforms","asset":"Incy.apk","scheme":"incy","hosts":"127.0.0.1 localhost 10.0.2.2","tls":true}'
+          items=()
+          [ "$HAPP" = none ] || items+=("$happ" "$happ_odd")
+          [ "$INCY" = none ] || items+=("$incy")
+          list=$(IFS=,; echo "${items[*]}")
+          echo "android=[$list]" >> "$GITHUB_OUTPUT"
+
   android:
-    name: ${{ matrix.app }} Android${{ matrix.date && ' (нечётный день)' || '' }}
+    name: ${{ matrix.app }} Android${{ matrix.odd && ' (нечётный день)' || '' }}
+    needs: plan
+    if: ${{ needs.plan.outputs.android != '[]' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
@@ -86,11 +130,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {app: Happ, repo: Happ-proxy/happ-android, asset: Happ.apk, scheme: happ, hosts: 10.0.2.2, requested: "${{ inputs.happ_android }}"}
-          - {app: INCY, repo: INCY-DEV/incy-platforms, asset: Incy.apk, scheme: incy, hosts: "127.0.0.1 localhost 10.0.2.2", tls: true, requested: "${{ inputs.incy_android }}"}
-          # Нечётное число по Москве: маркер дня в User-Agent должен смениться.
-          - {app: Happ, repo: Happ-proxy/happ-android, asset: Happ.apk, scheme: happ, hosts: 10.0.2.2, requested: "${{ inputs.happ_android }}", date: "092912002026.00"}
+        include: ${{ fromJSON(needs.plan.outputs.android) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -99,7 +139,7 @@ jobs:
         id: app
         env:
           GH_TOKEN: ${{ github.token }}
-          REQUESTED: ${{ matrix.requested }}
+          REQUESTED: ${{ matrix.scheme == 'happ' && inputs.happ_android || inputs.incy_android }}
           REPO: ${{ matrix.repo }}
           ASSET: ${{ matrix.asset }}
         run: |
@@ -148,7 +188,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ always() }}
         with:
-          name: capture-${{ matrix.scheme }}-android-x86_64-${{ steps.app.outputs.version }}${{ matrix.date && '-odd-day' || '' }}
+          name: capture-${{ matrix.scheme }}-android-x86_64-${{ steps.app.outputs.version }}${{ matrix.odd && '-odd-day' || '' }}
           path: captures
           if-no-files-found: error
       - name: Есть ли захват

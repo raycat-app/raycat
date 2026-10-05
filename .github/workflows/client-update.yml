@@ -1,0 +1,281 @@
+name: Обновление профиля клиента
+
+# Один клиент (приложение и платформа): захват настоящего приложения нужной версии,
+# обновление профиля инструментом update-profiles, PR бота, обязательные проверки и
+# слияние. Если что-то не вышло, заводится issue (одно на версию). Вызывается из
+# clients.yml.
+#
+# События GITHUB_TOKEN (push, pull_request) не запускают другие workflow, поэтому
+# обязательные проверки ruleset («Итог» из ci.yml и «Заголовок PR» из pr-title.yml) бот
+# запускает сам через workflow_dispatch на ветке PR: проверки привязываются к
+# последнему коммиту ветки и засчитываются как обычные.
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        description: Приложение (happ или incy)
+        type: string
+        required: true
+      platform:
+        description: Платформа (windows или android)
+        type: string
+        required: true
+      release:
+        description: Тег релиза, из которого брать приложение
+        type: string
+        required: true
+      merge:
+        description: Сливать PR после зелёных проверок
+        type: boolean
+        default: true
+
+permissions: {}
+
+jobs:
+  capture:
+    name: Захват
+    permissions:
+      contents: read
+    # Синтаксис $/ из совета zizmor actionlint не разбирает, поэтому ./
+    uses: ./.github/workflows/capture.yml # zizmor: ignore[self-repository]
+    with:
+      happ_windows: ${{ (inputs.app == 'happ' && inputs.platform == 'windows') && inputs.release || 'none' }}
+      happ_android: ${{ (inputs.app == 'happ' && inputs.platform == 'android') && inputs.release || 'none' }}
+      incy_android: ${{ (inputs.app == 'incy' && inputs.platform == 'android') && inputs.release || 'none' }}
+
+  update:
+    name: Профиль и PR
+    needs: capture
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      pr: ${{ steps.pr.outputs.number }}
+      sha: ${{ steps.commit.outputs.sha }}
+      branch: ${{ steps.commit.outputs.branch }}
+    env:
+      APP: ${{ inputs.app }}
+      PLATFORM: ${{ inputs.platform }}
+      RELEASE: ${{ inputs.release }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Проверка входных данных
+        run: |
+          [[ "$APP" =~ ^[a-z0-9-]+$ && "$PLATFORM" =~ ^[a-z]+$ && "$RELEASE" =~ ^[0-9A-Za-z._-]+$ ]] || { echo "::error::недопустимые входные данные"; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: capture-${{ inputs.app }}-${{ inputs.platform }}-*
+          path: artifacts
+      # Кэш cargo здесь не нужен: задача публикует код, а сборка инструмента занимает минуты.
+      - name: Профиль и образцы по захвату
+        run: |
+          set -o pipefail
+          cargo run --locked --quiet -p raycat-emulation --features tool --bin update-profiles -- \
+            "$APP" "$PLATFORM" --release "$RELEASE" --artifacts artifacts --root crates/emulation \
+            | tee "$RUNNER_TEMP/report.txt"
+      - name: Тесты эмуляции
+        run: cargo test --locked --quiet -p raycat-emulation --all-features
+      - name: Изменения
+        id: changes
+        run: |
+          if [ -z "$(git status --porcelain -- crates/emulation)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::захват не изменил ни профиль, ни образцы"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git status --short -- crates/emulation
+          fi
+      - name: Коммит и ветка бота
+        id: commit
+        if: ${{ steps.changes.outputs.changed == 'true' }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "crates/emulation/profiles/$APP/$PLATFORM.toml" | head -n 1)
+          [[ "$version" =~ ^[0-9A-Za-z._-]+$ ]] || { echo "::error::версия профиля не прочитана"; exit 1; }
+          if git diff --quiet -- crates/emulation/profiles; then
+            title="test: обновить образцы $APP $PLATFORM $version"
+          else
+            title="feat: профиль $APP $PLATFORM $version"
+          fi
+          branch="bot/client-$APP-$PLATFORM-$RELEASE"
+          {
+            echo "Профиль эмуляции обновлён автоматически по захвату настоящего приложения."
+            echo
+            echo "- приложение: $APP, платформа: $PLATFORM"
+            echo "- релиз: $RELEASE"
+            echo "- версия в запросе приложения: $version"
+            echo "- прогон: $RUN_URL"
+            echo
+            echo "Изменения профиля:"
+            echo
+            echo '```diff'
+            git diff -U0 -- crates/emulation/profiles | grep '^[+-][^+-]' || true
+            echo '```'
+            echo
+            echo "Образцы запросов в crates/emulation/captures заменены снятыми в этом прогоне."
+          } > "$RUNNER_TEMP/body.md"
+          { echo "$title"; echo; cat "$RUNNER_TEMP/body.md"; } > "$RUNNER_TEMP/message.txt"
+          git config user.name sleepyhead-dev
+          git config user.email 184401951+sleepyhead-dev@users.noreply.github.com
+          git switch -c "$branch"
+          git add crates/emulation
+          git commit -q -F "$RUNNER_TEMP/message.txt"
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push --force origin "$branch"
+          {
+            echo "sha=$(git rev-parse HEAD)"
+            echo "branch=$branch"
+            echo "title=$title"
+          } >> "$GITHUB_OUTPUT"
+      - name: Pull request
+        id: pr
+        if: ${{ steps.changes.outputs.changed == 'true' }}
+        env:
+          BRANCH: ${{ steps.commit.outputs.branch }}
+          TITLE: ${{ steps.commit.outputs.title }}
+        run: |
+          number=$(gh pr list -R "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh pr edit "$number" -R "$REPO" --title "$TITLE" --body-file "$RUNNER_TEMP/body.md"
+          else
+            base=$(gh api "repos/$REPO" --jq .default_branch)
+            if ! output=$(gh pr create -R "$REPO" --base "$base" --head "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/body.md" --label эмуляция 2>&1); then
+              printf '%s\n' "$output"
+              {
+                echo
+                echo "Ветка $BRANCH отправлена, но PR создать не удалось:"
+                echo "$output"
+                echo
+                echo "Если Actions не разрешено создавать PR (Settings, Actions, General, Workflow permissions), откройте PR вручную: https://github.com/$REPO/compare/$base...$BRANCH?expand=1"
+              } >> "$RUNNER_TEMP/report.txt"
+              exit 1
+            fi
+            number=$(printf '%s\n' "$output" | tail -n 1)
+            number=${number##*/}
+          fi
+          [[ "$number" =~ ^[0-9]+$ ]] || { echo "::error::номер PR не определён"; exit 1; }
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() }}
+        with:
+          name: update-report-${{ inputs.app }}-${{ inputs.platform }}
+          path: ${{ runner.temp }}/report.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+  verify:
+    name: Проверки и слияние
+    needs: update
+    if: ${{ needs.update.outputs.pr != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ needs.update.outputs.pr }}
+      SHA: ${{ needs.update.outputs.sha }}
+      BRANCH: ${{ needs.update.outputs.branch }}
+    steps:
+      - name: Запуск обязательных проверок
+        run: |
+          gh workflow run ci.yml -R "$REPO" --ref "$BRANCH"
+          gh workflow run pr-title.yml -R "$REPO" --ref "$BRANCH" -f "pr=$PR"
+      - name: Ожидание проверок
+        run: |
+          find_run() {
+            local id
+            for _ in $(seq 1 30); do
+              id=$(gh run list -R "$REPO" --workflow "$1" --branch "$BRANCH" --event workflow_dispatch --limit 20 --json databaseId,headSha |
+                jq -r --arg sha "$SHA" '[.[] | select(.headSha == $sha)][0].databaseId // empty')
+              if [ -n "$id" ]; then
+                echo "$id"
+                return 0
+              fi
+              sleep 10
+            done
+            return 1
+          }
+          title_run=$(find_run pr-title.yml)
+          ci_run=$(find_run ci.yml)
+          echo "заголовок PR: прогон $title_run, CI: прогон $ci_run"
+          gh run watch "$title_run" -R "$REPO" --exit-status --interval 20 > /dev/null
+          gh run watch "$ci_run" -R "$REPO" --exit-status --interval 30 > /dev/null
+      - name: Ruleset засчитывает проверки
+        run: |
+          for _ in $(seq 1 20); do
+            if gh pr checks "$PR" -R "$REPO" --required; then
+              exit 0
+            fi
+            sleep 15
+          done
+          exit 1
+      - name: Слияние
+        if: ${{ inputs.merge }}
+        run: |
+          title=$(gh pr view "$PR" -R "$REPO" --json title --jq .title)
+          body=$(gh pr view "$PR" -R "$REPO" --json body --jq .body)
+          gh pr merge "$PR" -R "$REPO" --squash --match-head-commit "$SHA" --subject "$title (#$PR)" --body "$body"
+      - name: Слияние отключено
+        if: ${{ !inputs.merge }}
+        run: echo "::notice::проверки зелёные, слияние отключено входным параметром, PR $PR остаётся открытым"
+
+  report:
+    name: Отчёт об ошибке
+    needs: [capture, update, verify]
+    if: ${{ failure() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      APP: ${{ inputs.app }}
+      PLATFORM: ${{ inputs.platform }}
+      RELEASE: ${{ inputs.release }}
+      CAPTURE: ${{ needs.capture.result }}
+      UPDATE: ${{ needs.update.result }}
+      VERIFY: ${{ needs.verify.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          name: update-report-${{ inputs.app }}-${{ inputs.platform }}
+          path: report
+      - name: Issue
+        run: |
+          title="Не удалось обновить профиль $APP $PLATFORM до $RELEASE"
+          {
+            echo "Автоматическое обновление профиля не дошло до слияния."
+            echo
+            echo "- захват: $CAPTURE"
+            echo "- профиль и PR: $UPDATE"
+            echo "- проверки и слияние: $VERIFY"
+            echo "- прогон: $RUN_URL"
+            if [ -s report/report.txt ]; then
+              echo
+              echo "Отчёт инструмента:"
+              echo
+              echo '````text'
+              head -c 50000 report/report.txt
+              echo '````'
+            fi
+          } > body.md
+          existing=$(gh issue list -R "$REPO" --state open --label эмуляция --json number,title |
+            jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" -R "$REPO" --body-file body.md
+          else
+            gh issue create -R "$REPO" --title "$title" --body-file body.md --label эмуляция --label ci
+          fi

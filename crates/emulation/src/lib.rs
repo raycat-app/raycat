@@ -43,12 +43,18 @@
 //! `{manufacturer}`, `{hostname}`, `{hwid}`, `{device_locale}`, `{accept_language}`. Профиль с
 //! неизвестной или недоступной подстановкой, пустым обязательным полем, дублем
 //! заголовка или без `Host` не загружается: это ловит тест `profile::tests`.
+//!
+//! Новые версии приложений в профили вносит бот: инструмент `update-profiles`
+//! (feature `tool`, в бинарник raycat не попадает) читает захваты настоящих приложений
+//! и обновляет профили и образцы в `captures/`, см. модуль `update`.
 
 mod device;
 mod locale;
 mod marker;
 mod profile;
 mod template;
+#[cfg(feature = "tool")]
+pub mod update;
 
 pub use device::{Device, DeviceInfo, is_valid_hwid, machine_id_from_seed};
 pub use profile::{Arch, Platform};
@@ -78,7 +84,10 @@ impl Emulation {
     /// Профиль `app`/`platform` для архитектуры `arch` на устройстве `device`.
     /// Архитектуру игнорируют профили с единой сборкой (`[builds.any]`).
     pub fn new(app: &str, platform: Platform, arch: Arch, device: &Device) -> Result<Self> {
-        let profile = profile::find(app, platform)?;
+        Self::with_profile(profile::find(app, platform)?, arch, device)
+    }
+
+    pub(crate) fn with_profile(profile: Profile, arch: Arch, device: &Device) -> Result<Self> {
         let build = profile.build_for(arch)?.clone();
         if device.machine_id.trim().is_empty() {
             bail!("machine_id пуст: идентификатор устройства не из чего вывести");
@@ -240,13 +249,16 @@ mod tests {
     fn windows_user_agent_follows_build_and_moscow_day() {
         let device = Device::from_machine_id(MACHINE_ID);
         let x64 = emulation(Platform::Windows, Arch::X64, &device);
-        assert_eq!(x64.user_agent(EVEN_DAY), "Happ/4.3.0/Windows/2609151455603");
-        assert_eq!(x64.user_agent(ODD_DAY), "Happ/4.3.0/Windows/2609151455503");
         let arm = emulation(Platform::Windows, Arch::Arm64, &device);
-        assert_eq!(arm.user_agent(EVEN_DAY), "Happ/4.3.0/Windows/2609151502603");
-        assert_eq!(x64.build(), "2609151455");
-        assert_eq!(arm.build(), "2609151502");
-        assert_eq!((x64.app(), x64.app_version()), ("happ", "4.3.0"));
+        for client in [&x64, &arm] {
+            let prefix = format!("Happ/{}/Windows/{}", client.app_version(), client.build());
+            let even = client.user_agent(EVEN_DAY);
+            let odd = client.user_agent(ODD_DAY);
+            assert!(even.starts_with(&format!("{prefix}6")), "{even}");
+            assert!(odd.starts_with(&format!("{prefix}5")), "{odd}");
+        }
+        assert_eq!((x64.app(), arm.app()), ("happ", "happ"));
+        assert_eq!(x64.app_version(), arm.app_version());
     }
 
     #[test]
@@ -254,14 +266,9 @@ mod tests {
         let device = Device::from_machine_id(MACHINE_ID);
         let x64 = emulation(Platform::Android, Arch::X64, &device);
         let arm = emulation(Platform::Android, Arch::Arm64, &device);
-        assert_eq!(
-            x64.user_agent(EVEN_DAY),
-            "Happ/4.6.0/Android/17903218884031681667"
-        );
-        assert_eq!(
-            x64.user_agent(ODD_DAY),
-            "Happ/4.6.0/Android/17903218884031681567"
-        );
+        let prefix = format!("Happ/{}/Android/{}", x64.app_version(), x64.build());
+        assert!(x64.user_agent(EVEN_DAY).starts_with(&format!("{prefix}6")));
+        assert!(x64.user_agent(ODD_DAY).starts_with(&format!("{prefix}5")));
         assert_eq!(x64.headers(&url(), EVEN_DAY), arm.headers(&url(), EVEN_DAY));
     }
 
@@ -311,7 +318,10 @@ mod tests {
         assert_eq!(info.manufacturer.as_deref(), Some("samsung"));
         let headers = incy.headers(&url(), EVEN_DAY);
         assert_eq!(header(&headers, "x-device-model"), "samsung SM-S921B");
-        assert_eq!(incy.user_agent(EVEN_DAY), "INCY/3.7.0/android Dalvik/2.1.0");
+        assert_eq!(
+            incy.user_agent(EVEN_DAY),
+            format!("INCY/{}/android Dalvik/2.1.0", incy.app_version())
+        );
         assert_eq!(incy.user_agent(EVEN_DAY), incy.user_agent(ODD_DAY));
     }
 
@@ -323,7 +333,8 @@ mod tests {
             model: Some("Pixel 8".into()),
             ..Device::from_machine_id(MACHINE_ID)
         };
-        let headers = incy(&device).headers(&url(), EVEN_DAY);
+        let incy = incy(&device);
+        let headers = incy.headers(&url(), EVEN_DAY);
         let names: Vec<&str> = headers.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(
             names,
@@ -346,7 +357,7 @@ mod tests {
         assert_eq!(header(&headers, "Accept-Language"), "ru-RU");
         assert_eq!(header(&headers, "x-device-locale"), "ru_RU");
         assert_eq!(header(&headers, "x-device-model"), "Google Pixel 8");
-        assert_eq!(header(&headers, "x-app-version"), "3.7.0");
+        assert_eq!(header(&headers, "x-app-version"), incy.app_version());
         assert_eq!(header(&headers, "x-client"), "INCY");
     }
 

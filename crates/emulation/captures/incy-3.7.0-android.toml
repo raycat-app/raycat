@@ -1,6 +1,7 @@
 app = "incy"
 platform = "android"
 arch = "x64"
+release = "desktop-v3.8.8"
 url = "http://127.0.0.1:{PORT}/sub/capture-android"
 # Wed Sep 30 00:02:06 UTC 2026, эмулятор в UTC.
 unix = 1_790_726_526

@@ -22,6 +22,8 @@ struct Input {
     app: String,
     platform: String,
     arch: String,
+    /// Тег релиза, из которого взято приложение: по нему бот узнаёт, что вышла новая версия.
+    release: String,
     url: String,
     unix: u64,
     /// Часовой пояс устройства при захвате (часы от UTC), по умолчанию Москва.
@@ -98,6 +100,7 @@ fn every_capture_is_reproduced_byte_for_byte() {
         let text = fs::read_to_string(captures_dir().join(format!("{stem}.toml")))
             .unwrap_or_else(|e| panic!("{stem}.toml: {e}"));
         let input: Input = toml::from_str(&text).unwrap_or_else(|e| panic!("{stem}.toml: {e}"));
+        assert!(!input.release.is_empty(), "{stem}.toml: пустой release");
         assert_eq!(
             generate(&input),
             capture.replace("{PORT}", PORT),
