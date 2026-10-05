@@ -40,6 +40,8 @@ the same core Happ uses.
 - Kill switch: while the VPN is down, traffic never goes out directly, DNS included.
 - A command line with clear help and a TUI with the same features.
 - Static binaries for x86_64, arm64 and armv7, a Docker image, one-command install.
+- A separate image variant (the `-noaes` tag) for Raspberry Pi 3/4 and other CPUs
+  without hardware AES, with faster encryption on such hardware.
 
 ## Contributing
 
