@@ -1,0 +1,65 @@
+# Служба systemd для raycat на голом хосте. Ставится deploy/install.sh.
+#
+# Работает от root с урезанным набором привилегий: нужна только CAP_NET_ADMIN
+# (правила nftables и маршруты режима шлюза, метки SO_MARK и прозрачный сокет xray,
+# BBR). Остальное запрещено, всё, кроме каталогов состояния и сокета, доступно
+# только для чтения. Пути по умолчанию для root совпадают с каталогами ниже, поэтому
+# `sudo raycat status` находит сокет демона без настроек.
+#
+# Менять этот файл не нужно: правки кладите в drop-in (`systemctl edit raycat`).
+# Режиму прокси привилегии не нужны: уберите их drop-in'ом
+#   [Service]
+#   CapabilityBoundingSet=
+# Прослушивание порта ниже 1024 требует ещё CAP_NET_BIND_SERVICE.
+
+[Unit]
+Description=raycat: клиент VPN-подписок
+Documentation=https://github.com/raycat-app/raycat
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/raycat daemon
+Environment=RAYCAT_CONFIG=/etc/raycat/config.toml
+Restart=on-failure
+RestartSec=5s
+# SIGTERM получает только демон: он сам останавливает xray и снимает правила шлюза.
+KillMode=mixed
+TimeoutStopSec=20s
+LimitNOFILE=65536
+
+StateDirectory=raycat
+StateDirectoryMode=0700
+RuntimeDirectory=raycat
+RuntimeDirectoryMode=0700
+UMask=0077
+
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
