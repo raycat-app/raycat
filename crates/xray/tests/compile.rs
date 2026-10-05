@@ -637,7 +637,10 @@ fn xhttp_over_h3_gets_xmux_but_no_bbr() {
 fn quic_flag_follows_udp_transports() {
     let tcp_only = vec![Subscription {
         id: "s".to_owned(),
-        nodes: vec![node("tcp", vec![vless_reality("proxy", "reality.example.com")])],
+        nodes: vec![node(
+            "tcp",
+            vec![vless_reality("proxy", "reality.example.com")],
+        )],
     }];
     let settings = Settings::new(proxy_mode(), 10085);
     assert!(!compile(&tcp_only, &settings).unwrap().quic);

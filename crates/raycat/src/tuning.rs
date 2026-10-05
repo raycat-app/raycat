@@ -80,7 +80,8 @@ fn decide_auto(available: Option<&str>, allowed: Option<&str>, status: Option<&s
         return Decision::Use(AUTO_ALGORITHM.to_owned());
     }
     Decision::Skipped(
-        "он не разрешён в tcp_allowed_congestion_control, а у процесса нет CAP_NET_ADMIN".to_owned(),
+        "он не разрешён в tcp_allowed_congestion_control, а у процесса нет CAP_NET_ADMIN"
+            .to_owned(),
     )
 }
 
@@ -217,7 +218,9 @@ mod tests {
     fn capability_parsing_ignores_garbage() {
         assert!(!child_has_net_admin(""));
         assert!(!child_has_net_admin("CapEff:\tnot-hex\nCapAmb:\t1000\n"));
-        assert!(!child_has_net_admin("Uid:\tx\nCapEff:\t1000\nCapBnd:\t1000\n"));
+        assert!(!child_has_net_admin(
+            "Uid:\tx\nCapEff:\t1000\nCapBnd:\t1000\n"
+        ));
         assert!(child_has_net_admin("CapEff:\t1000\nCapAmb:\t1000\n"));
     }
 
@@ -259,7 +262,10 @@ mod tests {
     #[test]
     fn large_or_unreadable_udp_buffers_are_silent() {
         assert_eq!(udp_buffers_message(Some("7864320"), Some("7864320")), None);
-        assert_eq!(udp_buffers_message(Some("26214400"), Some("26214400")), None);
+        assert_eq!(
+            udp_buffers_message(Some("26214400"), Some("26214400")),
+            None
+        );
         assert_eq!(udp_buffers_message(None, None), None);
         assert_eq!(udp_buffers_message(Some("many"), Some("")), None);
     }

@@ -35,10 +35,7 @@ pub(crate) fn apply(outbound: &mut Map<String, Value>, tuning: &Tuning<'_>) -> b
     };
     let transport = transport(&protocol, stream);
     if let Some(name) = tuning.tcp_congestion.filter(|name| !name.is_empty())
-        && matches!(
-            transport,
-            Transport::Tcp | Transport::Xhttp { h3: false }
-        )
+        && matches!(transport, Transport::Tcp | Transport::Xhttp { h3: false })
     {
         set_congestion(stream, name);
     }

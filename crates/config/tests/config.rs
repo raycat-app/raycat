@@ -239,9 +239,7 @@ fn tcp_congestion_values() {
         ),
     ];
     for (value, expected) in cases {
-        let config = parse(&format!(
-            "{OK_SUB}\n[xray]\ntcp_congestion = \"{value}\"\n"
-        ));
+        let config = parse(&format!("{OK_SUB}\n[xray]\ntcp_congestion = \"{value}\"\n"));
         assert_eq!(config.xray.tcp_congestion, expected, "{value}");
     }
 }
@@ -259,7 +257,10 @@ fn performance_option_errors_are_in_russian_and_name_the_field() {
     let cases = [
         ("tcp_congestion = \"\"", "xray.tcp_congestion"),
         ("tcp_congestion = \"bbr!\"", "xray.tcp_congestion"),
-        ("tcp_congestion = \"abcdefghijklmnop\"", "xray.tcp_congestion"),
+        (
+            "tcp_congestion = \"abcdefghijklmnop\"",
+            "xray.tcp_congestion",
+        ),
         ("tcp_congestion = \"bbr cubic\"", "xray.tcp_congestion"),
         ("xhttp_connections = 0", "xray.xhttp_connections"),
         ("xhttp_connections = 17", "xray.xhttp_connections"),
@@ -279,11 +280,13 @@ fn performance_option_errors_are_in_russian_and_name_the_field() {
 
 #[test]
 fn xhttp_connections_must_be_a_number() {
-    assert!(Config::from_toml_str(
-        &format!("{OK_SUB}\n[xray]\nxhttp_connections = \"4\"\n"),
-        &Env::new()
-    )
-    .is_err());
+    assert!(
+        Config::from_toml_str(
+            &format!("{OK_SUB}\n[xray]\nxhttp_connections = \"4\"\n"),
+            &Env::new()
+        )
+        .is_err()
+    );
 }
 
 #[test]
