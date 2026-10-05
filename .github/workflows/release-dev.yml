@@ -1,0 +1,263 @@
+name: Выпуск dev
+
+# Вызывается из ci.yml после зелёного «Итог» на push в main и берёт артефакты того же запуска CI:
+# пересборки нет, в выпуск попадают ровно те байты, что прошли проверки. Из других запусков
+# (ручной запуск CI на ветке) работает только как сухой прогон: собирает и проверяет всё,
+# в том числе публикацию образов в локальный реестр, но ничего не публикует.
+
+on:
+  workflow_call:
+    inputs:
+      dry_run:
+        description: Только собрать и проверить, ничего не публиковать
+        type: boolean
+        required: true
+
+permissions: {}
+
+jobs:
+  files:
+    name: Версия и архивы
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Версия
+        id: version
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: bash .github/release/dev-version.sh
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: raycat-*
+          path: artifacts/bin
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: image-arm64-noaes
+          path: artifacts/image
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: xray-noaes-armv7
+          path: artifacts/xray-noaes-armv7
+      - name: Файлы для архивов
+        run: bash .github/release/inputs.sh artifacts inputs
+      - name: Архивы
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct HEAD)
+          export SOURCE_DATE_EPOCH
+          bash .github/release/package.sh "$VERSION" inputs release
+      - name: Заметки
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          LAST_TAG: ${{ steps.version.outputs.last_tag }}
+        run: |
+          base=${PREVIOUS:-$LAST_TAG}
+          bash .github/release/collect.sh "$base" HEAD | bash .github/release/notes.sh >"$RUNNER_TEMP/changes.md"
+          bash .github/release/make-notes.sh dev "$VERSION" "$REPOSITORY" "$base" <"$RUNNER_TEMP/changes.md" >release/notes.md
+      - name: Сводка
+        run: |
+          {
+            echo "### Файлы выпуска"
+            echo '```'
+            ls -l release
+            echo '```'
+            cat release/notes.md
+          } >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-dev
+          path: release
+          retention-days: 7
+          if-no-files-found: error
+
+  images:
+    name: Образы
+    needs: files
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.files.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: image-*
+          path: images
+          merge-multiple: true
+      - name: Реестр
+        id: registry
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ "$DRY_RUN" = true ]; then
+            echo "name=localhost:5000/raycat" >>"$GITHUB_OUTPUT"
+          else
+            echo "name=ghcr.io/${REPOSITORY,,}" >>"$GITHUB_OUTPUT"
+          fi
+      # Сухой прогон проходит тот же путь публикации, но в локальный реестр.
+      - name: Локальный реестр
+        if: ${{ inputs.dry_run }}
+        run: |
+          docker run -d --name registry -p 127.0.0.1:5000:5000 \
+            registry:3@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8
+          curl -fsS --retry 10 --retry-connrefused --retry-delay 1 http://127.0.0.1:5000/v2/
+      - name: Вход в GHCR
+        if: ${{ !inputs.dry_run }}
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Публикация образов
+        id: push
+        env:
+          REPO: ${{ steps.registry.outputs.name }}
+          ROLLING: dev
+          IMAGES: images
+        run: OUT="$GITHUB_OUTPUT" bash .github/release/images.sh
+      - name: Образы для SBOM
+        run: |
+          mkdir -p "$RUNNER_TEMP/tars" "$RUNNER_TEMP/sbom"
+          for name in amd64 arm64 arm64-noaes; do
+            gunzip -c "images/image-$name.tar.gz" >"$RUNNER_TEMP/tars/$name.tar"
+          done
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: docker-archive:${{ runner.temp }}/tars/amd64.tar
+          output-file: ${{ runner.temp }}/sbom/amd64.spdx.json
+          format: spdx-json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: docker-archive:${{ runner.temp }}/tars/arm64.tar
+          output-file: ${{ runner.temp }}/sbom/arm64.spdx.json
+          format: spdx-json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: docker-archive:${{ runner.temp }}/tars/arm64-noaes.tar
+          output-file: ${{ runner.temp }}/sbom/arm64-noaes.spdx.json
+          format: spdx-json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-dev
+          path: ${{ runner.temp }}/sbom
+          retention-days: 7
+          if-no-files-found: error
+      - name: Аттестация происхождения образа
+        if: ${{ !inputs.dry_run }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.registry.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.index }}
+          push-to-registry: true
+          create-storage-record: false
+      - name: Аттестация происхождения образа без AES
+        if: ${{ !inputs.dry_run }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.registry.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.noaes }}
+          push-to-registry: true
+          create-storage-record: false
+      - name: SBOM образа amd64
+        if: ${{ !inputs.dry_run }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.registry.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.amd64 }}
+          sbom-path: ${{ runner.temp }}/sbom/amd64.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+      - name: SBOM образа arm64
+        if: ${{ !inputs.dry_run }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.registry.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.arm64 }}
+          sbom-path: ${{ runner.temp }}/sbom/arm64.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+      - name: SBOM образа arm64 без AES
+        if: ${{ !inputs.dry_run }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.registry.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.noaes }}
+          sbom-path: ${{ runner.temp }}/sbom/arm64-noaes.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+
+  publish:
+    name: Выпуск
+    needs: [files, images]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-dev
+          path: release
+      - name: Аттестация происхождения архивов
+        if: ${{ !inputs.dry_run }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release/*.tar.gz
+      - name: GitHub prerelease
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ needs.files.outputs.tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh release create "$TAG" release/*.tar.gz release/SHA256SUMS \
+            --repo "$REPOSITORY" --target "$SHA" --prerelease --title "$TAG" --notes-file release/notes.md
+      - name: Сухой прогон
+        if: ${{ inputs.dry_run }}
+        env:
+          TAG: ${{ needs.files.outputs.tag }}
+        run: echo "Сухой прогон. Выпуск $TAG не создан, файлы лежат в артефакте release-dev."
+
+  cleanup:
+    name: Очистка старых dev-выпусков
+    needs: publish
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Удаление
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: bash .github/release/cleanup.sh

@@ -180,6 +180,35 @@ devices of your network included), multicast and broadcast are not intercepted
 either. On a clean stop raycat removes its rules; after a crash they stay in place to
 hold the kill switch, and the next start installs them again.
 
+## Versions and channels
+
+Releases are automatic, each channel has its own tags.
+
+| Channel | What it is | Docker image | Files |
+| --- | --- | --- | --- |
+| **stable** | Production versions `vX.Y.Z`. They went through dev and waited out a hold period: one day for emulation profile changes, three days for everything else. Breaking changes are released by hand only | `ghcr.io/raycat-app/raycat:latest`, `:X.Y.Z`, `:X.Y` | [Releases](https://github.com/raycat-app/raycat/releases/latest) |
+| **dev** | A build of every merge into `main` after green CI, `vX.Y.Z-dev.N`. For early testing, not for production servers; the last 20 are kept | `:dev`, `:X.Y.Z-dev.N` | a pre-release on the Releases page |
+
+Images are multi-architecture (amd64 and arm64). For **Raspberry Pi 3/4 and other
+processors without hardware AES** (no `aes` flag in `/proc/cpuinfo`) there are variants
+with xray built for fast AES-GCM on such hardware: the images `:latest-noaes`,
+`:X.Y.Z-noaes`, `:dev-noaes` (arm64 only) and the archives with `-noaes` in the name
+(aarch64 and armv7).
+
+While an open issue carries the `стоп-релиз` ("stop release") label, promotion from dev
+to stable is paused.
+
+### Verifying authenticity
+
+Archives and images carry build provenance attestations (GitHub); images also carry an
+SBOM. Verification needs [GitHub CLI](https://cli.github.com/):
+
+```sh
+sha256sum -c SHA256SUMS
+gh attestation verify raycat-X.Y.Z-x86_64-linux-musl.tar.gz --repo raycat-app/raycat
+gh attestation verify oci://ghcr.io/raycat-app/raycat:latest --repo raycat-app/raycat
+```
+
 ## Contributing
 
 Suggestions and fixes are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) (in
