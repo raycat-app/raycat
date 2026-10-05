@@ -1,0 +1,165 @@
+# Стенд шлюза для локальной сети: клиент в сети lan ходит в интернет через
+# маршрутизатор router, на котором работает raycat (его запускает lan.sh).
+#
+#   lan   — клиент, ещё одно устройство и маршрутизатор: сеть без выхода наружу
+#   wan   — маршрутизатор, панель, узлы, «прямая» цель (canary), внешний наблюдатель
+#   inet  — узлы и сайт: изолированная сеть, маршрутизатор в ней не состоит
+#
+# В сетях wan и inet адреса нарочно не из частных диапазонов: частные сети raycat
+# пропускает мимо перехвата, а xray (freedom) не пускает узел на зарезервированные
+# адреса. Сеть lan частная, как у настоящей локальной сети.
+name: raycat-e2e-lan
+
+networks:
+  lan:
+    name: raycat-e2e-lan-net
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.77.0.0/24
+  wan:
+    name: raycat-e2e-lan-wan
+    ipam:
+      config:
+        - subnet: 11.60.0.0/24
+  inet:
+    name: raycat-e2e-lan-inet
+    internal: true
+    ipam:
+      config:
+        - subnet: 11.70.0.0/24
+
+x-node: &node
+  image: raycat:ci
+  entrypoint: ["/usr/libexec/raycat/xray"]
+  command: ["run", "-c", "/e2e/gateway/node.json"]
+  volumes:
+    - ..:/e2e:ro
+
+services:
+  site:
+    image: python:3.13-alpine
+    command: ["python", "/e2e/echo.py"]
+    volumes:
+      - ..:/e2e:ro
+    networks:
+      inet:
+        ipv4_address: 11.70.0.10
+        aliases:
+          - site.e2e.test
+
+  canary:
+    image: python:3.13-alpine
+    command: ["python", "/e2e/echo.py"]
+    volumes:
+      - ..:/e2e:ro
+    networks:
+      wan:
+        ipv4_address: 11.60.0.50
+
+  panel:
+    image: python:3.13-alpine
+    command:
+      - python
+      - /e2e/panel.py
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --body
+      - /e2e/lan/subscription.txt
+      - --requests
+      - /tmp/requests.log
+    volumes:
+      - ..:/e2e:ro
+    networks:
+      wan:
+        ipv4_address: 11.60.0.5
+
+  node1:
+    <<: *node
+    networks:
+      wan:
+        ipv4_address: 11.60.0.11
+      inet:
+        ipv4_address: 11.70.0.11
+
+  node2:
+    <<: *node
+    networks:
+      wan:
+        ipv4_address: 11.60.0.12
+      inet:
+        ipv4_address: 11.70.0.12
+
+  # Внешний наблюдатель: чужой адрес в интернете, который ходит к хосту.
+  outsider:
+    image: python:3.13-alpine
+    container_name: raycat-e2e-lan-outsider
+    command: ["sleep", "infinity"]
+    volumes:
+      - ..:/e2e:ro
+      - ${LAN_STATE}:/state
+    networks:
+      wan:
+        ipv4_address: 11.60.0.60
+
+  # Хост-маршрутизатор. Сам он ничего не делает: сетевое пространство держит
+  # контейнер, а raycat запускается в нём отдельно (lan.sh), как служба на хосте.
+  router:
+    image: raycat:ci
+    container_name: raycat-e2e-lan-router
+    entrypoint: ["sleep", "infinity"]
+    cap_add: [NET_ADMIN]
+    dns: [1.1.1.1]
+    networks:
+      lan:
+        ipv4_address: 10.77.0.2
+      wan:
+        ipv4_address: 11.60.0.2
+    depends_on: [panel, node1, node2, site, canary]
+
+  # Службы хоста: «ssh» (долгое соединение) и обычный сервис.
+  sshd:
+    image: python:3.13-alpine
+    container_name: raycat-e2e-lan-sshd
+    command: ["python", "/e2e/stream.py", "serve", "--bind", "0.0.0.0", "--port", "2222"]
+    network_mode: service:router
+    volumes:
+      - ..:/e2e:ro
+
+  hostweb:
+    image: python:3.13-alpine
+    command: ["python", "/e2e/echo.py", "--port", "8081", "--label", "host-"]
+    network_mode: service:router
+    volumes:
+      - ..:/e2e:ro
+
+  client:
+    image: raycat:ci
+    container_name: raycat-e2e-lan-client
+    entrypoint: ["sleep", "infinity"]
+    cap_add: [NET_ADMIN]
+    networks:
+      lan:
+        ipv4_address: 10.77.0.10
+
+  # Python в сетевом пространстве клиента: долгое соединение «из сети» к хосту.
+  watcher:
+    image: python:3.13-alpine
+    container_name: raycat-e2e-lan-watcher
+    command: ["sleep", "infinity"]
+    network_mode: service:client
+    volumes:
+      - ..:/e2e:ro
+      - ${LAN_STATE}:/state
+
+  # Соседнее устройство той же сети: трафик к нему не должен перехватываться.
+  peer:
+    image: python:3.13-alpine
+    command: ["python", "/e2e/echo.py"]
+    volumes:
+      - ..:/e2e:ro
+    networks:
+      lan:
+        ipv4_address: 10.77.0.20

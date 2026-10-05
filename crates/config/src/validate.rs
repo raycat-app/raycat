@@ -4,11 +4,13 @@ use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use raycat_netfilter::{Cidr, MAX_LAN_SUBNETS, interface_name_problem, lan_subnet_problem};
+
 use crate::error::{Error, Problems};
 use crate::link::{self, Scheme};
 use crate::model::{
-    App, Config, Device, Dns, LogLevel, Logging, Mode, Pin, Platform, Routing, Secret, Selection,
-    Subscription, TcpCongestion, Xray,
+    App, Config, Device, Dns, Lan, LogLevel, Logging, Mode, Pin, Platform, Routing, Secret,
+    Selection, Subscription, TcpCongestion, Xray,
 };
 use crate::pattern::Pattern;
 use crate::raw::{Raw, RawDevice, RawDns, RawLog, RawMode, RawSelection, RawSubscription, RawXray};
@@ -135,6 +137,7 @@ pub(crate) fn build(raw: &Raw, mut problems: Problems) -> Result<Config, Error> 
     let subscriptions = subscriptions(&raw.subscription, &mut names, p);
     let selection = selection(&raw.selection, &names, p);
     let mode = mode(&raw.mode, p);
+    let lan = lan(&raw.mode, p);
     let dns = dns(&raw.dns, p);
     let routing = Routing {
         provider: raw.routing.provider.unwrap_or(false),
@@ -147,6 +150,7 @@ pub(crate) fn build(raw: &Raw, mut problems: Problems) -> Result<Config, Error> 
             subscriptions,
             selection,
             mode,
+            lan,
             dns,
             routing,
             xray,
@@ -526,6 +530,52 @@ fn mode(raw: &RawMode, p: &mut Problems) -> Mode {
         },
         Some(ModeKind::Proxy) | None => Mode::Proxy { listen },
     }
+}
+
+fn lan(raw: &RawMode, p: &mut Problems) -> Lan {
+    let interface = match raw.lan_interface.as_deref() {
+        None => None,
+        Some(name) => match interface_name_problem(name) {
+            Some(problem) => {
+                p.add("mode.lan_interface", problem);
+                None
+            }
+            None => Some(name.to_owned()),
+        },
+    };
+    let subnets = raw
+        .lan_subnets
+        .as_deref()
+        .map_or_else(Vec::new, |list| lan_subnets(list, p));
+    Lan { interface, subnets }
+}
+
+fn lan_subnets(list: &[String], p: &mut Problems) -> Vec<Cidr> {
+    if list.is_empty() || list.len() > MAX_LAN_SUBNETS {
+        p.add(
+            "mode.lan_subnets",
+            format!("нужно от 1 до {MAX_LAN_SUBNETS} подсетей"),
+        );
+        return Vec::new();
+    }
+    list.iter()
+        .enumerate()
+        .filter_map(|(index, value)| {
+            let field = format!("mode.lan_subnets[{index}]");
+            let net = match value.trim().parse::<Cidr>() {
+                Ok(net) => net,
+                Err(error) => {
+                    p.add(field, error.to_string());
+                    return None;
+                }
+            };
+            if let Some(problem) = lan_subnet_problem(&net) {
+                p.add(field, problem);
+                return None;
+            }
+            Some(net)
+        })
+        .collect()
 }
 
 fn dns(raw: &RawDns, p: &mut Problems) -> Dns {

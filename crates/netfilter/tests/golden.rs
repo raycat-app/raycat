@@ -2,7 +2,7 @@
 //! сетевом пространстве (`.github/e2e/netfilter.sh`).
 #![allow(clippy::unwrap_used)]
 
-use raycat_netfilter::{Cidr, Rules, ruleset};
+use raycat_netfilter::{Cidr, Lan, Rules, ruleset};
 
 fn nets(list: &[&str]) -> Vec<Cidr> {
     list.iter().map(|net| net.parse().unwrap()).collect()
@@ -45,6 +45,35 @@ fn interception_with_ipv6_and_kill_switch() {
     assert_eq!(
         ruleset(&rules).unwrap(),
         include_str!("golden/ipv6-kill-switch.nft")
+    );
+}
+
+fn lan() -> Lan {
+    Lan {
+        interface: "rcnft-c".to_owned(),
+        subnets: nets(&["10.99.0.0/24"]),
+    }
+}
+
+#[test]
+fn lan_gateway() {
+    let rules = Rules {
+        lan: Some(lan()),
+        ..Rules::default()
+    };
+    assert_eq!(ruleset(&rules).unwrap(), include_str!("golden/lan.nft"));
+}
+
+#[test]
+fn lan_gateway_with_kill_switch() {
+    let rules = Rules {
+        kill_switch: true,
+        lan: Some(lan()),
+        ..Rules::default()
+    };
+    assert_eq!(
+        ruleset(&rules).unwrap(),
+        include_str!("golden/lan-kill-switch.nft")
     );
 }
 

@@ -7,11 +7,13 @@ use anyhow::{Context, Result, bail};
 use raycat_netfilter::Rules;
 
 use crate::log::{error, info, warn};
+use crate::plan;
 
 /// Как часто проверяется, что таблица и правило маршрутизации на месте.
 pub(crate) const GUARD_INTERVAL: Duration = Duration::from_secs(30);
 
 const CAP_NET_ADMIN: u32 = 12;
+const IP_FORWARD: &str = "/proc/sys/net/ipv4/ip_forward";
 
 /// Проверки, после которых правила можно ставить: нужная привилегия и отсутствие
 /// утечки DNS встроенного резолвера Docker.
@@ -49,7 +51,21 @@ pub(crate) fn install(rules: &Rules) -> Result<()> {
             "выключен"
         }
     );
+    if let Some(lan) = &rules.lan {
+        info!("{}", plan::describe_lan(lan));
+        let forwarding = fs::read_to_string(IP_FORWARD).unwrap_or_default();
+        if !rules.kill_switch && forwarding_enabled(&forwarding) {
+            warn!(
+                "на хосте включена пересылка пакетов (ip_forward), а kill switch выключен: \
+                 ICMP и другие не tcp/udp пакеты устройств уходят наружу напрямую"
+            );
+        }
+    }
     Ok(())
+}
+
+fn forwarding_enabled(text: &str) -> bool {
+    text.trim() == "1"
 }
 
 /// Снимает правила при штатной остановке; ошибка только пишется в лог.
@@ -92,6 +108,13 @@ mod tests {
         assert_eq!(has_capability(granted, CAP_NET_ADMIN), Some(true));
         let root = "CapEff:\t000001ffffffffff\n";
         assert_eq!(has_capability(root, CAP_NET_ADMIN), Some(true));
+    }
+
+    #[test]
+    fn forwarding_is_read_from_the_sysctl_value() {
+        assert!(forwarding_enabled("1\n"));
+        assert!(!forwarding_enabled("0\n"));
+        assert!(!forwarding_enabled(""));
     }
 
     #[test]

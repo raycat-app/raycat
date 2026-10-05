@@ -15,6 +15,10 @@ table inet raycat {
         # приватные сети, multicast и broadcast идут напрямую
         ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 255.255.255.255/32 } return
         ip6 daddr { fc00::/7, fe80::/10, ff00::/8 } return
+        # tcp перехватывается, только если правила видели начало соединения (SYN):
+        # открытое до запуска (ssh к хосту) продолжает идти как шло
+        meta nfproto ipv4 meta l4proto tcp tcp flags & (fin | syn | rst | ack) == syn ct mark set 0x52540000
+        meta nfproto ipv4 meta l4proto tcp ct mark != 0x52540000 return
         # остальные tcp и udp уходят в xray
         meta nfproto ipv4 meta l4proto { tcp, udp } meta mark set 0x52540000
     }
@@ -35,6 +39,8 @@ table inet raycat {
         ct direction reply accept
         ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 255.255.255.255/32 } accept
         ip6 daddr { fc00::/7, fe80::/10, ff00::/8 } accept
+        # соединение, начала которого правила не видели (открыто до запуска): не рвём
+        meta l4proto tcp tcp flags & (fin | syn | rst | ack) != syn accept
         # kill switch: всё остальное отклоняется
         reject
     }

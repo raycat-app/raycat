@@ -28,6 +28,30 @@ table inet raycat {
         # помеченные пакеты достаются прозрачному сокету xray
         meta nfproto ipv4 meta l4proto tcp meta mark 0x52540000 tproxy ip to :12345 accept
         meta nfproto ipv4 meta l4proto udp meta mark 0x52540000 tproxy ip to :12345 accept
+        # устройства сети (rcnft-c): DNS идёт в xray, даже если сервер — сам хост
+        iifname "rcnft-c" meta nfproto ipv4 ip saddr { 10.99.0.0/24 } meta l4proto tcp th dport 53 meta mark set 0x52540000 tproxy ip to :12345 accept
+        iifname "rcnft-c" meta nfproto ipv4 ip saddr { 10.99.0.0/24 } meta l4proto udp th dport 53 meta mark set 0x52540000 tproxy ip to :12345 accept
+        # адреса самого хоста, multicast и broadcast не трогаем
+        iifname "rcnft-c" meta nfproto ipv4 ip saddr { 10.99.0.0/24 } fib daddr type { local, broadcast, multicast } return
+        # приватные сети и подсети устройств идут напрямую
+        iifname "rcnft-c" meta nfproto ipv4 ip saddr { 10.99.0.0/24 } ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 255.255.255.255/32 } return
+        # остальные tcp и udp устройств уходят в xray
+        iifname "rcnft-c" meta nfproto ipv4 ip saddr { 10.99.0.0/24 } meta l4proto tcp meta mark set 0x52540000 tproxy ip to :12345 accept
+        iifname "rcnft-c" meta nfproto ipv4 ip saddr { 10.99.0.0/24 } meta l4proto udp meta mark set 0x52540000 tproxy ip to :12345 accept
+    }
+
+    chain input {
+        type filter hook input priority filter; policy accept;
+        # к порту xray устройства сети напрямую не ходят
+        iifname "rcnft-c" meta nfproto ipv4 fib daddr type local meta l4proto { tcp, udp } th dport 12345 drop
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy accept;
+        # приватные сети и подсети устройств: пересылка как обычно
+        iifname "rcnft-c" ip6 daddr { fc00::/7, fe80::/10, ff00::/8 } return
+        # IPv6 не перехватывается, наружу его не выпускаем
+        iifname "rcnft-c" meta nfproto ipv6 drop
     }
 
     chain guard {

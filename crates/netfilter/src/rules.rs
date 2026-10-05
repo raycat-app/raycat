@@ -31,6 +31,72 @@ pub const DEFAULT_BYPASS: [Cidr; 7] = [
 const MAX_BYPASS: usize = 1024;
 const RESERVED_TABLES: [u32; 4] = [0, 253, 254, 255];
 const MAX_RULE_PRIORITY: u32 = 32765;
+const MAX_INTERFACE_BYTES: usize = 15;
+pub const MAX_LAN_SUBNETS: usize = 32;
+const LAN_PREFIXES: std::ops::RangeInclusive<u8> = 8..=31;
+
+/// Устройства локальной сети, трафик которых проходит через хост: перехватывается
+/// всё, что они отправляют, кроме адресов самого хоста и их собственных подсетей.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lan {
+    /// Интерфейс, на который приходят пакеты устройств.
+    pub interface: String,
+    /// Подсети устройств (только IPv4); пакеты из других адресов не перехватываются.
+    pub subnets: Vec<Cidr>,
+}
+
+/// Почему имя нельзя подставлять в правила nftables; `None` — имя годится.
+pub fn interface_name_problem(name: &str) -> Option<&'static str> {
+    if name.is_empty() {
+        return Some("имя интерфейса не может быть пустым");
+    }
+    if name.len() > MAX_INTERFACE_BYTES {
+        return Some("имя интерфейса длиннее 15 знаков");
+    }
+    if name == "." || name == ".." {
+        return Some("недопустимое имя интерфейса");
+    }
+    if !name
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Some("в имени интерфейса допустимы латинские буквы, цифры и знаки «-», «_», «.»");
+    }
+    None
+}
+
+/// Почему подсеть нельзя считать подсетью устройств; `None` — подсеть годится.
+pub fn lan_subnet_problem(net: &Cidr) -> Option<String> {
+    if !net.is_ipv4() {
+        return Some(format!("{net}: поддерживается только IPv4"));
+    }
+    if !LAN_PREFIXES.contains(&net.prefix()) {
+        return Some(format!(
+            "{net}: длина префикса подсети устройств должна быть от {} до {}",
+            LAN_PREFIXES.start(),
+            LAN_PREFIXES.end()
+        ));
+    }
+    None
+}
+
+impl Lan {
+    fn validate(&self) -> Result<()> {
+        if let Some(problem) = interface_name_problem(&self.interface) {
+            bail!("{problem}");
+        }
+        if self.subnets.is_empty() {
+            bail!("для локальной сети не задано ни одной подсети устройств");
+        }
+        if self.subnets.len() > MAX_LAN_SUBNETS {
+            bail!("подсетей устройств больше {MAX_LAN_SUBNETS}");
+        }
+        if let Some(problem) = self.subnets.iter().find_map(lan_subnet_problem) {
+            bail!("{problem}");
+        }
+        Ok(())
+    }
+}
 
 /// Всё, что нужно правилам перехвата. Значения по умолчанию — константы крейта.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +113,8 @@ pub struct Rules {
     pub kill_switch: bool,
     /// Перехватывать и IPv6. Если выключено, исходящий IPv6 запрещён.
     pub intercept_ipv6: bool,
+    /// Перехватывать ещё и трафик устройств локальной сети, который идёт через хост.
+    pub lan: Option<Lan>,
 }
 
 impl Default for Rules {
@@ -60,6 +128,7 @@ impl Default for Rules {
             bypass: DEFAULT_BYPASS.to_vec(),
             kill_switch: false,
             intercept_ipv6: false,
+            lan: None,
         }
     }
 }
@@ -89,6 +158,12 @@ impl Rules {
         }
         if let Some(net) = self.bypass.iter().find(|net| net.prefix() == 0) {
             bail!("сеть {net} отключила бы перехват целиком");
+        }
+        if let Some(lan) = &self.lan {
+            if self.intercept_ipv6 {
+                bail!("перехват IPv6 устройств локальной сети не поддерживается");
+            }
+            lan.validate()?;
         }
         Ok(())
     }
@@ -132,5 +207,54 @@ mod tests {
         assert!(broken(|r| r.rule_priority = 32766).contains("приоритет"));
         assert!(broken(|r| r.bypass = vec![Cidr::v4(0, 0, 0, 0, 0)]).contains("целиком"));
         assert!(broken(|r| r.bypass = vec![Cidr::v4(10, 0, 0, 0, 8); 1025]).contains("больше"));
+    }
+
+    fn lan(interface: &str, subnets: &[&str]) -> Lan {
+        Lan {
+            interface: interface.to_owned(),
+            subnets: subnets.iter().map(|net| net.parse().unwrap()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_sensible_lan_is_accepted() {
+        let rules = Rules {
+            lan: Some(lan("br-lan.10", &["192.168.1.0/24", "10.8.0.0/16"])),
+            ..Rules::default()
+        };
+        rules.validate().unwrap();
+    }
+
+    #[test]
+    fn dangerous_lan_settings_are_refused() {
+        let broken = |lan: Lan| {
+            Rules {
+                lan: Some(lan),
+                ..Rules::default()
+            }
+            .validate()
+            .unwrap_err()
+            .to_string()
+        };
+        assert!(broken(lan("", &["10.0.0.0/24"])).contains("пустым"));
+        assert!(broken(lan("abcdefghijklmnop", &["10.0.0.0/24"])).contains("15"));
+        assert!(broken(lan("eth0\" drop; #", &["10.0.0.0/24"])).contains("допустимы"));
+        assert!(broken(lan("eth 0", &["10.0.0.0/24"])).contains("допустимы"));
+        assert!(broken(lan("..", &["10.0.0.0/24"])).contains("недопустимое"));
+        assert!(broken(lan("eth0", &[])).contains("ни одной"));
+        assert!(broken(lan("eth0", &["fd00::/64"])).contains("IPv4"));
+        assert!(broken(lan("eth0", &["0.0.0.0/0"])).contains("от 8 до 31"));
+        assert!(broken(lan("eth0", &["10.0.0.5/32"])).contains("от 8 до 31"));
+        assert!(broken(lan("eth0", &["64.0.0.0/4"])).contains("от 8 до 31"));
+
+        let too_many = vec!["10.0.0.0/24"; MAX_LAN_SUBNETS + 1];
+        assert!(broken(lan("eth0", &too_many)).contains("больше"));
+
+        let both = Rules {
+            lan: Some(lan("eth0", &["10.0.0.0/24"])),
+            intercept_ipv6: true,
+            ..Rules::default()
+        };
+        assert!(both.validate().unwrap_err().to_string().contains("IPv6"));
     }
 }

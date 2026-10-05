@@ -30,13 +30,16 @@ macro_rules! say {
 
 /// `raycat check`: настройки, кэш подписок, конфиг xray и `xray run -test`.
 pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
-    plan::gateway_rules(config)?;
+    let rules = plan::gateway_rules(config)?;
     let machine_id = store.machine_id()?;
     say!(
         "Настройки в порядке: подписок {}, {}",
         config.subscriptions.len(),
         plan::describe_mode(config)
     );
+    if let Some(lan) = rules.as_ref().and_then(|rules| rules.lan.as_ref()) {
+        say!("{}", plan::describe_lan(lan));
+    }
     let mut cached: Vec<Vec<Node>> = Vec::new();
     for subscription in &config.subscriptions {
         let source = Source::new(config, subscription, &machine_id)?;

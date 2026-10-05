@@ -2,6 +2,7 @@
 //!
 //!   ctl print|install|remove [--kill-switch] [--ipv6] [--bypass СЕТЬ,СЕТЬ]
 //!       [--port N] [--own-mark N] [--intercept-mark N] [--table N] [--priority N]
+//!       [--lan-interface ИМЯ --lan-subnets СЕТЬ,СЕТЬ]
 //!   ctl defaults
 
 use std::env;
@@ -9,7 +10,7 @@ use std::env;
 use anyhow::{Context, Result, anyhow, bail};
 use raycat_netfilter::{
     Cidr, DEFAULT_INTERCEPT_MARK, DEFAULT_OWN_MARK, DEFAULT_ROUTE_TABLE, DEFAULT_RULE_PRIORITY,
-    DEFAULT_TPROXY_PORT, Rules, install, remove, ruleset,
+    DEFAULT_TPROXY_PORT, Lan, Rules, install, remove, ruleset,
 };
 
 fn number(text: &str) -> Result<u32> {
@@ -18,6 +19,15 @@ fn number(text: &str) -> Result<u32> {
         None => text.parse(),
     };
     parsed.with_context(|| format!("не число: {text}"))
+}
+
+fn nets(list: &str) -> Result<Vec<Cidr>> {
+    list.split(',')
+        .map(|net| {
+            net.parse::<Cidr>()
+                .map_err(|error| anyhow!("{net}: {error}"))
+        })
+        .collect()
 }
 
 fn main() -> Result<()> {
@@ -33,20 +43,15 @@ fn main() -> Result<()> {
     }
 
     let mut rules = Rules::default();
+    let (mut lan_interface, mut lan_subnets) = (None, None);
     while let Some(flag) = args.next() {
         let mut value = || args.next().ok_or_else(|| anyhow!("у {flag} нет значения"));
         match flag.as_str() {
             "--kill-switch" => rules.kill_switch = true,
             "--ipv6" => rules.intercept_ipv6 = true,
-            "--bypass" => {
-                rules.bypass = value()?
-                    .split(',')
-                    .map(|net| {
-                        net.parse::<Cidr>()
-                            .map_err(|error| anyhow!("{net}: {error}"))
-                    })
-                    .collect::<Result<_>>()?;
-            }
+            "--bypass" => rules.bypass = nets(&value()?)?,
+            "--lan-interface" => lan_interface = Some(value()?),
+            "--lan-subnets" => lan_subnets = Some(nets(&value()?)?),
             "--port" => rules.tproxy_port = number(&value()?)?.try_into()?,
             "--own-mark" => rules.own_mark = number(&value()?)?,
             "--intercept-mark" => rules.intercept_mark = number(&value()?)?,
@@ -55,6 +60,11 @@ fn main() -> Result<()> {
             other => bail!("неизвестный флаг {other}"),
         }
     }
+    rules.lan = match (lan_interface, lan_subnets) {
+        (None, None) => None,
+        (Some(interface), Some(subnets)) => Some(Lan { interface, subnets }),
+        _ => bail!("--lan-interface и --lan-subnets задаются вместе"),
+    };
 
     match command.as_str() {
         "print" => print!("{}", ruleset(&rules)?),

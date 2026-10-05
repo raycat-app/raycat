@@ -48,6 +48,8 @@ pin = "основная/🇳🇱 Нидерланды 1/A"
 type = "gateway"
 kill_switch = false
 lan = true
+lan_interface = "br-lan.10"
+lan_subnets = ["192.168.1.0/24", "10.8.0.0/16"]
 
 [dns]
 resolvers = ["9.9.9.9", "2606:4700:4700::1111"]
@@ -163,6 +165,9 @@ fn full_example() {
             lan: true
         }
     );
+    assert_eq!(config.lan.interface.as_deref(), Some("br-lan.10"));
+    let subnets: Vec<String> = config.lan.subnets.iter().map(ToString::to_string).collect();
+    assert_eq!(subnets, ["192.168.1.0/24", "10.8.0.0/16"]);
     assert_eq!(
         config.dns.resolvers,
         [
@@ -299,6 +304,91 @@ fn gateway_defaults_keep_the_kill_switch_on() {
             lan: false
         }
     );
+}
+
+#[test]
+fn lan_details_are_left_to_the_daemon_by_default() {
+    let config = parse(&format!(
+        "{OK_SUB}\n[mode]\ntype = \"gateway\"\nlan = true\n"
+    ));
+    assert_eq!(
+        config.mode,
+        Mode::Gateway {
+            kill_switch: true,
+            lan: true
+        }
+    );
+    assert_eq!(config.lan.interface, None);
+    assert!(config.lan.subnets.is_empty());
+}
+
+#[test]
+fn lan_details_are_checked() {
+    let gateway =
+        |extra: &str| format!("{OK_SUB}\n[mode]\ntype = \"gateway\"\nlan = true\n{extra}\n");
+    let list = problems(&gateway(
+        "lan_interface = \"eth0; drop\"\nlan_subnets = [\"fd00::/64\", \"10.0.0.5/32\", \"mars\", \"10.1.2.3/24\", \"192.168.1.0/24\"]",
+    ));
+    assert_eq!(list.len(), 5, "{list:?}");
+    assert!(has(&list, "mode.lan_interface"), "{list:?}");
+    for index in 0..4 {
+        assert!(
+            has(&list, &format!("mode.lan_subnets[{index}]")),
+            "{index}: {list:?}"
+        );
+    }
+    assert!(list.iter().any(|line| line.contains("только IPv4")));
+    assert!(list.iter().any(|line| line.contains("от 8 до 31")));
+    assert!(list.iter().any(|line| line.contains("биты хоста")));
+
+    let list = problems(&gateway("lan_subnets = []"));
+    assert!(has(&list, "mode.lan_subnets"), "{list:?}");
+    let many = format!("lan_subnets = [{}]", "\"10.0.0.0/24\",".repeat(33));
+    let list = problems(&gateway(&many));
+    assert!(has(&list, "mode.lan_subnets"), "{list:?}");
+}
+
+#[test]
+fn lan_details_do_not_turn_the_lan_gateway_on() {
+    let text = format!(
+        "{OK_SUB}\n[mode]\ntype = \"gateway\"\nlan_interface = \"eth0\"\nlan_subnets = [\"10.0.0.0/24\"]\n"
+    );
+    let config = parse(&text);
+    assert_eq!(
+        config.mode,
+        Mode::Gateway {
+            kill_switch: true,
+            lan: false
+        }
+    );
+    assert_eq!(config.lan.interface.as_deref(), Some("eth0"));
+    assert_eq!(config.lan.subnets.len(), 1);
+}
+
+#[test]
+fn environment_turns_the_lan_gateway_on() {
+    let file = format!("{OK_SUB}\n[mode]\ntype = \"gateway\"\n");
+    let config = Config::from_toml_str(&file, &env(&[("RAYCAT_LAN", "yes")])).unwrap();
+    assert_eq!(
+        config.mode,
+        Mode::Gateway {
+            kill_switch: true,
+            lan: true
+        }
+    );
+    let off = format!("{OK_SUB}\n[mode]\ntype = \"gateway\"\nlan = true\n");
+    let config = Config::from_toml_str(&off, &env(&[("RAYCAT_LAN", "0")])).unwrap();
+    assert_eq!(
+        config.mode,
+        Mode::Gateway {
+            kill_switch: true,
+            lan: false
+        }
+    );
+    let config = Config::from_toml_str(&off, &env(&[("RAYCAT_LAN", "")])).unwrap();
+    assert!(matches!(config.mode, Mode::Gateway { lan: true, .. }));
+    let list = problems_with_env(&file, &env(&[("RAYCAT_LAN", "maybe")]));
+    assert!(has(&list, "RAYCAT_LAN"), "{list:?}");
 }
 
 #[test]
