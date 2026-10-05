@@ -206,8 +206,8 @@ fetch_asset() {
 find_dev_tag() {
   download "$API/releases?per_page=30" "$tmp/releases.json" 1048576 ||
     die "не удалось получить список выпусков GitHub (возможно, лимит запросов): укажите версию через --version"
-  dev_tag=$(tr ',{' '\n\n' <"$tmp/releases.json" |
-    sed -n 's/^ *"tag_name": *"\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-dev\.[0-9][0-9]*\)".*/\1/p' |
+  dev_tag=$(tr ',' '\n' <"$tmp/releases.json" |
+    sed -n 's/.*"tag_name": *"\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-dev\.[0-9][0-9]*\)".*/\1/p' |
     head -n 1)
   if [ -z "$dev_tag" ]; then
     die "dev-выпусков на GitHub не нашлось"

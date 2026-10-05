@@ -241,6 +241,7 @@ cat >/tmp/releases-pretty.json <<'EOF'
 EOF
 printf '[{"tag_name":"v0.3.0-dev.9","draft":false},{"tag_name":"v0.2.0"}]' >/tmp/releases-compact.json
 printf '[{"tag_name":"v0.2.0"},{"tag_name":"v0.1.0"}]' >/tmp/releases-stable.json
+# shellcheck disable=SC2034,SC2154,SC2329
 find_tag() (
   fixture=$1
   # shellcheck disable=SC1091

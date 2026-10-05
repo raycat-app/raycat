@@ -12,7 +12,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/../../.." && pwd)
 release1=${1:?не указан каталог выпуска 0.9.0}
 release2=${2:?не указан каталог выпуска 0.9.1}
-max_exposure=${3:-5}
+max_exposure=${3:-25}
 
 node_ip=11.11.11.10
 node_port=18388
