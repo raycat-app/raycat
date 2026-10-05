@@ -1,22 +1,29 @@
 //! Узлы подписок и настройки → конфиг xray.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use raycat_config::{Config, Mode, Subscription};
-use raycat_netfilter::{DEFAULT_OWN_MARK, Rules};
+use raycat_netfilter::{DEFAULT_OWN_MARK, Lan, Rules};
 use raycat_xray::{Node, Settings, TagTable, compile};
 
-const LAN_UNAVAILABLE: &str = "шлюз для локальной сети (lan) появится в следующей версии";
-
-/// Правила перехвата для режима шлюза; `None` в режиме прокси.
+/// Правила перехвата для режима шлюза; `None` в режиме прокси. Для шлюза локальной
+/// сети здесь определяются интерфейс и подсети, которых нет в настройках.
 pub(crate) fn gateway_rules(config: &Config) -> Result<Option<Rules>> {
     match config.mode {
         Mode::Proxy { .. } => Ok(None),
         Mode::Gateway { kill_switch, lan } => {
-            if lan {
-                bail!(LAN_UNAVAILABLE);
-            }
+            let lan = if lan {
+                let lan = raycat_netfilter::resolve_lan(
+                    config.lan.interface.as_deref(),
+                    &config.lan.subnets,
+                )
+                .context("не удалось определить сеть устройств шлюза")?;
+                Some(lan)
+            } else {
+                None
+            };
             let rules = Rules {
                 kill_switch,
+                lan,
                 ..Rules::default()
             };
             rules.validate()?;
@@ -29,15 +36,30 @@ pub(crate) fn gateway_rules(config: &Config) -> Result<Option<Rules>> {
 pub(crate) fn describe_mode(config: &Config) -> String {
     match config.mode {
         Mode::Proxy { listen } => format!("режим прокси, адрес {listen}"),
-        Mode::Gateway { kill_switch, .. } => format!(
-            "режим шлюза, kill switch {}",
+        Mode::Gateway { kill_switch, lan } => format!(
+            "режим шлюза, kill switch {}{}",
             if kill_switch {
                 "включён"
             } else {
                 "выключен"
+            },
+            if lan {
+                ", для устройств локальной сети"
+            } else {
+                ""
             }
         ),
     }
+}
+
+/// Что перехватывается в локальной сети: для лога и вывода `check`.
+pub(crate) fn describe_lan(lan: &Lan) -> String {
+    let subnets: Vec<String> = lan.subnets.iter().map(ToString::to_string).collect();
+    format!(
+        "локальная сеть: интерфейс {}, перехватываются устройства из подсетей {}",
+        lan.interface,
+        subnets.join(", ")
+    )
 }
 
 /// Метка собственных сокетов демона: в режиме шлюза kill switch выпускает наружу
@@ -49,15 +71,17 @@ pub(crate) fn own_mark(config: &Config) -> Option<u32> {
     }
 }
 
-fn xray_mode(config: &Config) -> Result<raycat_xray::Mode> {
-    Ok(match (config.mode, gateway_rules(config)?) {
-        (Mode::Proxy { listen }, _) => raycat_xray::Mode::Proxy { listen },
-        (Mode::Gateway { .. }, Some(rules)) => raycat_xray::Mode::Gateway {
-            tproxy_port: rules.tproxy_port,
-            mark: rules.own_mark,
-        },
-        (Mode::Gateway { .. }, None) => bail!("режим шлюза без правил перехвата"),
-    })
+fn xray_mode(config: &Config) -> raycat_xray::Mode {
+    match config.mode {
+        Mode::Proxy { listen } => raycat_xray::Mode::Proxy { listen },
+        Mode::Gateway { .. } => {
+            let rules = Rules::default();
+            raycat_xray::Mode::Gateway {
+                tproxy_port: rules.tproxy_port,
+                mark: rules.own_mark,
+            }
+        }
+    }
 }
 
 /// Тег балансировщика в конфиге xray: в нём демон закрепляет выбранный узел.
@@ -82,7 +106,7 @@ pub(crate) fn compile_config(
     api_port: u16,
     tcp_congestion: Option<&str>,
 ) -> Result<Plan> {
-    let mode = xray_mode(config)?;
+    let mode = xray_mode(config);
     let subscriptions: Vec<raycat_xray::Subscription> = inputs
         .iter()
         .map(|(subscription, nodes)| raycat_xray::Subscription {
@@ -177,11 +201,42 @@ mod tests {
     }
 
     #[test]
-    fn a_lan_gateway_is_not_available_yet() {
-        let config = config("type = \"gateway\"\nlan = true", "");
-        let error = gateway_rules(&config).unwrap_err();
-        assert!(error.to_string().contains("lan"), "{error}");
-        assert!(plan(&config, &nodes()).is_err());
+    fn a_lan_gateway_takes_the_interface_and_subnets_from_the_settings() {
+        let config = config(
+            "type = \"gateway\"\nlan = true\nlan_interface = \"lo\"\nlan_subnets = [\"10.77.0.0/24\"]",
+            "",
+        );
+        let rules = gateway_rules(&config).unwrap().unwrap();
+        assert!(rules.kill_switch);
+        let lan = rules.lan.unwrap();
+        assert_eq!(lan.interface, "lo");
+        assert_eq!(lan.subnets.len(), 1);
+        assert_eq!(
+            describe_mode(&config),
+            "режим шлюза, kill switch включён, для устройств локальной сети"
+        );
+        assert_eq!(
+            describe_lan(&lan),
+            "локальная сеть: интерфейс lo, перехватываются устройства из подсетей 10.77.0.0/24"
+        );
+        assert!(plan(&config, &nodes()).is_ok());
+    }
+
+    #[test]
+    fn a_missing_lan_interface_stops_the_gateway() {
+        let config = config(
+            "type = \"gateway\"\nlan = true\nlan_interface = \"raycat-nope0\"\nlan_subnets = [\"10.77.0.0/24\"]",
+            "",
+        );
+        let error = format!("{:#}", gateway_rules(&config).unwrap_err());
+        assert!(error.contains("raycat-nope0"), "{error}");
+        assert!(error.contains("нет в системе"), "{error}");
+    }
+
+    #[test]
+    fn a_gateway_without_lan_has_no_lan_rules() {
+        let config = config("type = \"gateway\"", "");
+        assert_eq!(gateway_rules(&config).unwrap().unwrap().lan, None);
     }
 
     #[test]

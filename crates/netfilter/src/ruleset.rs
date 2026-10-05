@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::cidr::{Cidr, normalize};
-use crate::rules::Rules;
+use crate::rules::{Lan, Rules};
 
 pub(crate) const FAMILY: &str = "inet";
 pub(crate) const TABLE: &str = "raycat";
@@ -23,9 +23,17 @@ const ALWAYS_DIRECT: [Cidr; 4] = [
 /// Цепочки:
 /// * `output` (route) — метит исходящие tcp и udp меткой перехвата, после чего ядро
 ///   заново выбирает маршрут и отправляет пакет на loopback;
-/// * `prerouting` — отдаёт помеченные пакеты прозрачному сокету xray (TPROXY);
-/// * `guard` (есть при kill switch или без перехвата IPv6) — не выпускает наружу то,
-///   что не попало в перехват.
+/// * `prerouting` — отдаёт помеченные пакеты прозрачному сокету xray (TPROXY); для
+///   шлюза локальной сети сама метит пакеты устройств;
+/// * `input` и `forward` (только для локальной сети) — не пускают устройства
+///   напрямую к порту xray и не пересылают их наружу;
+/// * `guard` (есть при kill switch или без перехвата IPv6) — не выпускает наружу
+///   то, что не попало в перехват.
+///
+/// Входящие соединения хоста правила не трогают: ответы на них (`ct direction
+/// reply`) идут мимо перехвата и kill switch, а tcp-соединения, начало которых
+/// правила не видели (открытые до запуска), не перехватываются вовсе: у них нет
+/// метки соединения.
 pub fn ruleset(rules: &Rules) -> Result<String> {
     rules.validate()?;
     let (v4, v6) = direct_sets(rules);
@@ -40,6 +48,7 @@ pub fn ruleset(rules: &Rules) -> Result<String> {
         } else {
             "meta nfproto ipv4 "
         },
+        lan: rules.lan.as_ref().map(LanParts::new),
     };
 
     let mut lines: Vec<String> = Vec::new();
@@ -57,6 +66,12 @@ pub fn ruleset(rules: &Rules) -> Result<String> {
     output_chain(&mut push, &parts);
     push(0, String::new());
     prerouting_chain(&mut push, &parts, rules.intercept_ipv6);
+    if let Some(lan) = &parts.lan {
+        push(0, String::new());
+        input_chain(&mut push, &parts, lan);
+        push(0, String::new());
+        forward_chain(&mut push, &parts, lan, rules.kill_switch);
+    }
     if rules.kill_switch || !rules.intercept_ipv6 {
         push(0, String::new());
         guard_chain(&mut push, &parts, rules.kill_switch);
@@ -75,6 +90,31 @@ struct Parts {
     v6: String,
     /// Условие, не пускающее правило на IPv6, пока IPv6 не перехватывается.
     v4_only: &'static str,
+    lan: Option<LanParts>,
+}
+
+struct LanParts {
+    interface: String,
+    /// Подсети устройств в виде множества nft.
+    nets: String,
+}
+
+impl LanParts {
+    fn new(lan: &Lan) -> Self {
+        let nets = normalize(lan.subnets.iter().copied());
+        Self {
+            interface: lan.interface.clone(),
+            nets: render(&nets, true),
+        }
+    }
+
+    /// Начало правила: пакет пришёл от устройства сети по IPv4.
+    fn source(&self) -> String {
+        format!(
+            "iifname \"{}\" meta nfproto ipv4 ip saddr {}",
+            self.interface, self.nets
+        )
+    }
 }
 
 type Push<'a> = &'a mut dyn FnMut(usize, String);
@@ -113,6 +153,24 @@ fn output_chain(push: Push, parts: &Parts) {
     );
     push(2, format!("ip daddr {v4} return"));
     push(2, format!("ip6 daddr {v6} return"));
+    push(
+        2,
+        "# tcp перехватывается, только если правила видели начало соединения (SYN):".to_owned(),
+    );
+    push(
+        2,
+        "# открытое до запуска (ssh к хосту) продолжает идти как шло".to_owned(),
+    );
+    push(
+        2,
+        format!(
+            "{v4_only}meta l4proto tcp tcp flags & (fin | syn | rst | ack) == syn ct mark set {mark}"
+        ),
+    );
+    push(
+        2,
+        format!("{v4_only}meta l4proto tcp ct mark != {mark} return"),
+    );
     push(2, "# остальные tcp и udp уходят в xray".to_owned());
     push(
         2,
@@ -150,6 +208,118 @@ fn prerouting_chain(push: Push, parts: &Parts, ipv6: bool) {
             );
         }
     }
+    if let Some(lan) = &parts.lan {
+        lan_intercept(push, parts, lan);
+    }
+    push(1, "}".to_owned());
+}
+
+/// Пакеты устройств метятся здесь же, до выбора маршрута: по метке политика
+/// маршрутизации доставляет их локально, а `tproxy` отдаёт сокету xray. Без
+/// слушающего xray пакет всё равно уходит на loopback и получает отказ.
+fn lan_intercept(push: Push, parts: &Parts, lan: &LanParts) {
+    let Parts { mark, port, v4, .. } = parts;
+    let from = lan.source();
+    push(
+        2,
+        format!(
+            "# устройства сети ({}): DNS идёт в xray, даже если сервер — сам хост",
+            lan.interface
+        ),
+    );
+    for proto in ["tcp", "udp"] {
+        push(
+            2,
+            format!(
+                "{from} meta l4proto {proto} th dport 53 meta mark set {mark} tproxy ip to :{port} accept"
+            ),
+        );
+    }
+    push(
+        2,
+        "# адреса самого хоста, multicast и broadcast не трогаем".to_owned(),
+    );
+    push(
+        2,
+        format!("{from} fib daddr type {{ local, broadcast, multicast }} return"),
+    );
+    push(
+        2,
+        "# приватные сети и подсети устройств идут напрямую".to_owned(),
+    );
+    push(2, format!("{from} ip daddr {v4} return"));
+    push(2, "# остальные tcp и udp устройств уходят в xray".to_owned());
+    for proto in ["tcp", "udp"] {
+        push(
+            2,
+            format!(
+                "{from} meta l4proto {proto} meta mark set {mark} tproxy ip to :{port} accept"
+            ),
+        );
+    }
+}
+
+/// Перехваченные пакеты доставляются сокету xray со своим (чужим) адресом
+/// назначения, а настоящее обращение к порту xray — это попытка устройства
+/// воспользоваться им напрямую.
+fn input_chain(push: Push, parts: &Parts, lan: &LanParts) {
+    let port = parts.port;
+    push(1, "chain input {".to_owned());
+    push(
+        2,
+        "type filter hook input priority filter; policy accept;".to_owned(),
+    );
+    push(
+        2,
+        "# к порту xray устройства сети напрямую не ходят".to_owned(),
+    );
+    push(
+        2,
+        format!(
+            "iifname \"{}\" meta nfproto ipv4 fib daddr type local meta l4proto {{ tcp, udp }} th dport {port} drop",
+            lan.interface
+        ),
+    );
+    push(1, "}".to_owned());
+}
+
+/// Перехваченный трафик устройств до `forward` не доходит. Сюда попадает то, что
+/// перехват не затрагивает (ICMP, другие протоколы, IPv6), и пересылка
+/// на приватные адреса, например в сети Docker.
+fn forward_chain(push: Push, parts: &Parts, lan: &LanParts, kill_switch: bool) {
+    let Parts { v4, v6, .. } = parts;
+    let interface = &lan.interface;
+    push(1, "chain forward {".to_owned());
+    push(
+        2,
+        "type filter hook forward priority filter; policy accept;".to_owned(),
+    );
+    push(
+        2,
+        "# приватные сети и подсети устройств: пересылка как обычно".to_owned(),
+    );
+    if kill_switch {
+        push(2, format!("iifname \"{interface}\" ip daddr {v4} return"));
+    }
+    push(2, format!("iifname \"{interface}\" ip6 daddr {v6} return"));
+    if kill_switch {
+        push(
+            2,
+            "# kill switch: всё остальное от устройств наружу не пересылается, \
+             даже если на хосте включён ip_forward"
+                .to_owned(),
+        );
+        push(2, format!("iifname \"{interface}\" drop"));
+    } else {
+        push(
+            2,
+            "# IPv6 не перехватывается, наружу его не выпускаем".to_owned(),
+        );
+        push(
+            2,
+            format!("iifname \"{interface}\" meta nfproto ipv6 drop"),
+        );
+    }
     push(1, "}".to_owned());
 }
 
@@ -173,6 +343,15 @@ fn guard_chain(push: Push, parts: &Parts, kill_switch: bool) {
     push(2, "ct direction reply accept".to_owned());
     push(2, format!("ip daddr {v4} accept"));
     push(2, format!("ip6 daddr {v6} accept"));
+    push(
+        2,
+        "# соединение, начала которого правила не видели (открыто до запуска): не рвём"
+            .to_owned(),
+    );
+    push(
+        2,
+        "meta l4proto tcp tcp flags & (fin | syn | rst | ack) != syn accept".to_owned(),
+    );
     if kill_switch {
         push(2, "# kill switch: всё остальное отклоняется".to_owned());
         push(2, "reject".to_owned());
@@ -193,16 +372,21 @@ pub(crate) fn removal() -> String {
 }
 
 fn direct_sets(rules: &Rules) -> (String, String) {
-    let nets = normalize(rules.bypass.iter().copied().chain(ALWAYS_DIRECT));
-    let render = |v4: bool| {
-        let items: Vec<String> = nets
-            .iter()
-            .filter(|net| net.is_ipv4() == v4)
-            .map(ToString::to_string)
-            .collect();
-        format!("{{ {} }}", items.join(", "))
-    };
-    (render(true), render(false))
+    let lan = rules
+        .lan
+        .iter()
+        .flat_map(|lan| lan.subnets.iter().copied());
+    let nets = normalize(rules.bypass.iter().copied().chain(ALWAYS_DIRECT).chain(lan));
+    (render(&nets, true), render(&nets, false))
+}
+
+fn render(nets: &[Cidr], v4: bool) -> String {
+    let items: Vec<String> = nets
+        .iter()
+        .filter(|net| net.is_ipv4() == v4)
+        .map(ToString::to_string)
+        .collect();
+    format!("{{ {} }}", items.join(", "))
 }
 
 #[cfg(test)]
@@ -222,6 +406,27 @@ mod tests {
             .iter()
             .position(|line| line.contains(needle))
             .unwrap_or_else(|| panic!("нет строки с «{needle}»"))
+    }
+
+    /// Строки цепочки от её заголовка до закрывающей скобки (без неё).
+    fn chain<'a>(lines: &'a [String], name: &str) -> &'a [String] {
+        let start = position(lines, &format!("chain {name} {{"));
+        let length = lines[start..]
+            .iter()
+            .position(|line| line == "}")
+            .unwrap_or_else(|| panic!("цепочка {name} не закрыта"));
+        &lines[start..start + length]
+    }
+
+    fn lan_rules(kill_switch: bool) -> Rules {
+        Rules {
+            kill_switch,
+            lan: Some(Lan {
+                interface: "eth1".to_owned(),
+                subnets: vec!["10.77.0.0/24".parse().unwrap()],
+            }),
+            ..Rules::default()
+        }
     }
 
     #[test]
@@ -248,11 +453,23 @@ mod tests {
     }
 
     #[test]
+    fn only_connections_started_under_the_rules_are_intercepted() {
+        let lines = lines_of(&Rules::default());
+        let private = position(&lines, "ip6 daddr");
+        let start = position(&lines, "tcp flags & (fin | syn | rst | ack) == syn ct mark set");
+        let foreign = position(&lines, "meta l4proto tcp ct mark != 0x52540000 return");
+        let all = position(&lines, "meta l4proto { tcp, udp } meta mark set");
+        assert!(private < start && start < foreign && foreign < all);
+        assert!(lines[start].ends_with("ct mark set 0x52540000"));
+    }
+
+    #[test]
     fn ipv6_is_blocked_unless_intercepted() {
         let text = ruleset(&Rules::default()).unwrap();
         assert!(text.contains("meta nfproto ipv6 reject"));
         assert!(!text.contains("tproxy ip6"));
         assert!(text.contains("meta nfproto ipv4 meta l4proto { tcp, udp } meta mark set"));
+        assert!(text.contains("meta nfproto ipv4 meta l4proto tcp ct mark != 0x52540000 return"));
 
         let rules = Rules {
             intercept_ipv6: true,
@@ -265,6 +482,7 @@ mod tests {
             "без kill switch защищать нечего"
         );
         assert!(!text.contains("meta nfproto ipv4 meta l4proto { tcp, udp }"));
+        assert!(text.contains("\n        meta l4proto tcp ct mark != 0x52540000 return\n"));
     }
 
     #[test]
@@ -283,7 +501,7 @@ mod tests {
             .filter(|line| line.ends_with(" accept"))
             .map(|line| line.trim_end_matches(" accept"))
             .collect();
-        assert_eq!(allowed.len(), 6);
+        assert_eq!(allowed.len(), 7);
         assert_eq!(
             &allowed[..4],
             [
@@ -294,6 +512,10 @@ mod tests {
             ]
         );
         assert!(allowed[4].starts_with("ip daddr {") && allowed[5].starts_with("ip6 daddr {"));
+        assert_eq!(
+            allowed[6],
+            "meta l4proto tcp tcp flags & (fin | syn | rst | ack) != syn"
+        );
     }
 
     #[test]
@@ -333,5 +555,96 @@ mod tests {
             removal(),
             "add table inet raycat\ndelete table inet raycat\n"
         );
+    }
+
+    #[test]
+    fn without_lan_there_are_no_lan_chains() {
+        let text = ruleset(&Rules {
+            kill_switch: true,
+            ..Rules::default()
+        })
+        .unwrap();
+        for chain in ["chain input", "chain forward", "iifname"] {
+            assert!(!text.contains(chain), "{chain}");
+        }
+    }
+
+    #[test]
+    fn lan_devices_are_intercepted_before_routing_with_the_same_mark() {
+        let lines = lines_of(&lan_rules(true));
+        let dns = position(&lines, "th dport 53 meta mark set 0x52540000 tproxy");
+        let host = position(&lines, "fib daddr type { local, broadcast, multicast } return");
+        let direct = position(
+            &lines,
+            "iifname \"eth1\" meta nfproto ipv4 ip saddr { 10.77.0.0/24 } ip daddr",
+        );
+        let all = position(
+            &lines,
+            "meta l4proto tcp meta mark set 0x52540000 tproxy ip to :12345 accept",
+        );
+        assert!(dns < host && host < direct && direct < all);
+        let intercepting = lines
+            .iter()
+            .filter(|line| line.contains("tproxy") && line.starts_with("iifname \"eth1\""))
+            .count();
+        assert_eq!(intercepting, 4, "dns и остальное, tcp и udp");
+        assert!(
+            lines
+                .iter()
+                .filter(|line| line.contains("tproxy") && line.starts_with("iifname"))
+                .all(|line| line.contains("ip saddr { 10.77.0.0/24 }")),
+            "перехватываются только устройства из своих подсетей"
+        );
+    }
+
+    #[test]
+    fn lan_subnets_never_go_through_xray() {
+        let text = ruleset(&lan_rules(false)).unwrap();
+        assert!(
+            text.contains("ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 255.255.255.255/32 } return"),
+            "10.77.0.0/24 уже внутри 10.0.0.0/8"
+        );
+        let public = Rules {
+            lan: Some(Lan {
+                interface: "eth1".to_owned(),
+                subnets: vec!["203.0.113.0/24".parse().unwrap()],
+            }),
+            ..Rules::default()
+        };
+        let text = ruleset(&public).unwrap();
+        assert!(text.contains("ip daddr { 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 203.0.113.0/24, 224.0.0.0/4, 255.255.255.255/32 } return"));
+    }
+
+    #[test]
+    fn the_xray_port_is_closed_to_devices_and_nothing_else_is_dropped_in_input() {
+        let lines = lines_of(&lan_rules(false));
+        let input = position(&lines, "chain input");
+        assert_eq!(
+            lines[input + 3],
+            "iifname \"eth1\" meta nfproto ipv4 fib daddr type local meta l4proto { tcp, udp } th dport 12345 drop"
+        );
+        assert_eq!(lines[input + 4], "}");
+    }
+
+    #[test]
+    fn the_kill_switch_stops_forwarding_from_devices() {
+        let lines = lines_of(&lan_rules(true));
+        let body = chain(&lines, "forward");
+        assert_eq!(body.last().unwrap(), "iifname \"eth1\" drop");
+        assert!(
+            body.iter()
+                .any(|line| line.starts_with("iifname \"eth1\" ip daddr {"))
+        );
+    }
+
+    #[test]
+    fn without_the_kill_switch_only_ipv6_is_not_forwarded() {
+        let lines = lines_of(&lan_rules(false));
+        let body = chain(&lines, "forward");
+        assert_eq!(
+            body.last().unwrap(),
+            "iifname \"eth1\" meta nfproto ipv6 drop"
+        );
+        assert!(!body.iter().any(|line| line.ends_with("eth1\" drop")));
     }
 }

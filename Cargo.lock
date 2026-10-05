@@ -1382,6 +1382,7 @@ dependencies = [
 name = "raycat-config"
 version = "0.1.0"
 dependencies = [
+ "raycat-netfilter",
  "serde",
  "toml",
 ]

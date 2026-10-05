@@ -59,6 +59,27 @@ impl Cidr {
         Ok(Self { addr, prefix })
     }
 
+    /// Сеть, которой принадлежит адрес: биты хоста обнуляются (`192.168.1.10/24` →
+    /// `192.168.1.0/24`).
+    pub fn containing(addr: IpAddr, prefix: u8) -> Result<Self, CidrError> {
+        let network = match addr {
+            IpAddr::V4(v4) => {
+                if prefix > 32 {
+                    return Err(CidrError::Prefix { max: 32 });
+                }
+                let mask = u32::MAX.checked_shl(32 - u32::from(prefix)).unwrap_or(0);
+                IpAddr::V4(Ipv4Addr::from(u32::from(v4) & mask))
+            }
+            IpAddr::V6(v6) => {
+                if prefix > 128 {
+                    return Err(CidrError::Prefix { max: 128 });
+                }
+                IpAddr::V6(Ipv6Addr::from(u128::from(v6) & mask(prefix)))
+            }
+        };
+        Self::new(network, prefix)
+    }
+
     pub(crate) const fn v4(a: u8, b: u8, c: u8, d: u8, prefix: u8) -> Self {
         Self {
             addr: IpAddr::V4(Ipv4Addr::new(a, b, c, d)),
@@ -174,6 +195,24 @@ mod tests {
         );
         assert_eq!("10.1.2.3/8".parse::<Cidr>(), Err(CidrError::HostBits));
         assert_eq!("fc00::1/7".parse::<Cidr>(), Err(CidrError::HostBits));
+    }
+
+    #[test]
+    fn containing_clears_the_host_bits() {
+        let of = |text: &str, prefix| Cidr::containing(text.parse().unwrap(), prefix).unwrap();
+        assert_eq!(of("192.168.1.10", 24).to_string(), "192.168.1.0/24");
+        assert_eq!(of("10.77.0.2", 8).to_string(), "10.0.0.0/8");
+        assert_eq!(of("10.77.0.2", 32).to_string(), "10.77.0.2/32");
+        assert_eq!(of("10.77.0.2", 0).to_string(), "0.0.0.0/0");
+        assert_eq!(of("fd00:1:2::5", 48).to_string(), "fd00:1:2::/48");
+        assert_eq!(
+            Cidr::containing("10.0.0.1".parse().unwrap(), 33),
+            Err(CidrError::Prefix { max: 32 })
+        );
+        assert_eq!(
+            Cidr::containing("::1".parse().unwrap(), 129),
+            Err(CidrError::Prefix { max: 128 })
+        );
     }
 
     #[test]

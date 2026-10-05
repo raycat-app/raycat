@@ -14,6 +14,7 @@ const SEED: &str = "RAYCAT_SEED";
 const MODE: &str = "RAYCAT_MODE";
 const LISTEN: &str = "RAYCAT_LISTEN";
 const KILL_SWITCH: &str = "RAYCAT_KILL_SWITCH";
+const LAN: &str = "RAYCAT_LAN";
 const LOG: &str = "RAYCAT_LOG";
 
 const ENV_SUBSCRIPTION_NAME: &str = "основная";
@@ -84,6 +85,12 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
         match parse_bool(flag) {
             Some(flag) => raw.mode.kill_switch = Some(flag),
             None => p.add(KILL_SWITCH, BOOL_HINT),
+        }
+    }
+    if let Some(flag) = get(LAN) {
+        match parse_bool(flag) {
+            Some(flag) => raw.mode.lan = Some(flag),
+            None => p.add(LAN, BOOL_HINT),
         }
     }
     if let Some(level) = get(LOG) {

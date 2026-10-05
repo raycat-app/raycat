@@ -59,6 +59,8 @@ pub(crate) struct RawMode {
     pub(crate) listen: Option<String>,
     pub(crate) kill_switch: Option<bool>,
     pub(crate) lan: Option<bool>,
+    pub(crate) lan_interface: Option<String>,
+    pub(crate) lan_subnets: Option<Vec<String>>,
 }
 
 #[derive(Default, Deserialize)]

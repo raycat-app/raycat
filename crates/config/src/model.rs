@@ -3,6 +3,8 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use raycat_netfilter::Cidr;
+
 use crate::link;
 use crate::pattern::Pattern;
 
@@ -35,6 +37,7 @@ pub struct Config {
     pub subscriptions: Vec<Subscription>,
     pub selection: Selection,
     pub mode: Mode,
+    pub lan: Lan,
     pub dns: Dns,
     pub routing: Routing,
     pub xray: Xray,
@@ -132,6 +135,17 @@ pub struct Pin {
 pub enum Mode {
     Proxy { listen: SocketAddr },
     Gateway { kill_switch: bool, lan: bool },
+}
+
+/// Устройства локальной сети за шлюзом (`lan = true`): что не задано, демон
+/// определяет сам.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Lan {
+    /// Интерфейс, на который приходят пакеты устройств; `None` — интерфейс маршрута
+    /// по умолчанию.
+    pub interface: Option<String>,
+    /// Подсети устройств (IPv4); пусто — подсети интерфейса.
+    pub subnets: Vec<Cidr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

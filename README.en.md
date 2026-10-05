@@ -125,6 +125,61 @@ xhttp_connections = 4       # 1 to 16; unset means whatever the provider sets
   start if the host's UDP buffers are below 7.5 MiB: raise `net.core.rmem_max` and
   `net.core.wmem_max` on the host.
 
+## Gateway for the local network
+
+raycat can be a gateway for the devices of your network: TVs, phones, consoles
+that have no VPN of their own. The devices reach the internet through the host
+running raycat, which intercepts their TCP and UDP and sends it into the tunnel.
+
+**Running it.** raycat must run in the network namespace of the host itself: as a
+systemd service or in Docker with `network_mode: host`. It needs the
+`CAP_NET_ADMIN` capability (a service running as root, or `cap_add: [NET_ADMIN]`).
+
+```toml
+# /etc/raycat/config.toml
+[mode]
+type = "gateway"
+lan = true
+# lan_interface = "eth0"                # default: the interface of the default route
+# lan_subnets = ["192.168.1.0/24"]      # default: the subnets of that interface
+```
+
+```yaml
+# compose.yml
+services:
+  raycat:
+    image: ghcr.io/raycat-app/raycat
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    restart: unless-stopped
+    environment:
+      RAYCAT_SUBSCRIPTION: https://…
+      RAYCAT_APP: happ
+      RAYCAT_PLATFORM: windows
+      RAYCAT_MODE: gateway
+      RAYCAT_LAN: "true"
+```
+
+`raycat check` shows which interface and subnets will be intercepted.
+
+**Devices.** Set the host address as both the gateway and the DNS server: on the
+device itself, or in the DHCP of the router that hands out addresses. Device DNS
+(any server, port 53) goes through raycat too, so names resolve to placeholder
+addresses (fake-IP), just like on the host itself. Device IPv6 is blocked: turn it
+off on the device or in the router, or the device will bypass the host.
+
+**The host needs nothing else.** Do not enable forwarding (`ip_forward`): intercepted
+packets are delivered locally, and raycat does not touch sysctl. If forwarding is on
+for other reasons, the kill switch still keeps the devices from leaving directly,
+bypassing the tunnel.
+
+**The host stays reachable.** Incoming connections to the host (SSH and other
+services) and the replies to them are left alone at start, when xray fails and at
+stop. The host's own addresses, private networks (Docker networks and the other
+devices of your network included), multicast and broadcast are not intercepted
+either. On a clean stop raycat removes its rules; after a crash they stay in place to
+hold the kill switch, and the next start installs them again.
+
 ## Contributing
 
 Suggestions and fixes are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) (in
