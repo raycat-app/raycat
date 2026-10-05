@@ -48,7 +48,10 @@ RUN set -eu; \
     test "$(grep -c '^toolchain ' go.mod)" -eq 0; \
     sed "s/^go ${XRAY_GO_DIRECTIVE}\$/go ${GO_VERSION%.*}/" go.mod > /noaes.mod; \
     cp go.sum /noaes.sum; \
-    test "$(diff go.mod /noaes.mod | grep -c '^[<>]')" -eq 2
+    grep -qx "go ${GO_VERSION%.*}" /noaes.mod; \
+    grep -v '^go ' go.mod > /upstream.rest; \
+    grep -v '^go ' /noaes.mod > /noaes.rest; \
+    cmp /upstream.rest /noaes.rest
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-modfile=/noaes.mod
 RUN set -eu; \
     case "${TARGETARCH:-}${TARGETVARIANT:-}" in \
@@ -66,6 +69,7 @@ RUN set -eu; \
 FROM scratch AS xray-noaes
 COPY --from=xray-noaes-build /out/xray /out/xray
 
+# hadolint ignore=DL3006
 FROM xray-${XRAY_BUILD} AS xray
 
 FROM ${ALPINE_IMAGE}
