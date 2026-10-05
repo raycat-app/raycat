@@ -432,10 +432,111 @@ jobs:
       - name: Стенд
         run: bash .github/e2e/gateway.sh
 
+  installer-lint:
+    name: "Установщик: shellcheck"
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: shellcheck
+      - name: shellcheck
+        run: |
+          shellcheck --shell=sh deploy/install.sh .github/e2e/installer/container.sh
+          shellcheck --shell=bash .github/e2e/installer/release.sh .github/e2e/installer/systemd.sh
+      - name: Разбор dash и bash
+        run: |
+          dash -n deploy/install.sh
+          dash -n .github/e2e/installer/container.sh
+          bash -n .github/e2e/installer/release.sh
+          bash -n .github/e2e/installer/systemd.sh
+
+  installer:
+    name: "Установщик: ${{ matrix.image }}"
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:12-slim", "alpine:3.24"]
+    env:
+      IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: raycat-x86_64-unknown-linux-musl
+          path: dist
+      - name: Скачивание xray
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' versions.toml)
+          sha256=$(sed -n 's/^x86_64 = "\(.*\)"/\1/p' versions.toml)
+          test -n "$version" && test -n "$sha256"
+          archive="Xray-linux-64.zip"
+          curl -fsSLO "https://github.com/XTLS/Xray-core/releases/download/v${version}/${archive}"
+          echo "${sha256}  ${archive}" | sha256sum -c -
+          unzip -q "$archive" xray
+          ./xray version
+      - name: Ресурсы выпуска
+        run: |
+          chmod +x dist/raycat
+          bash .github/e2e/installer/release.sh "$RUNNER_TEMP/release" 0.9.0 dist/raycat ./xray
+          bash .github/e2e/installer/release.sh "$RUNNER_TEMP/release2" 0.9.1 dist/raycat ./xray pad
+      - name: Стенд
+        run: |
+          docker run --rm \
+            -v "$PWD/.github/e2e/installer:/e2e:ro" \
+            -v "$PWD/deploy:/repo/deploy:ro" \
+            -v "$RUNNER_TEMP/release:/release:ro" \
+            -v "$RUNNER_TEMP/release2:/release2:ro" \
+            "$IMAGE" sh /e2e/container.sh
+
+  installer-systemd:
+    name: "Установщик: systemd"
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: raycat-x86_64-unknown-linux-musl
+          path: dist
+      - name: Скачивание xray
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' versions.toml)
+          sha256=$(sed -n 's/^x86_64 = "\(.*\)"/\1/p' versions.toml)
+          test -n "$version" && test -n "$sha256"
+          archive="Xray-linux-64.zip"
+          curl -fsSLO "https://github.com/XTLS/Xray-core/releases/download/v${version}/${archive}"
+          echo "${sha256}  ${archive}" | sha256sum -c -
+          unzip -q "$archive" xray
+          ./xray version
+      - name: nftables
+        run: sudo apt-get update -q && sudo apt-get install -y -q nftables
+      - name: Ресурсы выпуска
+        run: |
+          chmod +x dist/raycat
+          bash .github/e2e/installer/release.sh "$RUNNER_TEMP/release" 0.9.0 dist/raycat ./xray
+          bash .github/e2e/installer/release.sh "$RUNNER_TEMP/release2" 0.9.1 dist/raycat ./xray pad
+      - name: Стенд
+        run: bash .github/e2e/installer/systemd.sh "$RUNNER_TEMP/release" "$RUNNER_TEMP/release2"
+
   result:
     name: Итог
     if: ${{ always() }}
-    needs: [lint, lockfile, test, msrv, deny, workflows, build, image, xray-noaes-armv7, xray-config, xray-api, e2e-proxy, nftables, e2e-gateway]
+    needs: [lint, lockfile, test, msrv, deny, workflows, build, image, xray-noaes-armv7, xray-config, xray-api, e2e-proxy, nftables, e2e-gateway, installer-lint, installer, installer-systemd]
     runs-on: ubuntu-24.04
     permissions: {}
     steps:

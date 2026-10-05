@@ -43,6 +43,61 @@ the same core Happ uses.
 - A separate image variant (the `-noaes` tag) for Raspberry Pi 3/4 and other CPUs
   without hardware AES, with faster encryption on such hardware.
 
+## Installing on a server
+
+> [!NOTE]
+> The first version has not been released yet: the installer will work once releases
+> exist. Until the first stable release is published, `--channel dev` installs the
+> latest dev build.
+
+You need root, `curl` or `wget`, `tar` and `sha256sum`. One command:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/raycat-app/raycat/main/deploy/install.sh | sudo sh
+```
+
+Or download the script first and read it:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/raycat-app/raycat/main/deploy/install.sh
+less install.sh
+sudo sh install.sh --dry-run   # the plan, no changes
+sudo sh install.sh
+```
+
+The installer picks the build for your CPU (x86_64, aarch64, armv7; on CPUs without
+AES, such as Raspberry Pi 3/4, it takes the `-noaes` xray core), verifies the
+checksum against `SHA256SUMS` and changes nothing on any mismatch. If `gh` is
+installed and signed in, it also verifies the provenance of the archive
+(`gh attestation verify`). Then it lays out the files:
+
+| What | Where |
+| --- | --- |
+| program | `/usr/local/bin/raycat` |
+| xray core | `/usr/libexec/raycat/xray` |
+| settings | `/etc/raycat/config.toml` (0600, an existing file is left alone) |
+| state | `/var/lib/raycat` |
+| service | `/etc/systemd/system/raycat.service` |
+| completions, man page, license | `/usr/local/share/…` |
+
+The installer does not change the host's network settings: the daemon sets up
+gateway mode itself, from the settings file. With systemd, the service is enabled at
+boot. On the first install it is not started yet: put your subscription link into
+`/etc/raycat/config.toml` (a commented example is created for you) and run
+`sudo systemctl start raycat`. After that, use `sudo raycat status`, `nodes`, `tui`
+and `journalctl -u raycat -f`. Without systemd the installer prints the command to
+start the daemon by hand (`raycat daemon`).
+
+- **The dev channel** (the latest build from `main`, for the adventurous): pass the
+  options after `sh -s --`: `curl -fsSL … | sudo sh -s -- --channel dev`. A specific
+  version: `--version 1.2.3`.
+- **Updating**: run the installer again. Settings are kept; the service restarts
+  only if the files changed.
+- **Removing**: `sudo sh install.sh --uninstall`. Settings and state stay;
+  `--uninstall --purge` deletes them too (the provider will see a new device after a
+  fresh install).
+- **All options**: `sh install.sh --help`.
+
 ## Performance
 
 Everything is optional and set in the `[xray]` section of the settings file:
