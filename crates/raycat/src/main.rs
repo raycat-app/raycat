@@ -17,6 +17,7 @@ mod term;
 #[cfg(test)]
 mod testing;
 mod tui;
+mod tuning;
 mod updater;
 mod util;
 mod xray;

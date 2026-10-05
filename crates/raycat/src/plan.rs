@@ -69,14 +69,18 @@ pub(crate) struct Plan {
     pub(crate) nodes: usize,
     pub(crate) skipped: usize,
     pub(crate) tags: TagTable,
+    /// В конфиге есть узлы на UDP-транспортах (QUIC и подобные).
+    pub(crate) quic: bool,
 }
 
 /// Собирает конфиг из узлов подписок в порядке настроек (это их приоритет), оставив
-/// узлы, которые пропускают `allow` и `deny` своей подписки.
+/// узлы, которые пропускают `allow` и `deny` своей подписки. `tcp_congestion` —
+/// уже выбранный алгоритм (см. `tuning`), а не настройка из файла.
 pub(crate) fn compile_config(
     config: &Config,
     inputs: &[(&Subscription, &[Node])],
     api_port: u16,
+    tcp_congestion: Option<&str>,
 ) -> Result<Plan> {
     let mode = xray_mode(config)?;
     let subscriptions: Vec<raycat_xray::Subscription> = inputs
@@ -94,6 +98,8 @@ pub(crate) fn compile_config(
     settings.dns.resolvers.clone_from(&config.dns.resolvers);
     settings.probe.url.clone_from(&config.selection.check_url);
     settings.probe.interval = config.selection.check_interval;
+    settings.tcp_congestion = tcp_congestion.map(str::to_owned);
+    settings.xhttp_connections = config.xray.xhttp_connections;
     let compiled = compile(&subscriptions, &settings)?;
     let json = serde_json::to_vec(&compiled.config).context("не удалось записать конфиг xray")?;
     Ok(Plan {
@@ -101,6 +107,7 @@ pub(crate) fn compile_config(
         nodes: compiled.tags.entries().len(),
         skipped: compiled.skipped.len(),
         tags: compiled.tags,
+        quic: compiled.quic,
     })
 }
 
@@ -127,7 +134,7 @@ mod tests {
     }
 
     fn plan(config: &Config, nodes: &[Node]) -> Result<Plan> {
-        compile_config(config, &[(&config.subscriptions[0], nodes)], 10_085)
+        compile_config(config, &[(&config.subscriptions[0], nodes)], 10_085, None)
     }
 
     fn outbound_tags(plan: &Plan) -> Vec<String> {
@@ -243,7 +250,62 @@ mod tests {
             (&config.subscriptions[0], &all[1..]),
             (&config.subscriptions[1], &all[..1]),
         ];
-        let plan = compile_config(&config, &inputs, 10_085).unwrap();
+        let plan = compile_config(&config, &inputs, 10_085, None).unwrap();
         assert_eq!(plan.nodes, 2);
+    }
+
+    fn xhttp_node() -> Node {
+        Node {
+            name: "xhttp".to_owned(),
+            outbounds: vec![serde_json::json!({
+                "tag": "proxy",
+                "protocol": "vless",
+                "settings": {"vnext": [{
+                    "address": "203.0.113.9",
+                    "port": 443,
+                    "users": [{"id": "00000000-0000-0000-0000-000000000000", "encryption": "none"}]
+                }]},
+                "streamSettings": {"network": "xhttp", "security": "tls"}
+            })],
+        }
+    }
+
+    fn json_of(config: &Config, tcp_congestion: Option<&str>) -> serde_json::Value {
+        let nodes = [xhttp_node()];
+        let plan = compile_config(
+            config,
+            &[(&config.subscriptions[0], nodes.as_slice())],
+            10_085,
+            tcp_congestion,
+        )
+        .unwrap();
+        serde_json::from_slice(&plan.json).unwrap()
+    }
+
+    #[test]
+    fn performance_settings_reach_the_compiler() {
+        let config = config("type = \"proxy\"\n[xray]\nxhttp_connections = 6", "");
+        let json = json_of(&config, Some("bbr"));
+        let stream = &json["outbounds"][0]["streamSettings"];
+
+        assert_eq!(stream["sockopt"]["tcpCongestion"], "bbr");
+        assert_eq!(stream["xhttpSettings"]["xmux"]["maxConnections"], 6);
+        assert_eq!(json["log"]["access"], "none");
+    }
+
+    #[test]
+    fn without_settings_nothing_is_tuned() {
+        let config = config("type = \"proxy\"", "");
+        let json = json_of(&config, None);
+        let text = serde_json::to_string(&json).unwrap();
+
+        assert!(!text.contains("tcpCongestion"));
+        assert!(!text.contains("xmux"));
+    }
+
+    #[test]
+    fn plain_nodes_are_not_quic() {
+        let config = config("type = \"proxy\"", "");
+        assert!(!plan(&config, &nodes()).unwrap().quic);
     }
 }

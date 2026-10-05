@@ -145,11 +145,24 @@ pub struct Routing {
     pub provider: bool,
 }
 
+/// Алгоритм управления перегрузкой TCP для исходящих соединений к узлам.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TcpCongestion {
+    /// Демон включает BBR, только если хост это гарантированно позволяет.
+    Auto,
+    Off,
+    /// Имя алгоритма ядра (`bbr`, `cubic`, …); ставится без проверки возможностей хоста.
+    Algorithm(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Xray {
     pub path: PathBuf,
     /// В байтах.
     pub memory_limit: u64,
+    pub tcp_congestion: TcpCongestion,
+    /// Число параллельных соединений XHTTP; `None` — как у провайдера.
+    pub xhttp_connections: Option<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

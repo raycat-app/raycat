@@ -54,16 +54,23 @@ pub struct Settings {
     pub probe: ProbeSettings,
     /// Порт API xray; слушается только `127.0.0.1`.
     pub api_port: u16,
+    /// Алгоритм управления перегрузкой для TCP-соединений к узлам. Компилятор не
+    /// проверяет, поддерживает ли его хост: это решает вызывающий.
+    pub tcp_congestion: Option<String>,
+    /// Число параллельных соединений XHTTP для узлов, где провайдер не задал `xmux`.
+    pub xhttp_connections: Option<u8>,
 }
 
 impl Settings {
-    /// Настройки по умолчанию для DNS и проверки узлов.
+    /// Настройки по умолчанию для DNS и проверки узлов; настроек производительности нет.
     pub fn new(mode: Mode, api_port: u16) -> Self {
         Self {
             mode,
             dns: DnsSettings::default(),
             probe: ProbeSettings::default(),
             api_port,
+            tcp_congestion: None,
+            xhttp_connections: None,
         }
     }
 }

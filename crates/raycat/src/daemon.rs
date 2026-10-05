@@ -32,6 +32,7 @@ use crate::plan;
 use crate::schedule::{HEALTHY_UPTIME, RESTART_FIRST, next_restart_delay};
 use crate::selection;
 use crate::store::{Store, StoredPin};
+use crate::tuning;
 use crate::updater::{self, Outcome, Refresh, Source};
 use crate::util::{format_duration, format_time, now_unix};
 use crate::xray::{Exit, Process};
@@ -131,6 +132,11 @@ async fn serve(config: Config, store: Store, socket: PathBuf) -> Result<()> {
         daemon.store.root().display(),
         socket.display()
     );
+    let congestion = tuning::congestion(&daemon.config.xray.tcp_congestion);
+    if let Some(line) = congestion.describe() {
+        info!("{line}");
+    }
+    daemon.tcp_congestion = congestion.algorithm().map(str::to_owned);
     daemon.load_caches();
 
     let mut terminate = signal(SignalKind::terminate()).context("не удалось поймать SIGTERM")?;
@@ -239,6 +245,10 @@ struct Daemon {
     xray_current: bool,
     xray_started: Option<Instant>,
     xray_starts: u32,
+    /// Алгоритм TCP для соединений к узлам, выбранный при старте процесса.
+    tcp_congestion: Option<String>,
+    /// Предупреждение о буферах UDP уже проверено: оно один раз за запуск.
+    udp_buffers_checked: bool,
     next_select: Instant,
     last_reason: Option<String>,
     pending_updates: Vec<PendingUpdate>,
@@ -305,6 +315,8 @@ impl Daemon {
             xray_current: false,
             xray_started: None,
             xray_starts: 0,
+            tcp_congestion: None,
+            udp_buffers_checked: false,
             next_select: now,
             last_reason: None,
             pending_updates: Vec::new(),
@@ -351,13 +363,24 @@ impl Daemon {
             .iter()
             .map(|sub| (sub.source.config(), sub.nodes.as_slice()))
             .collect();
-        let plan = match plan::compile_config(&self.config, &inputs, self.api_port) {
+        let plan = match plan::compile_config(
+            &self.config,
+            &inputs,
+            self.api_port,
+            self.tcp_congestion.as_deref(),
+        ) {
             Ok(plan) => plan,
             Err(error) => {
                 warn!("конфиг xray не собран: {error:#}");
                 return;
             }
         };
+        if plan.quic && !self.udp_buffers_checked {
+            self.udp_buffers_checked = true;
+            if let Some(message) = tuning::udp_buffers_warning() {
+                warn!("{message}");
+            }
+        }
         if self.applied.as_deref() == Some(plan.json.as_slice()) {
             return;
         }

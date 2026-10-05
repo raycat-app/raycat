@@ -43,6 +43,33 @@ the same core Happ uses.
 - A separate image variant (the `-noaes` tag) for Raspberry Pi 3/4 and other CPUs
   without hardware AES, with faster encryption on such hardware.
 
+## Performance
+
+Everything is optional and set in the `[xray]` section of the settings file:
+
+```toml
+[xray]
+memory_limit = "96MiB"      # the default
+tcp_congestion = "auto"     # auto (the default), off or an algorithm name
+xhttp_connections = 4       # 1 to 16; unset means whatever the provider sets
+```
+
+- `memory_limit` — a soft memory limit for xray. A limit that is too low makes the
+  Go garbage collector run constantly and burns CPU under load.
+- `tcp_congestion` — TCP congestion control for connections to nodes. `auto` turns
+  BBR on only when the host surely allows it (the algorithm is loaded in the kernel
+  and either permitted for all processes or xray has `CAP_NET_ADMIN`), otherwise it
+  logs why it did not. BBR speeds up transfers on lossy links. QUIC nodes (Hysteria2,
+  XHTTP over h3) are not affected: Hysteria2 already runs on BBR by default.
+- `xhttp_connections` — the number of parallel XHTTP connections. It helps when a
+  provider throttles a single connection; the price is more CPU load and more
+  connections to the server. Unset means the provider's settings apply (xray uses 3
+  connections when there are none). Nodes where the provider set `xmux` itself are
+  left alone.
+- For QUIC and UDP nodes (Hysteria2, XHTTP over h3, mKCP) the daemon warns once per
+  start if the host's UDP buffers are below 7.5 MiB: raise `net.core.rmem_max` and
+  `net.core.wmem_max` on the host.
+
 ## Contributing
 
 Suggestions and fixes are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) (in
