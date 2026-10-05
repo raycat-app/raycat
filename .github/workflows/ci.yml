@@ -136,6 +136,8 @@ jobs:
           echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum -c -
           tar -xzf "$archive" actionlint
           ./actionlint -color
+      - name: shellcheck скриптов выпуска
+        run: shellcheck --severity=warning .github/release/*.sh
       - name: hadolint
         run: |
           curl -fsSLo hadolint "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
@@ -554,10 +556,21 @@ jobs:
       - name: Стенд
         run: bash .github/e2e/lan.sh
 
+  release-scripts:
+    name: Скрипты выпуска
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash .github/release/test.sh
+
   result:
     name: Итог
     if: ${{ always() }}
-    needs: [lint, lockfile, test, msrv, deny, workflows, build, image, xray-noaes-armv7, xray-config, xray-api, e2e-proxy, nftables, e2e-gateway, e2e-lan, installer-lint, installer, installer-systemd]
+    needs: [lint, lockfile, test, msrv, deny, workflows, build, image, xray-noaes-armv7, xray-config, xray-api, e2e-proxy, nftables, e2e-gateway, e2e-lan, installer-lint, installer, installer-systemd, release-scripts]
     runs-on: ubuntu-24.04
     permissions: {}
     steps:
@@ -565,3 +578,18 @@ jobs:
         env:
           FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: test "$FAILED" = false
+
+  # Публикует dev-выпуск тех же артефактов, что прошли этот запуск. С веток (ручной запуск CI)
+  # идёт сухой прогон без публикации.
+  release:
+    name: Выпуск dev
+    needs: result
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/release-dev.yml # zizmor: ignore[self-repository] actionlint не знает синтаксиса $/
+    with:
+      dry_run: ${{ github.event_name != 'push' }}

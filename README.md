@@ -182,6 +182,33 @@ services:
 raycat снимает свои правила; после аварии они остаются, чтобы держать kill switch,
 а следующий запуск ставит их заново.
 
+## Версии и каналы
+
+Выпуск автоматический, у каждого канала свои теги.
+
+| Канал | Что это | Образ Docker | Файлы |
+| --- | --- | --- | --- |
+| **stable** | Рабочие версии `vX.Y.Z`. Прошли канал dev и выдержали срок: изменения профилей эмуляции — сутки, остальные — трое суток. Несовместимые изменения выходят только вручную | `ghcr.io/raycat-app/raycat:latest`, `:X.Y.Z`, `:X.Y` | [Releases](https://github.com/raycat-app/raycat/releases/latest) |
+| **dev** | Сборка каждого слияния в `main` после зелёного CI, `vX.Y.Z-dev.N`. Для проверки заранее, не для рабочих серверов; хранятся последние 20 | `:dev`, `:X.Y.Z-dev.N` | pre-release на странице Releases |
+
+Образы многоархитектурные (amd64 и arm64). Для **Raspberry Pi 3/4 и других процессоров
+без аппаратного AES** (в `/proc/cpuinfo` нет флага `aes`) есть варианты с xray, собранным
+для быстрого AES-GCM на таком железе: образы `:latest-noaes`, `:X.Y.Z-noaes`, `:dev-noaes`
+(только arm64) и архивы с `-noaes` в имени (aarch64 и armv7).
+
+Если на открытом issue висит метка `стоп-релиз`, продвижение из dev в stable останавливается.
+
+### Проверка подлинности
+
+Архивы и образы подписаны аттестациями происхождения сборки (GitHub), образы ещё и SBOM.
+Проверка нужна [GitHub CLI](https://cli.github.com/):
+
+```sh
+sha256sum -c SHA256SUMS
+gh attestation verify raycat-X.Y.Z-x86_64-linux-musl.tar.gz --repo raycat-app/raycat
+gh attestation verify oci://ghcr.io/raycat-app/raycat:latest --repo raycat-app/raycat
+```
+
 ## Участие
 
 Предложения и исправления приветствуются: см. [CONTRIBUTING.md](CONTRIBUTING.md).

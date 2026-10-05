@@ -1,0 +1,151 @@
+name: Выпуск stable
+
+# Раз в час выбирает самую новую dev-сборку, все изменения которой выдержали срок, и продвигает
+# её в stable без пересборки: те же файлы (с новым именем каталога в архиве) и те же образы
+# под новыми тегами. Правила сроков и исключения описаны в .github/release/plan.jq.
+# С веток, кроме main, и с флагом dry_run работает как сухой прогон: проверяет всё, ничего не публикует.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Версия dev для продвижения, например 0.2.0-dev.57. Пусто — выбрать по правилам
+        type: string
+        required: false
+        default: ""
+      ignore_wait:
+        description: Игнорировать срок выдержки
+        type: boolean
+        default: false
+      dry_run:
+        description: Только проверить и собрать, ничего не публиковать (с веток, кроме main, всегда включено)
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: release-stable
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Выбор сборки
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      promote: ${{ steps.decide.outputs.promote }}
+      tag: ${{ steps.decide.outputs.tag }}
+      sha: ${{ steps.decide.outputs.sha }}
+      version: ${{ steps.decide.outputs.version }}
+      last_tag: ${{ steps.decide.outputs.last_tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Проверка входов
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          if [ -n "$VERSION_INPUT" ] && ! [[ $VERSION_INPUT =~ ^v?[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$ ]]; then
+            echo "::error::Версия dev должна быть вида 0.2.0-dev.57"
+            exit 1
+          fi
+      - name: Решение
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION_INPUT: ${{ inputs.version }}
+          IGNORE_WAIT: ${{ inputs.ignore_wait }}
+        run: bash .github/release/decide.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: plan
+          path: plan
+          retention-days: 7
+          if-no-files-found: error
+
+  promote:
+    name: Продвижение ${{ needs.plan.outputs.tag }}
+    needs: plan
+    if: ${{ needs.plan.outputs.promote == 'true' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      DEV_TAG: ${{ needs.plan.outputs.tag }}
+      SHA: ${{ needs.plan.outputs.sha }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      LAST_TAG: ${{ needs.plan.outputs.last_tag }}
+      DRY_RUN: ${{ inputs.dry_run || github.ref != 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Прежняя stable не изменилась
+        run: test "$(bash .github/release/stable-tag.sh HEAD)" = "$LAST_TAG"
+      - name: Скачивание dev-выпуска
+        run: gh release download "$DEV_TAG" --repo "$REPOSITORY" --dir dev
+      - name: Проверка файлов dev-выпуска
+        run: |
+          REPO="$REPOSITORY" bash .github/release/verify-dev.sh dev "${DEV_TAG#v}"
+      - name: Архивы stable
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$SHA")
+          export SOURCE_DATE_EPOCH
+          bash .github/release/repack.sh "${DEV_TAG#v}" "$VERSION" dev stable
+      - name: Заметки
+        run: |
+          bash .github/release/collect.sh "$LAST_TAG" "$SHA" | bash .github/release/notes.sh >"$RUNNER_TEMP/changes.md"
+          bash .github/release/make-notes.sh stable "$VERSION" "$REPOSITORY" "$LAST_TAG" "${DEV_TAG#v}" <"$RUNNER_TEMP/changes.md" >notes.md
+          {
+            echo "### Файлы stable v$VERSION"
+            echo '```'
+            ls -l stable
+            echo '```'
+            cat notes.md
+          } >>"$GITHUB_STEP_SUMMARY"
+      - name: Вход в GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: skopeo
+        run: command -v skopeo || { sudo apt-get update -q && sudo apt-get install -y -q skopeo; }
+      - name: Образы
+        run: |
+          REGISTRY="ghcr.io/${REPOSITORY,,}" REPO="$REPOSITORY" DEV_VERSION="${DEV_TAG#v}" \
+            DRY_RUN="$DRY_RUN" bash .github/release/promote-images.sh
+      - name: Аттестация происхождения архивов
+        if: ${{ env.DRY_RUN != 'true' }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: stable/*.tar.gz
+      - name: GitHub release
+        if: ${{ env.DRY_RUN != 'true' }}
+        run: |
+          gh release create "v$VERSION" stable/*.tar.gz stable/SHA256SUMS \
+            --repo "$REPOSITORY" --target "$SHA" --latest --title "v$VERSION" --notes-file notes.md
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ env.DRY_RUN == 'true' }}
+        with:
+          name: release-stable
+          path: |
+            stable
+            notes.md
+          retention-days: 7
+          if-no-files-found: error
