@@ -14,7 +14,6 @@ const WMEM_MAX: &str = "/proc/sys/net/core/wmem_max";
 
 const AUTO_ALGORITHM: &str = "bbr";
 const CAP_NET_ADMIN: u32 = 12;
-/// 7.5 МиБ.
 const QUIC_BUFFER_BYTES: u64 = 7_864_320;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
