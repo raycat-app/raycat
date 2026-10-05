@@ -1,8 +1,14 @@
 name: Заголовок PR
 
+# События GITHUB_TOKEN не запускают другие workflow, поэтому PR бота (clients.yml) не
+# получает проверку по pull_request. Бот запускает её вручную: workflow_dispatch на ветке PR
+# привязывает проверку к последнему коммиту, и ruleset засчитывает её как обычную.
 on:
-  pull_request:
-    types: [opened, edited, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Номер PR, чей заголовок проверяется (запуск ботом на ветке PR)
+        required: true
 
 permissions: {}
 
@@ -13,7 +19,8 @@ jobs:
     permissions:
       pull-requests: read
     steps:
-      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+      - if: ${{ github.event_name == 'pull_request' }}
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -31,3 +38,25 @@ jobs:
           subjectPattern: ^[^A-ZА-ЯЁ].+$
           subjectPatternError: |
             Описание после типа начинается со строчной буквы: «feat: автопереключение узлов».
+      # Действие читает событие pull_request, которого при ручном запуске нет: те же правила
+      # проверяются здесь.
+      - name: Заголовок (ручной запуск)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+          LC_ALL: C.UTF-8
+        run: |
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "::error::номер PR не число"; exit 1; }
+          title=$(gh api "repos/$REPO/pulls/$PR" --jq .title)
+          types='feat|fix|perf|refactor|docs|test|build|ci|chore|revert'
+          if ! [[ "$title" =~ ^($types)(\([^\)]+\))?!?:\ (.+)$ ]]; then
+            echo "::error::Заголовок должен быть в формате Conventional Commits: «feat: описание»."
+            exit 1
+          fi
+          subject=${BASH_REMATCH[3]}
+          if [[ "${subject:0:1}" =~ [[:upper:]] ]]; then
+            echo "::error::Описание после типа начинается со строчной буквы: «feat: автопереключение узлов»."
+            exit 1
+          fi
