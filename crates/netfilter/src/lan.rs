@@ -75,7 +75,12 @@ fn default_interface(routes: &str) -> Option<String> {
             };
             let up = u32::from_str_radix(flags, 16).ok()? & RTF_UP != 0;
             let default = *destination == "00000000" && *mask == "00000000";
-            (up && default).then(|| (metric.parse::<u32>().unwrap_or(u32::MAX), (*name).to_owned()))
+            (up && default).then(|| {
+                (
+                    metric.parse::<u32>().unwrap_or(u32::MAX),
+                    (*name).to_owned(),
+                )
+            })
         })
         .min_by_key(|(metric, _)| *metric)
         .map(|(_, name)| name)
@@ -249,6 +254,9 @@ mod tests {
             stderr: "Device does not exist".to_owned(),
         });
         let error = resolve_with(&broken, Some("eth0"), &[], ROUTES, DEVICES).unwrap_err();
-        assert!(error.to_string().contains("Device does not exist"), "{error}");
+        assert!(
+            error.to_string().contains("Device does not exist"),
+            "{error}"
+        );
     }
 }

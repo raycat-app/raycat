@@ -248,13 +248,14 @@ fn lan_intercept(push: Push, parts: &Parts, lan: &LanParts) {
         "# приватные сети и подсети устройств идут напрямую".to_owned(),
     );
     push(2, format!("{from} ip daddr {v4} return"));
-    push(2, "# остальные tcp и udp устройств уходят в xray".to_owned());
+    push(
+        2,
+        "# остальные tcp и udp устройств уходят в xray".to_owned(),
+    );
     for proto in ["tcp", "udp"] {
         push(
             2,
-            format!(
-                "{from} meta l4proto {proto} meta mark set {mark} tproxy ip to :{port} accept"
-            ),
+            format!("{from} meta l4proto {proto} meta mark set {mark} tproxy ip to :{port} accept"),
         );
     }
 }
@@ -315,10 +316,7 @@ fn forward_chain(push: Push, parts: &Parts, lan: &LanParts, kill_switch: bool) {
             2,
             "# IPv6 не перехватывается, наружу его не выпускаем".to_owned(),
         );
-        push(
-            2,
-            format!("iifname \"{interface}\" meta nfproto ipv6 drop"),
-        );
+        push(2, format!("iifname \"{interface}\" meta nfproto ipv6 drop"));
     }
     push(1, "}".to_owned());
 }
@@ -345,8 +343,7 @@ fn guard_chain(push: Push, parts: &Parts, kill_switch: bool) {
     push(2, format!("ip6 daddr {v6} accept"));
     push(
         2,
-        "# соединение, начала которого правила не видели (открыто до запуска): не рвём"
-            .to_owned(),
+        "# соединение, начала которого правила не видели (открыто до запуска): не рвём".to_owned(),
     );
     push(
         2,
@@ -372,10 +369,7 @@ pub(crate) fn removal() -> String {
 }
 
 fn direct_sets(rules: &Rules) -> (String, String) {
-    let lan = rules
-        .lan
-        .iter()
-        .flat_map(|lan| lan.subnets.iter().copied());
+    let lan = rules.lan.iter().flat_map(|lan| lan.subnets.iter().copied());
     let nets = normalize(rules.bypass.iter().copied().chain(ALWAYS_DIRECT).chain(lan));
     (render(&nets, true), render(&nets, false))
 }
@@ -456,7 +450,10 @@ mod tests {
     fn only_connections_started_under_the_rules_are_intercepted() {
         let lines = lines_of(&Rules::default());
         let private = position(&lines, "ip6 daddr");
-        let start = position(&lines, "tcp flags & (fin | syn | rst | ack) == syn ct mark set");
+        let start = position(
+            &lines,
+            "tcp flags & (fin | syn | rst | ack) == syn ct mark set",
+        );
         let foreign = position(&lines, "meta l4proto tcp ct mark != 0x52540000 return");
         let all = position(&lines, "meta l4proto { tcp, udp } meta mark set");
         assert!(private < start && start < foreign && foreign < all);
@@ -573,7 +570,10 @@ mod tests {
     fn lan_devices_are_intercepted_before_routing_with_the_same_mark() {
         let lines = lines_of(&lan_rules(true));
         let dns = position(&lines, "th dport 53 meta mark set 0x52540000 tproxy");
-        let host = position(&lines, "fib daddr type { local, broadcast, multicast } return");
+        let host = position(
+            &lines,
+            "fib daddr type { local, broadcast, multicast } return",
+        );
         let direct = position(
             &lines,
             "iifname \"eth1\" meta nfproto ipv4 ip saddr { 10.77.0.0/24 } ip daddr",

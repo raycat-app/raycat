@@ -324,9 +324,8 @@ fn lan_details_are_left_to_the_daemon_by_default() {
 
 #[test]
 fn lan_details_are_checked() {
-    let gateway = |extra: &str| {
-        format!("{OK_SUB}\n[mode]\ntype = \"gateway\"\nlan = true\n{extra}\n")
-    };
+    let gateway =
+        |extra: &str| format!("{OK_SUB}\n[mode]\ntype = \"gateway\"\nlan = true\n{extra}\n");
     let list = problems(&gateway(
         "lan_interface = \"eth0; drop\"\nlan_subnets = [\"fd00::/64\", \"10.0.0.5/32\", \"mars\", \"10.1.2.3/24\", \"192.168.1.0/24\"]",
     ));
