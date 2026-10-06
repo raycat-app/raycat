@@ -203,7 +203,7 @@ fn head_responses_have_no_body() {
             },
         )
         .unwrap();
-    assert!(response.body.is_empty());
+    assert_eq!(response.body, Vec::<u8>::new());
     assert_eq!(response.header("x-a"), Some("b"));
     server.join().unwrap();
 }

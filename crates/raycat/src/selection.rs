@@ -229,6 +229,6 @@ mod tests {
     fn a_time_before_the_epoch_is_skipped() {
         let mut status = observed("node-001-main", true, Some(1), Some(1));
         status.last_try = Some(SystemTime::UNIX_EPOCH - Duration::from_secs(5));
-        assert!(health(&[status]).is_empty());
+        assert_eq!(health(&[status]), Vec::<Health>::new());
     }
 }
