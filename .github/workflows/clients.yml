@@ -62,6 +62,7 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+      statuses: write
     with:
       app: ${{ matrix.app }}
       platform: ${{ matrix.platform }}

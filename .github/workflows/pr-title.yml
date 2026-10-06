@@ -1,8 +1,8 @@
 name: Заголовок PR
 
 # События GITHUB_TOKEN не запускают другие workflow, поэтому PR бота (clients.yml) не
-# получает проверку по pull_request. Бот запускает её вручную: workflow_dispatch на ветке PR
-# привязывает проверку к последнему коммиту, и ruleset засчитывает её как обычную.
+# получает проверку по pull_request. Бот запускает её вручную (workflow_dispatch на ветке PR)
+# и публикует результат статусом коммита «Заголовок PR».
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
