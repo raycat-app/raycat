@@ -12,6 +12,8 @@ const RETRY_MAX: Duration = Duration::from_secs(30 * 60);
 /// Без кэша xray стоит, пока подписка не получена: после сбоя связи ждать долго нельзя.
 const RETRY_MAX_COLD: Duration = Duration::from_secs(10 * 60);
 const RETRY_AFTER_MAX: Duration = Duration::from_secs(24 * 3_600);
+/// Ответ провайдера, который применить нельзя (заглушка, 4xx), перепроверяется не реже.
+const REJECTED_RECHECK_MAX: Duration = Duration::from_secs(3_600);
 pub(crate) const RESTART_FIRST: Duration = Duration::from_secs(1);
 const RESTART_MAX: Duration = Duration::from_secs(30);
 /// Процесс, проработавший столько, считается здоровым: пауза перед перезапуском
@@ -39,6 +41,13 @@ pub(crate) fn retry_delay(failures: u32, cached: bool) -> Duration {
 /// клиент не пускают): долбить её бессмысленно, следующая попытка по обычному интервалу.
 pub(crate) fn is_outage(status: u16) -> bool {
     matches!(status, 408 | 500..=599)
+}
+
+/// Пауза после ответа провайдера, который нельзя применить: обычный интервал, но не
+/// дольше часа (не короче 10 минут, это гарантирует [`interval`]), и не раньше
+/// срока из `Retry-After`.
+pub(crate) fn rejected_delay(regular: Duration, retry_after: Option<&str>) -> Duration {
+    after_retry_header(regular.min(REJECTED_RECHECK_MAX), retry_after)
 }
 
 /// Не раньше срока из `Retry-After` (в секундах, не больше суток): дату HTTP не разбираем,
@@ -150,6 +159,25 @@ mod tests {
     fn the_regular_interval_is_never_shortened_by_retry_after() {
         let regular = interval(None, None);
         assert_eq!(after_retry_header(regular, Some("60")), regular);
+    }
+
+    #[test]
+    fn a_rejected_answer_is_rechecked_within_an_hour() {
+        let delay = |regular_secs: u64, header: Option<&str>| {
+            rejected_delay(Duration::from_secs(regular_secs), header).as_secs()
+        };
+        assert_eq!(delay(12 * HOUR, None), HOUR);
+        assert_eq!(delay(HOUR, None), HOUR);
+        assert_eq!(delay(1_800, None), 1_800);
+        assert_eq!(delay(600, None), 600);
+    }
+
+    #[test]
+    fn retry_after_still_postpones_a_rejected_answer() {
+        let delay = |header: &str| rejected_delay(interval(None, None), Some(header)).as_secs();
+        assert_eq!(delay("60"), HOUR);
+        assert_eq!(delay("7200"), 2 * HOUR);
+        assert_eq!(delay("999999999"), 24 * HOUR);
     }
 
     #[test]

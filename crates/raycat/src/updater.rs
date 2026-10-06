@@ -13,7 +13,7 @@ use raycat_xray::Node;
 
 use crate::log::{self, Latch, Level, hide, info, warn};
 use crate::plan;
-use crate::schedule::{after_retry_header, interval, is_outage, retry_delay};
+use crate::schedule::{after_retry_header, interval, is_outage, rejected_delay, retry_delay};
 use crate::store::{Store, SubState};
 use crate::util::{fnv1a, format_bytes, format_date, now_unix};
 
@@ -408,6 +408,13 @@ fn reject(
     (kind(message), delay)
 }
 
+/// `profile-update-interval` последнего рабочего ответа из кэша подписки.
+fn last_known_interval(state: &SubState, cached: Option<&[u8]>) -> Option<Duration> {
+    analyze(state.status, &state.headers, cached?)
+        .info
+        .update_interval
+}
+
 fn process(
     source: &Source,
     store: &Store,
@@ -427,9 +434,17 @@ fn process(
             let delay = after_retry_header(backoff, retry_after);
             return reject(state, Outcome::Failed, message, delay);
         }
-        let regular = interval(source.config.update_interval, analysis.info.update_interval);
-        let delay = after_retry_header(regular, retry_after);
-        return reject(state, Outcome::Rejected, message, delay);
+        let provider = analysis
+            .info
+            .update_interval
+            .or_else(|| last_known_interval(state, cached));
+        let regular = interval(source.config.update_interval, provider);
+        return reject(
+            state,
+            Outcome::Rejected,
+            message,
+            rejected_delay(regular, retry_after),
+        );
     }
     let body = response.body.as_slice();
     let saved = cached == Some(body)
@@ -1034,32 +1049,32 @@ mod tests {
     }
 
     #[test]
-    fn a_stub_is_answered_at_the_regular_interval_however_often_it_repeats() {
+    fn a_stub_is_rechecked_hourly_however_often_it_repeats() {
         let later = http_response("200 OK", &[("x-hwid-max-devices-reached", "true")], "");
         for failures in [0, 1, 7, 50] {
             let done = after_a_good_answer(later.clone(), failures);
             assert!(matches!(done.outcome, Outcome::Rejected(_)), "{failures}");
-            assert_eq!(done.next_in, Duration::from_secs(12 * HOURS), "{failures}");
+            assert_eq!(done.next_in, Duration::from_secs(HOURS), "{failures}");
         }
     }
 
     #[test]
-    fn a_stub_node_list_follows_the_provider_interval() {
-        let later = http_response("200 OK", &[("profile-update-interval", "3")], STUB_LINK);
+    fn a_stub_node_list_is_rechecked_within_an_hour_whatever_the_provider_asks() {
+        let later = http_response("200 OK", &[("profile-update-interval", "24")], STUB_LINK);
         let done = after_a_good_answer(later, 5);
         let Outcome::Rejected(reason) = done.outcome else {
             panic!("заглушка должна быть отклонена");
         };
         assert!(reason.contains("Expired stub"), "{reason}");
-        assert_eq!(done.next_in, Duration::from_secs(3 * HOURS));
+        assert_eq!(done.next_in, Duration::from_secs(HOURS));
     }
 
     #[test]
-    fn client_errors_wait_for_the_regular_interval() {
+    fn client_errors_are_rechecked_hourly() {
         for status in ["403 Forbidden", "404 Not Found", "410 Gone"] {
             let done = after_a_good_answer(http_response(status, &[], ""), 3);
             assert!(matches!(done.outcome, Outcome::Rejected(_)), "{status}");
-            assert_eq!(done.next_in, Duration::from_secs(12 * HOURS), "{status}");
+            assert_eq!(done.next_in, Duration::from_secs(HOURS), "{status}");
         }
     }
 
@@ -1068,12 +1083,12 @@ mod tests {
         let plain = http_response("429 Too Many Requests", &[], "");
         let done = after_a_good_answer(plain, 0);
         assert!(matches!(done.outcome, Outcome::Rejected(_)));
-        assert_eq!(done.next_in, Duration::from_secs(12 * HOURS));
+        assert_eq!(done.next_in, Duration::from_secs(HOURS));
 
         let short = http_response("429 Too Many Requests", &[("Retry-After", "60")], "");
         assert_eq!(
             after_a_good_answer(short, 0).next_in,
-            Duration::from_secs(12 * HOURS)
+            Duration::from_secs(HOURS)
         );
         let long = http_response("429 Too Many Requests", &[("Retry-After", "172800")], "");
         assert_eq!(
@@ -1091,21 +1106,48 @@ mod tests {
     }
 
     #[test]
-    fn the_configured_interval_applies_to_stubs() {
-        let panel = then_answers(http_response(
-            "200 OK",
-            &[("x-hwid-max-devices-reached", "true")],
-            "",
-        ));
-        let config = config_for(&panel.url("/sub/token1234"), "update_interval = \"6h\"\n");
-        let source = Source::new(&config, &config.subscriptions[0], MACHINE_ID).unwrap();
-        let temp = TempDir::new("configured");
+    fn a_shorter_configured_interval_applies_to_stubs_a_longer_one_does_not() {
+        for (configured, expected) in [("6h", HOURS), ("30m", 1_800), ("10m", 600)] {
+            let panel = then_answers(http_response(
+                "200 OK",
+                &[("x-hwid-max-devices-reached", "true")],
+                "",
+            ));
+            let extra = format!("update_interval = \"{configured}\"\n");
+            let config = config_for(&panel.url("/sub/token1234"), &extra);
+            let source = Source::new(&config, &config.subscriptions[0], MACHINE_ID).unwrap();
+            let temp = TempDir::new("configured");
+            let store = store(&temp);
+            refresh(&source, &store, 0, 1_000);
+            let done = refresh(&source, &store, 0, 2_000);
+            assert!(matches!(done.outcome, Outcome::Rejected(_)), "{configured}");
+            assert_eq!(done.next_in, Duration::from_secs(expected), "{configured}");
+            assert_eq!(
+                store.load("тест").0.next_update,
+                2_000 + expected,
+                "{configured}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_last_known_provider_interval_comes_from_the_cache() {
+        let panel = FakePanel::start(|_| {
+            http_response("200 OK", &[("profile-update-interval", "3")], LINKS)
+        });
+        let (_, source) = source_for(&panel.url("/sub/token1234"));
+        let temp = TempDir::new("known-interval");
         let store = store(&temp);
+        let (state, body) = store.load("тест");
+        assert_eq!(last_known_interval(&state, body.as_deref()), None);
+
         refresh(&source, &store, 0, 1_000);
-        let done = refresh(&source, &store, 0, 2_000);
-        assert!(matches!(done.outcome, Outcome::Rejected(_)));
-        assert_eq!(done.next_in, Duration::from_secs(6 * HOURS));
-        assert_eq!(store.load("тест").0.next_update, 2_000 + 6 * HOURS);
+        let (state, body) = store.load("тест");
+        assert_eq!(
+            last_known_interval(&state, body.as_deref()),
+            Some(Duration::from_secs(3 * HOURS))
+        );
+        assert_eq!(last_known_interval(&state, None), None);
     }
 
     #[test]
