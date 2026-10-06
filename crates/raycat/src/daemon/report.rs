@@ -98,7 +98,10 @@ mod tests {
         let reason = "ж".repeat(500);
         let line = rejected("s1", &reason, Duration::from_secs(43_200));
         assert!(line.contains(&format!("{}…)", "ж".repeat(199))), "{line}");
-        assert!(line.ends_with("следующая попытка через 12 ч 0 мин"), "{line}");
+        assert!(
+            line.ends_with("следующая попытка через 12 ч 0 мин"),
+            "{line}"
+        );
         let line = failed("s1", &reason, Duration::from_secs(30));
         assert!(line.chars().count() < 300, "{line}");
         assert!(line.contains("не удалось обновить"));
@@ -133,7 +136,11 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].0, Level::Info);
         assert_eq!(lines[1].0, Level::Warn);
-        assert!(lines[0].1.starts_with("подписка «s2»: пропущены узлы-заглушки"));
+        assert!(
+            lines[0]
+                .1
+                .starts_with("подписка «s2»: пропущены узлы-заглушки")
+        );
     }
 
     #[test]

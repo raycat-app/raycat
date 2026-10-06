@@ -8,7 +8,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use raycat_config::{Config, Platform as ConfigPlatform, Subscription};
 use raycat_emulation::{Arch, Device, Emulation, Platform, machine_id_from_seed};
 use raycat_http::{Client, Request, Response, Scheme, Url, redact};
-use raycat_subscription::{Analysis, ProviderInfo, Problem, analyze, redact_in};
+use raycat_subscription::{Analysis, Problem, ProviderInfo, analyze, redact_in};
 use raycat_xray::Node;
 
 use crate::log::{self, Latch, Level, hide, info, warn};
@@ -1017,7 +1017,8 @@ mod tests {
         refresh(&source, &store, failures, 2_000)
     }
 
-    const STUB_LINK: &str = "vless://00000000-0000-0000-0000-000000000000@0.0.0.0:1?security=none#Expired%20stub\n";
+    const STUB_LINK: &str =
+        "vless://00000000-0000-0000-0000-000000000000@0.0.0.0:1?security=none#Expired%20stub\n";
     const HOURS: u64 = 3_600;
 
     #[test]
