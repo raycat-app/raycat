@@ -187,7 +187,7 @@ mod tests {
             {"remarks": "Второй", "outbounds": [vless("proxy", "de.example.com")]},
         ]);
         let content = parse(&doc);
-        assert!(content.warnings.is_empty(), "{:?}", content.warnings);
+        assert_eq!(content.warnings, Vec::<String>::new());
         assert_eq!(content.nodes.len(), 2);
         assert_eq!(content.nodes[0].name, "🇳🇱 Нидерланды");
         assert_eq!(content.nodes[0].outbounds.len(), 1);

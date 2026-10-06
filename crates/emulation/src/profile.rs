@@ -440,7 +440,7 @@ value = "{accept_language}"
                 .unwrap_or_else(|e| panic!("{}/{}: {e:#}", source.app, source.platform));
             assert_eq!(profile.app, source.app);
             assert_eq!(profile.platform, source.platform);
-            assert!(!profile.version.is_empty());
+            assert_ne!(profile.version, "");
         }
     }
 

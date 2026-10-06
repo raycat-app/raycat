@@ -44,7 +44,7 @@ fn good_links_response() {
     ]);
     let result = analyze(200, &response, link_list().as_bytes());
     assert!(result.problem.is_none(), "{:?}", result.problem);
-    assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+    assert_eq!(result.warnings, Vec::<String>::new());
     let names: Vec<&str> = result.nodes.iter().map(|node| node.name.as_str()).collect();
     assert_eq!(names, ["NL", "DE", "FI", "HY"]);
     assert_eq!(result.info.title.as_deref(), Some("Мой VPN"));
@@ -167,7 +167,7 @@ fn http_errors() {
             panic!("статус {status}: {:?}", result.problem);
         };
         assert!(message.contains(&status.to_string()));
-        assert!(result.nodes.is_empty());
+        assert_eq!(result.nodes, Vec::<raycat_xray::Node>::new());
     }
     let with_headers = analyze(403, &headers(&[("profile-title", "VPN")]), b"Forbidden");
     assert_eq!(with_headers.info.title.as_deref(), Some("VPN"));
@@ -188,7 +188,7 @@ fn unrecognized_bodies() {
             "{:?}",
             result.problem
         );
-        assert!(result.nodes.is_empty());
+        assert_eq!(result.nodes, Vec::<raycat_xray::Node>::new());
     }
 }
 
@@ -243,7 +243,7 @@ fn encrypted_response_is_recognized() {
         panic!("ожидалась зашифрованная подписка: {:?}", result.problem);
     };
     assert!(message.contains("шифрует подписку"));
-    assert!(result.nodes.is_empty());
+    assert_eq!(result.nodes, Vec::<raycat_xray::Node>::new());
     assert_eq!(result.info.title.as_deref(), Some("VPN"));
 
     let link = analyze(200, &[], b"happ://crypt5/AAAA");
