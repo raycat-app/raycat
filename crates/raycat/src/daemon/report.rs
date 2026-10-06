@@ -89,6 +89,10 @@ pub(super) fn new_warnings(
 mod tests {
     use super::*;
 
+    fn no_lines() -> Vec<(Level, String)> {
+        Vec::new()
+    }
+
     fn texts(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| (*item).to_owned()).collect()
     }
@@ -146,7 +150,7 @@ mod tests {
     #[test]
     fn unchanged_notes_are_not_repeated() {
         let current = texts(&["пропущены узлы-заглушки: A", "узел «B»: что-то не так"]);
-        assert!(new_warnings("s2", &current, &current).is_empty());
+        assert_eq!(new_warnings("s2", &current, &current), no_lines());
     }
 
     #[test]
@@ -157,7 +161,7 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].0, Level::Info);
         assert!(lines[0].1.ends_with("A | C"));
-        assert!(new_warnings("s2", &after, &[]).is_empty());
+        assert_eq!(new_warnings("s2", &after, &[]), no_lines());
     }
 
     #[test]

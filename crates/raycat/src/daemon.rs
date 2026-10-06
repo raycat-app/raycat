@@ -788,7 +788,7 @@ mod tests {
         daemon.finished(0, applied(&with_stub));
         assert_eq!(daemon.subs[0].warned.len(), 1);
         daemon.finished(0, applied(ONE));
-        assert!(daemon.subs[0].warned.is_empty());
+        assert_eq!(daemon.subs[0].warned, Vec::<String>::new());
     }
 
     #[test]
