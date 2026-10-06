@@ -24,7 +24,7 @@ impl fmt::Display for Problem {
     }
 }
 
-/// В контейнере с `cap_drop: [ALL]` у root нет CAP_DAC_OVERRIDE и он не читает чужие
+/// В контейнере с `cap_drop: [ALL]` у root нет `CAP_DAC_OVERRIDE` и он не читает чужие
 /// файлы с правами 0600.
 const PERMISSION_HINT: &str = "\nПодсказка: в контейнере с cap_drop: [ALL] root читает файл только по обычным правам доступа. \
 Сделайте файл читаемым для всех (chmod 644, а каталог закройте от посторонних) \
