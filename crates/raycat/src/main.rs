@@ -51,6 +51,7 @@ fn run(matches: &ArgMatches) -> Result<()> {
     let env = paths::environment();
     match name {
         "status" | "nodes" | "use" | "update" | "events" => return ctl::run(name, sub, &env),
+        "health" => return ctl::health(&env),
         "tui" => return tui::run(&env),
         "completions" => return manual::completions(sub),
         "man" => return manual::man(),

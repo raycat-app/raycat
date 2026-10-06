@@ -127,6 +127,68 @@ xhttp_connections = 4       # от 1 до 16; не задано — как у п
   предупреждает, если буферы UDP хоста меньше 7.5 МиБ: тогда стоит поднять
   `net.core.rmem_max` и `net.core.wmem_max` на хосте.
 
+## Шлюз для Docker-контейнеров
+
+Приложения живут в сетевом пространстве контейнера raycat (`network_mode:
+service:raycat`) и выходят в интернет только через туннель. Рекомендуемые настройки,
+с жёсткой изоляцией самого шлюза:
+
+```yaml
+# compose.yml
+services:
+  raycat:
+    image: ghcr.io/raycat-app/raycat
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    dns: [1.1.1.1]
+    volumes:
+      - ./config.toml:/etc/raycat/config.toml:ro
+      - raycat-state:/var/lib/raycat
+
+  app:
+    image: ваше-приложение
+    network_mode: service:raycat
+    depends_on:
+      raycat:
+        condition: service_healthy
+        restart: true
+
+volumes:
+  raycat-state:
+```
+
+```toml
+# config.toml
+[[subscription]]
+name = "основная"
+url = "https://…"
+app = "happ"
+platform = "windows"
+
+[mode]
+type = "gateway"
+```
+
+- **Права файла настроек.** При `cap_drop: [ALL]` root в контейнере не обходит права
+  доступа, поэтому файл с правами 600 другого пользователя хоста не читается. Сделайте
+  его читаемым: `chmod 644 config.toml` (каталог закройте от посторонних) или передайте
+  root: `sudo chown 0:0 config.toml`, права 600.
+- **Состояние и сокет API** лежат в томе `/var/lib/raycat`: корень контейнера остаётся
+  только для чтения. Команды работают внутри контейнера:
+  `docker compose exec raycat raycat status`.
+- **`dns`** нужен: Docker опрашивает свой резолвер из пространства контейнера, где
+  запросы перехватываются; без явного адреса шлюз откажется стартовать (иначе имена
+  разрешались бы мимо туннеля).
+- **Готовность.** Образ сам проверяет `raycat health` каждые 10 с: демон отвечает, xray
+  работает, узел выбран; на первый старт даётся 60 с (панель может отвечать медленно).
+  С `condition: service_healthy` приложения не стартуют, пока VPN не готов, а
+  `restart: true` перезапускает их вместе со шлюзом. Проверить вручную:
+  `docker compose exec raycat raycat health` (код 0 или 1 и причина).
+
 ## Шлюз для локальной сети
 
 raycat может быть шлюзом для устройств сети: телевизоров, телефонов, консолей,

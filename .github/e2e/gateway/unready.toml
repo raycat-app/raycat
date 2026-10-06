@@ -1,0 +1,9 @@
+[[subscription]]
+name = "dead"
+url = "http://11.30.0.99:8080/sub/deadtoken1234"
+allow_http = true
+app = "happ"
+platform = "windows"
+
+[log]
+level = "debug"
