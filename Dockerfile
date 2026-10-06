@@ -83,6 +83,12 @@ LABEL org.opencontainers.image.title="raycat" \
       org.opencontainers.image.description="Серверный клиент VPN-подписок: шлюз и прокси для хоста и Docker-контейнеров" \
       org.opencontainers.image.source="https://github.com/raycat-app/raycat" \
       org.opencontainers.image.licenses="MIT"
-ENV RAYCAT_STATE_DIR=/var/lib/raycat
+# Сокет API лежит в каталоге состояния: при read_only: true записываемым остаётся
+# только он (том), а /run, где сокет root лежит по умолчанию, доступен только для чтения.
+ENV RAYCAT_STATE_DIR=/var/lib/raycat \
+    RAYCAT_SOCKET=/var/lib/raycat/raycat.sock
+# Окно в 60 с до первого успеха не считается неудачей (медленная панель при первом
+# старте), затем ещё три неудачи по 10 с до статуса unhealthy.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=3 CMD ["raycat", "health"]
 ENTRYPOINT ["raycat"]
 CMD ["daemon"]

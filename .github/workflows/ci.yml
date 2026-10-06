@@ -166,6 +166,7 @@ jobs:
     env:
       TARGET: ${{ matrix.target }}
       CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUNNER: qemu-arm-static
+      RAYCAT_COMMIT: ${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -184,7 +185,9 @@ jobs:
             armv7-*) run() { qemu-arm-static "$@"; } ;;
             *) run() { "$@"; } ;;
           esac
-          run "$bin" --version
+          version_line=$(run "$bin" --version)
+          echo "$version_line"
+          [[ "$version_line" == *" (${GITHUB_SHA:0:7})" ]]
           run "$bin" --help > /dev/null
           file "$bin"
           ls -l "$bin"
@@ -249,7 +252,19 @@ jobs:
           docker build "${args[@]}" --tag raycat:ci .
       - name: Дымовая проверка
         run: |
-          docker run --rm raycat:ci --version
+          version_line=$(docker run --rm raycat:ci --version)
+          echo "$version_line"
+          [[ "$version_line" == *" (${GITHUB_SHA:0:7})" ]]
+          healthcheck=$(docker image inspect -f '{{json .Config.Healthcheck.Test}}' raycat:ci)
+          test "$healthcheck" = '["CMD","raycat","health"]'
+          socket=$(docker run --rm --entrypoint printenv raycat:ci RAYCAT_SOCKET)
+          test "$socket" = /var/lib/raycat/raycat.sock
+          if health_output=$(docker run --rm raycat:ci health 2>&1); then
+            echo "raycat health без демона завершился успешно" >&2
+            exit 1
+          fi
+          echo "$health_output"
+          grep -q 'демон не запущен' <<<"$health_output"
           version_output=$(docker run --rm --entrypoint /usr/libexec/raycat/xray raycat:ci version)
           echo "$version_output"
           if [ "$XRAY_BUILD" = noaes ]; then

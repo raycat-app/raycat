@@ -125,6 +125,68 @@ xhttp_connections = 4       # 1 to 16; unset means whatever the provider sets
   start if the host's UDP buffers are below 7.5 MiB: raise `net.core.rmem_max` and
   `net.core.wmem_max` on the host.
 
+## Gateway for Docker containers
+
+The apps live in the network namespace of the raycat container (`network_mode:
+service:raycat`) and reach the internet only through the tunnel. Recommended
+settings, with the gateway itself locked down:
+
+```yaml
+# compose.yml
+services:
+  raycat:
+    image: ghcr.io/raycat-app/raycat
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    dns: [1.1.1.1]
+    volumes:
+      - ./config.toml:/etc/raycat/config.toml:ro
+      - raycat-state:/var/lib/raycat
+
+  app:
+    image: your-app
+    network_mode: service:raycat
+    depends_on:
+      raycat:
+        condition: service_healthy
+        restart: true
+
+volumes:
+  raycat-state:
+```
+
+```toml
+# config.toml
+[[subscription]]
+name = "main"
+url = "https://…"
+app = "happ"
+platform = "windows"
+
+[mode]
+type = "gateway"
+```
+
+- **Permissions of the settings file.** With `cap_drop: [ALL]` root in the container
+  does not bypass file permissions, so a file with mode 600 owned by another host user
+  cannot be read. Make it readable: `chmod 644 config.toml` (keep the directory closed
+  to others) or hand it to root: `sudo chown 0:0 config.toml`, mode 600.
+- **State and the API socket** live in the `/var/lib/raycat` volume, so the container
+  root stays read-only. The commands work inside the container:
+  `docker compose exec raycat raycat status`.
+- **`dns`** is required: Docker queries its resolver from inside the container's
+  namespace, where queries are intercepted; without an explicit address the gateway
+  refuses to start (names would otherwise resolve around the tunnel).
+- **Readiness.** The image checks `raycat health` every 10 s: the daemon answers, xray
+  is running and a node is selected; the first start gets 60 s (a panel may be slow).
+  With `condition: service_healthy` the apps do not start until the VPN is ready, and
+  `restart: true` restarts them together with the gateway. Check by hand:
+  `docker compose exec raycat raycat health` (exit code 0 or 1 and the reason).
+
 ## Gateway for the local network
 
 raycat can be a gateway for the devices of your network: TVs, phones, consoles

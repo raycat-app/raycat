@@ -20,6 +20,10 @@ networks:
       config:
         - subnet: 11.40.0.0/24
 
+volumes:
+  state:
+  state2:
+
 x-node: &node
   image: raycat:ci
   entrypoint: ["/usr/libexec/raycat/xray"]
@@ -83,10 +87,16 @@ services:
       inet:
         ipv4_address: 11.40.0.12
 
+  # Настройки, которые советует README: корень только для чтения, без лишних привилегий.
+  # Проверка готовности — HEALTHCHECK самого образа.
   raycat:
     image: raycat:ci
     container_name: raycat-e2e-gateway
+    read_only: true
+    cap_drop: [ALL]
     cap_add: [NET_ADMIN]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
     # Явный DNS: Docker опрашивает его из пространства контейнера, где запросы
     # перехватываются. Без него имена разрешаются через хост, мимо перехвата.
     dns: [1.1.1.1]
@@ -94,15 +104,11 @@ services:
       RAYCAT_CONFIG: /e2e/gateway/config.toml
     volumes:
       - ..:/e2e:ro
+      - state:/var/lib/raycat
     networks:
       wan:
         ipv4_address: 11.30.0.2
     depends_on: [panel, node1, node2, site, canary]
-    healthcheck:
-      test: ["CMD-SHELL", "nft list table inet raycat >/dev/null && pidof xray >/dev/null"]
-      interval: 2s
-      timeout: 3s
-      retries: 60
 
   app:
     image: raycat:ci
@@ -131,10 +137,15 @@ services:
     profiles: [lifecycle]
     image: raycat:ci
     container_name: raycat-e2e-gw2
+    read_only: true
+    cap_drop: [ALL]
     cap_add: [NET_ADMIN]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
     environment:
       RAYCAT_CONFIG: /e2e/gateway/config.toml
     volumes:
       - ..:/e2e:ro
+      - state2:/var/lib/raycat
     network_mode: service:holder
     depends_on: [holder, panel, node1, node2, site, canary]

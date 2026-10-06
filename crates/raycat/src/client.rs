@@ -93,8 +93,7 @@ impl Client {
         }
     }
 
-    #[cfg(test)]
-    fn with_timeout(socket: PathBuf, timeout: Duration) -> Self {
+    pub(crate) fn with_timeout(socket: PathBuf, timeout: Duration) -> Self {
         Self { socket, timeout }
     }
 

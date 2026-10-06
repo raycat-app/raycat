@@ -42,7 +42,7 @@ cleanup() {
     echo "::endgroup::"
   fi
   "${compose[@]}" --profile lifecycle down --volumes --remove-orphans --timeout 3 >/dev/null 2>&1
-  docker rm -f raycat-e2e-leak >/dev/null 2>&1
+  docker rm -f raycat-e2e-leak raycat-e2e-unready >/dev/null 2>&1
   exit "$status"
 }
 trap cleanup EXIT
@@ -107,6 +107,19 @@ case "$first_event" in
   *) fail "xray запущен раньше, чем установлены правила" ;;
 esac
 
+echo "== жёсткие настройки и готовность: read_only, HEALTHCHECK, raycat health, CLI внутри контейнера"
+[ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$gateway")" = true ] || fail "корень шлюза не только для чтения"
+if gateway_run sh -c 'touch /probe' 2>/dev/null; then
+  fail "в корень шлюза удалось записать файл"
+fi
+gateway_run test -S /var/lib/raycat/raycat.sock || fail "сокет API не в каталоге состояния"
+health_line=$(gateway_run raycat health 2>&1) || fail "raycat health в работающем шлюзе: $health_line"
+grep -q '^готов: xray работает' <<<"$health_line" || fail "неожиданный вывод raycat health: $health_line"
+echo "  $health_line"
+[ "$(docker inspect -f '{{.State.Health.Status}}' "$gateway")" = healthy ] || fail "HEALTHCHECK образа не считает шлюз здоровым"
+status_json=$(gateway_run raycat status --json) || fail "raycat status внутри контейнера не нашёл демон: $status_json"
+grep -q '"mode": "gateway"' <<<"$status_json" || fail "raycat status ответил не режимом шлюза: $status_json"
+
 echo "== DNS приложения отвечает fake-IP (пул 198.18.0.0/15)"
 answer=$(app_run nslookup site.e2e.test) || fail "nslookup не ответил"
 echo "$answer" | grep -q 'Address: 198\.1[89]\.' || fail "DNS ответил не fake-IP: $answer"
@@ -151,8 +164,16 @@ if app_run ping -c 1 -W 2 11.30.0.50 >/dev/null 2>&1; then
   fail "ICMP вышел наружу без xray"
 fi
 echo "  без xray трафик, DNS и ICMP приложения отклоняются"
+started=$SECONDS
+if health_out=$(gateway_run raycat health 2>&1); then
+  fail "raycat health ответил успехом, хотя демон заморожен, а xray убит: $health_out"
+fi
+[ $((SECONDS - started)) -le 5 ] || fail "raycat health отвечал дольше 5 с"
+grep -q 'демон не ответил' <<<"$health_out" || fail "неожиданная причина в raycat health: $health_out"
+echo "  raycat health: $health_out"
 docker kill --signal CONT "$gateway" >/dev/null
 wait_for "xray перезапущен и трафик снова идёт" 60 fetch "$site"
+wait_for "raycat health снова успешен" 60 gateway_run raycat health
 expect_via_node "$site" "${nodes_inet[@]}"
 log_has "$gateway" "xray завершился" || fail "в журнале нет записи о падении xray"
 
@@ -184,6 +205,44 @@ set -e
 echo "$cap_output"
 [ "$cap_code" -ne 0 ] || fail "шлюз без CAP_NET_ADMIN стартовал"
 echo "$cap_output" | grep -q "CAP_NET_ADMIN" || fail "нет сообщения о CAP_NET_ADMIN"
+
+echo "== демон отвечает, но подписка недоступна: raycat health отказывает с причиной"
+docker run --detach --name raycat-e2e-unready --network raycat-e2e-wan --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --tmpfs /tmp --tmpfs /var/lib/raycat \
+  --volume "$here:/e2e:ro" --env RAYCAT_CONFIG=/e2e/gateway/unready.toml "$image" >/dev/null
+unready_out=
+for _ in $(seq 60); do
+  if unready_out=$(docker exec raycat-e2e-unready raycat health 2>&1); then
+    fail "raycat health успешен без единого узла: $unready_out"
+  fi
+  if grep -Eq 'xray не запущен|узел не выбран' <<<"$unready_out"; then
+    break
+  fi
+  sleep 1
+done
+grep -Eq 'xray не запущен|узел не выбран' <<<"$unready_out" || fail "raycat health не назвал причину неготовности: $unready_out"
+echo "  raycat health: $unready_out"
+docker rm -f raycat-e2e-unready >/dev/null
+
+echo "== файл настроек 0600 чужого владельца и cap_drop ALL: понятная подсказка"
+perm_dir=$(mktemp -d)
+cp "$here/gateway/config.toml" "$perm_dir/config.toml"
+chmod 755 "$perm_dir"
+chmod 600 "$perm_dir/config.toml"
+perm_check() {
+  docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges:true --tmpfs /tmp \
+    --tmpfs /var/lib/raycat --volume "$perm_dir:/conf:ro" --env RAYCAT_CONFIG=/conf/config.toml \
+    "$image" check 2>&1 || true
+}
+perm_output=$(perm_check)
+echo "$perm_output"
+grep -q 'chmod 644' <<<"$perm_output" || fail "нет подсказки про права файла настроек"
+chmod 644 "$perm_dir/config.toml"
+perm_output=$(perm_check)
+if grep -q 'Permission denied' <<<"$perm_output"; then
+  fail "файл с правами 644 не читается: $perm_output"
+fi
+rm -rf "$perm_dir"
 
 echo "== штатная остановка снимает правила, авария оставляет"
 "${compose[@]}" --profile lifecycle up --detach holder gw2 >/dev/null

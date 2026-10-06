@@ -1,8 +1,9 @@
-//! Команды, которые говорят с работающим демоном: `status`, `nodes`, `use`,
+//! Команды, которые говорят с работающим демоном: `status`, `health`, `nodes`, `use`,
 //! `update`, `events`. Настройки и каталог состояния им не нужны: только сокет.
 
 use std::fmt;
 use std::io::{self, Write as _};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
@@ -17,6 +18,9 @@ use crate::term::{Term, Tone};
 use crate::util::{now_unix, sanitize};
 
 const MAX_LISTED: usize = 10;
+/// Меньше `timeout` в HEALTHCHECK образа: ответ о неготовности должен прийти раньше,
+/// чем Docker убьёт проверку.
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Строка в stdout; закрытый канал (`| head`) не повод падать.
 fn out(text: &str) {
@@ -90,6 +94,13 @@ fn resolve<'a>(nodes: &'a [Node], query: &str) -> Result<&'a Node, ResolveError>
     Err(ResolveError::NotFound(query.to_owned()))
 }
 
+fn runtime() -> Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("не удалось запустить среду выполнения")
+}
+
 pub(crate) fn run(name: &str, sub: &ArgMatches, env: &Env) -> Result<()> {
     let client = Client::new(paths::client_socket(env, paths::is_root())?);
     let json = sub.get_flag("json");
@@ -98,11 +109,28 @@ pub(crate) fn run(name: &str, sub: &ArgMatches, env: &Env) -> Result<()> {
     } else {
         Term::detect(env)
     };
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("не удалось запустить среду выполнения")?;
-    runtime.block_on(dispatch(name, sub, &client, term, json))
+    runtime()?.block_on(dispatch(name, sub, &client, term, json))
+}
+
+/// `raycat health`: проверка для HEALTHCHECK. Ничего не создаёт и отвечает быстро.
+pub(crate) fn health(env: &Env) -> Result<()> {
+    let socket = paths::client_socket(env, paths::is_root())?;
+    let client = Client::with_timeout(socket, HEALTH_TIMEOUT);
+    out(&runtime()?.block_on(ready(&client))?);
+    Ok(())
+}
+
+/// Демон отвечает, xray работает и узел выбран. xray запускается только после установки
+/// правил шлюза, поэтому отдельного признака для них не нужно.
+async fn ready(client: &Client) -> Result<String> {
+    let status = client.status().await?;
+    if !status.xray.running {
+        bail!("xray не запущен");
+    }
+    let Some(node) = &status.node else {
+        bail!("узел не выбран: подписки ещё не дали рабочих узлов");
+    };
+    Ok(format!("готов: xray работает, узел {}", sanitize(&node.id)))
 }
 
 async fn dispatch(
@@ -328,5 +356,123 @@ mod tests {
     fn the_query_cannot_inject_terminal_codes_into_the_error() {
         let error = resolve(&sample(), "\x1b[2J").unwrap_err();
         assert!(!error.to_string().contains('\x1b'));
+    }
+}
+
+#[cfg(test)]
+mod health_tests {
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::net::UnixListener;
+
+    use super::*;
+    use crate::testing::{TempDir, http_response};
+
+    const NODE: &str = r#"{"id":"main/NL-1","subscription":"main","name":"NL-1","latency_ms":31,"pinned":false,"reason":null}"#;
+
+    fn status_json(running: bool, node: Option<&str>) -> String {
+        format!(
+            r#"{{"version":"0.1.0","mode":"gateway","uptime_secs":5,"kill_switch":true,
+            "xray":{{"running":{running},"pid":null,"restarts":0}},
+            "node":{},"subscriptions":[]}}"#,
+            node.unwrap_or("null")
+        )
+    }
+
+    struct Fake {
+        _temp: TempDir,
+        socket: PathBuf,
+        requests: Arc<Mutex<Vec<String>>>,
+    }
+
+    fn fake(reply: String) -> Fake {
+        let temp = TempDir::new("health");
+        let socket = temp.path().join("raycat.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&requests);
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut raw = Vec::new();
+                let mut byte = [0u8; 1];
+                while !raw.ends_with(b"\r\n\r\n") {
+                    if stream.read(&mut byte).await.unwrap_or(0) == 0 {
+                        break;
+                    }
+                    raw.push(byte[0]);
+                }
+                seen.lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&raw).into_owned());
+                let response =
+                    http_response("200 OK", &[("Content-Type", "application/json")], &reply);
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.shutdown().await;
+            }
+        });
+        Fake {
+            _temp: temp,
+            socket,
+            requests,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_running_xray_with_a_node_is_ready() {
+        let fake = fake(status_json(true, Some(NODE)));
+        let line = ready(&Client::new(fake.socket.clone())).await.unwrap();
+        assert_eq!(line, "готов: xray работает, узел main/NL-1");
+        let requests = fake.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /v1/status HTTP/1.1\r\n"));
+    }
+
+    #[tokio::test]
+    async fn a_stopped_xray_is_not_ready() {
+        let fake = fake(status_json(false, Some(NODE)));
+        let error = ready(&Client::new(fake.socket.clone())).await.unwrap_err();
+        assert_eq!(error.to_string(), "xray не запущен");
+    }
+
+    #[tokio::test]
+    async fn without_a_node_it_is_not_ready() {
+        let fake = fake(status_json(true, None));
+        let error = ready(&Client::new(fake.socket.clone())).await.unwrap_err();
+        assert!(error.to_string().starts_with("узел не выбран"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_node_name_cannot_inject_terminal_codes() {
+        let node = NODE.replace("main/NL-1", "a\\u001b[2Jb");
+        let fake = fake(status_json(true, Some(&node)));
+        let line = ready(&Client::new(fake.socket.clone())).await.unwrap();
+        assert!(!line.contains('\x1b'), "{line:?}");
+    }
+
+    #[tokio::test]
+    async fn a_missing_daemon_is_one_line_about_the_socket() {
+        let temp = TempDir::new("health-missing");
+        let socket = temp.path().join("none.sock");
+        let error = ready(&Client::new(socket)).await.unwrap_err();
+        let text = error.to_string();
+        assert!(text.contains("демон не запущен"), "{text}");
+        assert!(!text.contains('\n'), "{text}");
+    }
+
+    #[tokio::test]
+    async fn a_silent_daemon_is_not_ready_in_time() {
+        let temp = TempDir::new("health-silent");
+        let socket = temp.path().join("raycat.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        tokio::spawn(async move {
+            let held = listener.accept().await;
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            drop(held);
+        });
+        let client = Client::with_timeout(socket, Duration::from_millis(100));
+        let error = ready(&client).await.unwrap_err();
+        assert_eq!(error.to_string(), "демон не ответил вовремя");
     }
 }

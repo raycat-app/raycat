@@ -68,7 +68,7 @@ fn subcommand(name: &'static str, about: &'static str, usage: &'static str) -> C
 
 fn base_command() -> Command {
     Command::new("raycat")
-        .version(env!("CARGO_PKG_VERSION"))
+        .version(env!("RAYCAT_VERSION"))
         .about("Серверный клиент VPN-подписок: шлюз и прокси для хоста и Docker-контейнеров")
         .override_usage("raycat [ПАРАМЕТРЫ] <КОМАНДА>")
         .styles(styles())
@@ -129,6 +129,11 @@ fn control_commands(command: Command) -> Command {
             )
             .arg(json_flag()),
         )
+        .subcommand(subcommand(
+            "health",
+            "Проверить готовность за секунды: демон отвечает, xray работает, узел выбран (код 0 или 1, для HEALTHCHECK)",
+            "raycat health [ПАРАМЕТРЫ]",
+        ))
         .subcommand(
             subcommand(
                 "nodes",
@@ -232,7 +237,7 @@ mod tests {
 
     #[test]
     fn subcommands_parse() {
-        for name in ["daemon", "check", "identity", "tui"] {
+        for name in ["daemon", "check", "identity", "tui", "health"] {
             let matches = command().try_get_matches_from(["raycat", name]).unwrap();
             assert_eq!(matches.subcommand_name(), Some(name));
         }
@@ -354,6 +359,8 @@ mod tests {
             vec!["raycat", "daemon", "--nope"],
             vec!["raycat", "use"],
             vec!["raycat", "status", "--nope"],
+            vec!["raycat", "health", "--json"],
+            vec!["raycat", "health", "лишний"],
             vec!["raycat", "nodes", "--all", "лишний"],
             vec!["raycat", "tui", "--nope"],
             vec!["raycat", "tui", "лишний"],
@@ -392,6 +399,7 @@ mod tests {
             "fetch",
             "identity",
             "status",
+            "health",
             "nodes",
             "use",
             "update",
@@ -402,5 +410,15 @@ mod tests {
             assert!(help.contains(word), "{word}: {help}");
         }
         assert!(!help.contains("Print help"));
+    }
+
+    #[test]
+    fn the_version_starts_with_the_package_version() {
+        let version = command().render_version();
+        assert!(
+            version.starts_with(&format!("raycat {}", env!("CARGO_PKG_VERSION"))),
+            "{version}"
+        );
+        assert_eq!(version.trim_end(), format!("raycat {}", env!("RAYCAT_VERSION")));
     }
 }

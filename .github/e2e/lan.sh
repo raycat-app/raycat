@@ -23,6 +23,7 @@ client=raycat-e2e-lan-client
 outsider=raycat-e2e-lan-outsider
 watcher=raycat-e2e-lan-watcher
 daemon=raycat-e2e-lan-daemon
+state_volume=raycat-e2e-lan-state
 site=http://site.e2e.test/
 canary=http://11.60.0.50/
 nodes_inet=(11.70.0.11 11.70.0.12)
@@ -56,6 +57,7 @@ cleanup() {
     echo "::endgroup::"
   fi
   docker rm -f "$daemon" >/dev/null 2>&1
+  docker volume rm "$state_volume" >/dev/null 2>&1
   "${compose[@]}" down --volumes --remove-orphans --timeout 3 >/dev/null 2>&1
   rm -rf "$state"
   exit "$status"
@@ -164,6 +166,7 @@ $2
 [log]
 level = "debug"
 EOF
+  chmod 644 "$conf/$1.toml"
 }
 
 run_check() {
@@ -171,10 +174,15 @@ run_check() {
     --volume "$conf:/lan:ro" "$image" check 2>&1 || true
 }
 
+# Настройки, которые советует README: корень только для чтения, без лишних привилегий.
 start_daemon() {
-  docker run --detach --name "$daemon" --network "container:$router" --cap-add NET_ADMIN \
+  docker run --detach --name "$daemon" --network "container:$router" \
+    --read-only --cap-drop ALL --cap-add NET_ADMIN --security-opt no-new-privileges:true \
+    --tmpfs /tmp --volume "$state_volume:/var/lib/raycat" \
     --env RAYCAT_CONFIG=/lan/main.toml --volume "$conf:/lan:ro" "$image" >/dev/null
 }
+
+healthy() { [ "$(docker inspect -f '{{.State.Health.Status}}' "$daemon")" = healthy ]; }
 
 echo "== образ и стенд"
 docker image inspect "$image" >/dev/null || fail "нет образа $image"
@@ -229,6 +237,12 @@ log_has "$daemon" "правила перехвата установлены, kil
 log_has "$daemon" "локальная сеть: интерфейс $lan_if" || fail "в журнале нет строки о сети устройств"
 expect_via_node "$site" "${nodes_inet[@]}"
 expect_via_node "$canary" "${nodes_wan[@]}"
+[ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$daemon")" = true ] || fail "корень демона не только для чтения"
+health_line=$(docker exec "$daemon" raycat health 2>&1) || fail "raycat health в работающем шлюзе: $health_line"
+grep -q '^готов: xray работает' <<<"$health_line" || fail "неожиданный вывод raycat health: $health_line"
+status_json=$(docker exec "$daemon" raycat status --json) || fail "raycat status внутри контейнера не нашёл демон: $status_json"
+grep -q '"mode": "gateway"' <<<"$status_json" || fail "raycat status ответил не режимом шлюза: $status_json"
+wait_for "HEALTHCHECK образа считает демон здоровым" 60 healthy
 alive "raycat запущен" wan lan
 open_stream "$outsider" 11.60.0.2 wan-new
 alive "новое входящее соединение при правилах" wan-new
