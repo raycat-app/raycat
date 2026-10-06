@@ -1,0 +1,12 @@
+app = "happ"
+platform = "android"
+arch = "x64"
+release = "4.7.1"
+url = "http://10.0.2.2:{PORT}/sub/capture-android"
+# Часы захвата: Mon Sep 28 12:00:00 UTC 2026.
+unix = 1_790_596_800
+utc_offset_hours = 0
+machine_id = "0d0af05ee8fd4dc29275718f2ce4dff1"
+hwid = "e36f0219bb46d118"
+model = "sdk_gphone64_x86_64"
+locale = "en"
