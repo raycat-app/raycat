@@ -1,11 +1,11 @@
-GET /sub/abc HTTP/1.1
+GET /sub/capture-android HTTP/1.1
 Connection: close
-User-agent: Happ/4.6.0/Android/17903218884031681667
+User-agent: Happ/4.7.1/Android/17912103176801703550
 X-Device-Locale: en
-X-HWID: 3693bef137bbd47f
+X-HWID: 1312da0f330f9d0b
 X-Device-OS: Android
 X-Ver-OS: 14
 X-Device-model: sdk_gphone64_x86_64
-Host: 127.0.0.1:{PORT}
+Host: 10.0.2.2:18080
 Accept-Encoding: gzip
 

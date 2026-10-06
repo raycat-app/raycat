@@ -1,12 +1,12 @@
 app = "happ"
 platform = "android"
 arch = "x64"
-release = "4.6.0"
+release = "4.7.1"
 url = "http://10.0.2.2:{PORT}/sub/capture-android"
-# Tue Sep 29 12:00:00 UTC 2026: нечётное число, маркер «5»; эмулятор в UTC.
+# Часы захвата: Tue Sep 29 12:00:00 UTC 2026.
 unix = 1_790_683_200
 utc_offset_hours = 0
 machine_id = "0d0af05ee8fd4dc29275718f2ce4dff1"
-hwid = "c83f028c42f5e4b4"
+hwid = "1312da0f330f9d0b"
 model = "sdk_gphone64_x86_64"
 locale = "en"
