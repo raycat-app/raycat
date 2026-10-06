@@ -3,6 +3,7 @@
 //! `spawn_blocking`.
 
 mod control;
+mod report;
 
 use std::fs;
 use std::net::{Ipv4Addr, TcpListener};
@@ -26,7 +27,7 @@ use tokio::time::Instant;
 use self::control::FIRST_SELECT_DELAY;
 use crate::api::{self, Refusal, Shared};
 use crate::gateway;
-use crate::log::{self, error, info, warn};
+use crate::log::{self, Latch, error, info, warn};
 use crate::paths;
 use crate::plan;
 use crate::schedule::{HEALTHY_UPTIME, RESTART_FIRST, next_restart_delay};
@@ -194,8 +195,13 @@ struct Sub {
     nodes: Vec<Node>,
     due: Option<Instant>,
     in_flight: bool,
+    /// Сбоев связи или панели подряд; ответы провайдера (заглушки, 4xx) счёт обнуляют.
     failures: u32,
     announce: Option<String>,
+    /// Последняя проблема подписки: о ней пишется один раз, а не при каждой попытке.
+    problem: Latch,
+    /// Замечания к последнему рабочему ответу: в журнале только новые.
+    warned: Vec<String>,
     /// Первая попытка получения (успешная или нет) уже закончилась.
     first_done: bool,
     /// Сведения провайдера для `GET /v1/status`.
@@ -252,6 +258,12 @@ struct Daemon {
     next_select: Instant,
     last_reason: Option<String>,
     pending_updates: Vec<PendingUpdate>,
+    /// Повторяющиеся предупреждения: каждое пишется при появлении или смене текста.
+    plan_problem: Latch,
+    api_problem: Latch,
+    pin_problem: Latch,
+    selection_problem: Latch,
+    guard_problem: Latch,
 }
 
 impl Daemon {
@@ -281,6 +293,8 @@ impl Daemon {
                     in_flight: false,
                     failures: 0,
                     announce: None,
+                    problem: Latch::default(),
+                    warned: Vec::new(),
                     first_done: false,
                     title: None,
                     usage: None,
@@ -320,6 +334,11 @@ impl Daemon {
             next_select: now,
             last_reason: None,
             pending_updates: Vec::new(),
+            plan_problem: Latch::default(),
+            api_problem: Latch::default(),
+            pin_problem: Latch::default(),
+            selection_problem: Latch::default(),
+            guard_problem: Latch::default(),
         })
     }
 
@@ -371,10 +390,12 @@ impl Daemon {
         ) {
             Ok(plan) => plan,
             Err(error) => {
-                warn!("конфиг xray не собран: {error:#}");
+                let text = format!("конфиг xray не собран: {error:#}");
+                log::write(self.plan_problem.level(&text), format_args!("{text}"));
                 return;
             }
         };
+        self.plan_problem.clear();
         if plan.quic && !self.udp_buffers_checked {
             self.udp_buffers_checked = true;
             if let Some(message) = tuning::udp_buffers_warning() {
@@ -426,7 +447,7 @@ impl Daemon {
         if let Some(rules) = &self.gateway
             && self.next_guard <= now
         {
-            gateway::guard(rules);
+            gateway::guard(rules, &mut self.guard_problem);
             self.next_guard = now + gateway::GUARD_INTERVAL;
         }
         self.restart_process().await;
@@ -592,17 +613,19 @@ impl Daemon {
                 sub.title.clone_from(&analysis.info.title);
                 sub.usage.clone_from(&analysis.info.usage);
                 let url = sub.source.config().url.expose();
-                info!(
-                    "подписка «{name}» обновлена: {}; следующее обновление через {}",
-                    redact_in(
-                        &updater::summary(&analysis.info, analysis.nodes.len()),
-                        &[url]
-                    ),
-                    format_duration(refresh.next_in)
+                let summary = redact_in(
+                    &updater::summary(&analysis.info, analysis.nodes.len()),
+                    &[url],
                 );
-                for warning in &analysis.warnings {
-                    warn!("подписка «{name}»: {warning}");
+                if sub.problem.clear() {
+                    info!("{}", report::recovered(&name, &summary, refresh.next_in));
+                } else {
+                    info!("{}", report::updated(&name, &summary, refresh.next_in));
                 }
+                for (level, text) in report::new_warnings(&name, &sub.warned, &analysis.warnings) {
+                    log::write(level, format_args!("{text}"));
+                }
+                sub.warned.clone_from(&analysis.warnings);
                 if let Some(announce) = analysis.info.announce.as_deref() {
                     let announce = redact_in(announce, &[url]);
                     if sub.announce.as_deref() != Some(announce.as_str()) {
@@ -616,20 +639,18 @@ impl Daemon {
                 }
             }
             Outcome::Rejected(reason) => {
-                sub.failures = sub.failures.saturating_add(1);
-                sub.last_error = Some(reason.clone());
-                warn!(
-                    "подписка «{name}»: ответ не применён ({reason}), остаются прежние узлы; повтор через {}",
-                    format_duration(refresh.next_in)
-                );
+                sub.failures = 0;
+                let level = sub.problem.level(&reason);
+                let line = report::rejected(&name, &reason, refresh.next_in);
+                sub.last_error = Some(reason);
+                log::write(level, format_args!("{line}"));
             }
             Outcome::Failed(message) => {
                 sub.failures = sub.failures.saturating_add(1);
-                sub.last_error = Some(message.clone());
-                warn!(
-                    "подписка «{name}»: не удалось обновить ({message}); повтор через {}",
-                    format_duration(refresh.next_in)
-                );
+                let level = sub.problem.level(&message);
+                let line = report::failed(&name, &message, refresh.next_in);
+                sub.last_error = Some(message);
+                log::write(level, format_args!("{line}"));
             }
         }
         self.complete_updates(index, &result);
@@ -648,6 +669,7 @@ mod tests {
     use raycat_subscription::analyze;
 
     use super::*;
+    use crate::log::Level;
     use crate::testing::TempDir;
 
     const ONE: &str = "ss://aes-128-gcm:secret@203.0.113.5:8388#One\n";
@@ -695,6 +717,78 @@ mod tests {
             outcome: Outcome::Failed("нет связи".to_owned()),
             next_in: Duration::from_secs(30),
         }
+    }
+
+    fn rejected(reason: &str) -> Refresh {
+        Refresh {
+            outcome: Outcome::Rejected(reason.to_owned()),
+            next_in: Duration::from_secs(43_200),
+        }
+    }
+
+    #[test]
+    fn a_provider_answer_resets_the_failure_count_and_moves_the_next_attempt() {
+        let temp = TempDir::new("rejected");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished(0, applied(ONE));
+        daemon.finished(0, failed());
+        daemon.finished(0, failed());
+        assert_eq!(daemon.subs[0].failures, 2);
+
+        daemon.finished(0, rejected("все узлы — заглушки"));
+        assert_eq!(daemon.subs[0].failures, 0);
+        assert_eq!(daemon.subs[0].nodes.len(), 1);
+        assert!(daemon.subs[0].due.unwrap() > Instant::now() + Duration::from_secs(43_000));
+        let sub = &daemon.status().subscriptions[0];
+        assert_eq!(sub.last_error.as_deref(), Some("все узлы — заглушки"));
+        let wait = sub.next_update.unwrap().saturating_sub(now_unix());
+        assert!((43_190..=43_200).contains(&wait), "{wait}");
+    }
+
+    #[test]
+    fn a_repeated_problem_is_not_a_new_warning_until_the_subscription_recovers() {
+        let temp = TempDir::new("latch");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished(0, rejected("заглушка"));
+        daemon.finished(0, rejected("заглушка"));
+        assert_eq!(daemon.subs[0].problem.level("заглушка"), Level::Debug);
+        assert_eq!(daemon.subs[0].problem.level("другая заглушка"), Level::Warn);
+
+        daemon.finished(0, applied(ONE));
+        assert!(!daemon.subs[0].problem.clear());
+        assert_eq!(daemon.subs[0].problem.level("заглушка"), Level::Warn);
+    }
+
+    #[test]
+    fn network_failures_and_provider_answers_share_one_problem_state() {
+        let temp = TempDir::new("latch-failed");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished(0, failed());
+        daemon.finished(0, failed());
+        assert_eq!(daemon.subs[0].problem.level("нет связи"), Level::Debug);
+        daemon.finished(0, rejected("заглушка"));
+        assert_eq!(daemon.subs[0].problem.level("заглушка"), Level::Debug);
+        assert_eq!(daemon.subs[0].problem.level("нет связи"), Level::Warn);
+    }
+
+    #[test]
+    fn skipped_stub_notes_are_remembered_between_updates() {
+        let temp = TempDir::new("warned");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        let with_stub = format!(
+            "vless://00000000-0000-0000-0000-000000000000@0.0.0.0:1?security=none#Separator\n{ONE}"
+        );
+        daemon.finished(0, applied(&with_stub));
+        assert_eq!(daemon.subs[0].warned.len(), 1);
+        assert!(daemon.subs[0].warned[0].contains("Separator"));
+        daemon.finished(0, applied(&with_stub));
+        assert_eq!(daemon.subs[0].warned.len(), 1);
+        daemon.finished(0, applied(ONE));
+        assert_eq!(daemon.subs[0].warned, Vec::<String>::new());
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use raycat_netfilter::Rules;
 
-use crate::log::{error, info, warn};
+use crate::log::{Latch, Level, debug, error, info, warn};
 use crate::plan;
 
 /// Как часто проверяется, что таблица и правило маршрутизации на месте.
@@ -77,15 +77,26 @@ pub(crate) fn remove(rules: &Rules) {
 }
 
 /// Возвращает правила, если их кто-то сбросил: kill switch держится на правиле
-/// маршрутизации, а `docker restart` и сторонние инструменты сбрасывают его.
-pub(crate) fn guard(rules: &Rules) {
+/// маршрутизации, а `docker restart` и сторонние инструменты сбрасывают его. Пока
+/// восстановить не получается, о потере пишется один раз, а не при каждой проверке.
+pub(crate) fn guard(rules: &Rules, lost: &mut Latch) {
     if raycat_netfilter::is_installed(rules) {
+        lost.clear();
         return;
     }
-    warn!("правила перехвата пропали (таблица nftables или правило маршрутизации), ставлю заново");
+    let first = lost.level("правила перехвата пропали") == Level::Warn;
+    if first {
+        warn!(
+            "правила перехвата пропали (таблица nftables или правило маршрутизации), ставлю заново"
+        );
+    }
     match raycat_netfilter::install(rules) {
-        Ok(()) => info!("правила перехвата восстановлены"),
-        Err(error) => error!("не удалось восстановить правила перехвата: {error:#}"),
+        Ok(()) => {
+            lost.clear();
+            info!("правила перехвата восстановлены");
+        }
+        Err(error) if first => error!("не удалось восстановить правила перехвата: {error:#}"),
+        Err(error) => debug!("не удалось восстановить правила перехвата: {error:#}"),
     }
 }
 

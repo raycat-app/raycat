@@ -16,7 +16,7 @@ use tokio::time::Instant;
 
 use super::{Daemon, PendingUpdate, Sub};
 use crate::api::{Command, Refusal};
-use crate::log::{debug, info, warn};
+use crate::log::{self, Level, info};
 use crate::{plan, selection};
 
 const API_TIMEOUT: Duration = Duration::from_secs(3);
@@ -141,11 +141,12 @@ impl Daemon {
         let statuses = match api.outbound_status().await {
             Ok(statuses) => statuses,
             Err(error) => {
-                self.api_problem(&error.to_string());
+                self.report_api_problem(&error.to_string());
                 self.drop_api();
                 return;
             }
         };
+        self.api_problem.clear();
         let health = selection::health(&statuses);
         let decision = self.selector.step(selection::now(), &health);
         self.apply_decision(&api, decision).await;
@@ -162,21 +163,22 @@ impl Daemon {
                 Some(api)
             }
             Err(error) => {
-                self.api_problem(&error.to_string());
+                self.report_api_problem(&error.to_string());
                 None
             }
         }
     }
 
-    fn api_problem(&self, text: &str) {
+    fn report_api_problem(&mut self, text: &str) {
         let starting = self
             .xray_started
             .is_some_and(|started| started.elapsed() < API_GRACE);
-        if starting {
-            debug!("{text}");
+        let level = if starting {
+            Level::Debug
         } else {
-            warn!("{text}");
-        }
+            self.api_problem.level(text)
+        };
+        log::write(level, format_args!("{text}"));
     }
 
     /// Забывает соединение с API xray: он перезапущен или не отвечает.
@@ -187,8 +189,17 @@ impl Daemon {
     }
 
     async fn apply_decision(&mut self, api: &XrayApi, decision: Decision) {
-        for warning in &decision.warnings {
-            warn!("выбор узла: {warning}");
+        let warnings = decision
+            .warnings
+            .iter()
+            .map(|warning| format!("выбор узла: {warning}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        if warnings.is_empty() {
+            self.selection_problem.clear();
+        } else {
+            let level = self.selection_problem.level(&warnings);
+            log::write(level, format_args!("{warnings}"));
         }
         if decision.changed || self.last_reason.is_none() {
             self.last_reason = Some(decision.reason.to_string());
@@ -205,9 +216,13 @@ impl Daemon {
             Some(tag) => {
                 if self.pinned_in_xray.as_deref() != Some(tag.as_str()) {
                     match api.pin(plan::BALANCER, &tag).await {
-                        Ok(()) => self.pinned_in_xray = Some(tag),
+                        Ok(()) => {
+                            self.pinned_in_xray = Some(tag);
+                            self.pin_problem.clear();
+                        }
                         Err(error) => {
-                            warn!("не удалось закрепить узел в xray: {error}");
+                            let text = format!("не удалось закрепить узел в xray: {error}");
+                            log::write(self.pin_problem.level(&text), format_args!("{text}"));
                             self.drop_api();
                         }
                     }
