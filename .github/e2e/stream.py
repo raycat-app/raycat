@@ -6,10 +6,11 @@
 
   serve --bind АДРЕС --port N
   watch АДРЕС PORT --state ФАЙЛ
-  check --state ФАЙЛ [--wait СЕК]
+  check --state ФАЙЛ [--state ФАЙЛ ...] [--wait СЕК]
 
 `check` берёт два снимка состояния с паузой и требует, чтобы соединение было целым
-и за паузу пришли новые tick и pong: то есть данные идут в обе стороны.
+и за паузу пришли новые tick и pong: то есть данные идут в обе стороны. Несколько
+файлов проверяются за одну паузу.
 """
 
 import argparse
@@ -98,25 +99,28 @@ def read_state(path):
 
 def check(args):
     try:
-        first = read_state(args.state)
+        first = [read_state(path) for path in args.state]
         time.sleep(args.wait)
-        second = read_state(args.state)
+        second = [read_state(path) for path in args.state]
     except (OSError, ValueError) as error:
-        print(f"нет состояния {args.state}: {error}", file=sys.stderr)
+        print(f"нет состояния: {error}", file=sys.stderr)
         return 1
-    if second[0] != "ok":
-        print(f"соединение порвано: {second[0]}", file=sys.stderr)
-        return 1
-    if time.time() - second[3] > 3:
-        print("наблюдатель давно не обновлял состояние", file=sys.stderr)
-        return 1
-    if second[1] <= first[1] or second[2] <= first[2]:
-        print(
-            f"данные не идут: tick {first[1]}→{second[1]}, pong {first[2]}→{second[2]}",
-            file=sys.stderr,
-        )
-        return 1
-    print(f"живо: tick {second[1]}, pong {second[2]}")
+    alive = []
+    for path, before, after in zip(args.state, first, second):
+        if after[0] != "ok":
+            print(f"{path}: соединение порвано: {after[0]}", file=sys.stderr)
+            return 1
+        if time.time() - after[3] > 3:
+            print(f"{path}: наблюдатель давно не обновлял состояние", file=sys.stderr)
+            return 1
+        if after[1] <= before[1] or after[2] <= before[2]:
+            print(
+                f"{path}: данные не идут: tick {before[1]}→{after[1]}, pong {before[2]}→{after[2]}",
+                file=sys.stderr,
+            )
+            return 1
+        alive.append(f"tick {after[1]}, pong {after[2]}")
+    print("живо: " + "; ".join(alive))
     return 0
 
 
@@ -134,7 +138,7 @@ def main():
     watcher.add_argument("--state", required=True)
 
     checker = commands.add_parser("check")
-    checker.add_argument("--state", required=True)
+    checker.add_argument("--state", action="append", required=True)
     checker.add_argument("--wait", type=float, default=2.0)
 
     args = parser.parse_args()

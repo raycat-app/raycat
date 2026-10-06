@@ -161,6 +161,34 @@ no_leak() {
   [ "$(hits)" = "$before" ] || fail "запрос дошёл до сервера мимо перехвата: $*"
 }
 
+# parallel_no_leak ЖУРНАЛ КТО "probe-аргументы"...: то же, что no_leak для нескольких
+# запросов, но без ожидания тайм-аута каждого по очереди.
+parallel_no_leak() {
+  local counter=$1 who=$2 before out spec pid n=0
+  shift 2
+  local pids=()
+  rm -f "$work"/leak.*
+  before=$("$counter")
+  for spec in "$@"; do
+    n=$((n + 1))
+    (
+      read -r -a probe_args <<<"$spec"
+      if out=$("$who" python3 "$peer" probe "${probe_args[@]}" 2>/dev/null); then
+        echo "неожиданный ответ «$out» на $spec" >"$work/leak.$n"
+      fi
+    ) &
+    pids+=($!)
+  done
+  for pid in "${pids[@]}"; do
+    wait "$pid"
+  done
+  if compgen -G "$work/leak.*" >/dev/null; then
+    fail "$(cat "$work"/leak.*)"
+  fi
+  [ "$("$counter")" = "$before" ] || fail "запрос дошёл до сервера мимо перехвата: $*"
+}
+no_leaks() { parallel_no_leak hits "$@"; }
+
 serve() {
   local who=$1
   shift
@@ -176,6 +204,23 @@ wait_listening() {
     sleep 0.25
   done
   fail "не дождались сервера на порту $want"
+}
+
+# stop_peers МЕТКА КТО ПОРТ: останавливает прозрачные серверы и ждёт, пока порты освободятся.
+stop_peers() {
+  local label=$1 who=$2 want=$3 kind _
+  sudo pkill -f "[l]abel $label" || true
+  for kind in t u; do
+    for _ in $(seq 100); do
+      if ! "$who" ss -H -ln"$kind" | grep -q ":$want "; then
+        break
+      fi
+      sleep 0.1
+    done
+    if "$who" ss -H -ln"$kind" | grep -q ":$want "; then
+      fail "сервер $label не остановился"
+    fi
+  done
 }
 
 log=(--log "$work/server.log")
@@ -197,9 +242,7 @@ expect_reply in_server "cli 203.0.113.2:9000" tcp 203.0.113.2 9000
 
 echo "== перехват включён, xray не слушает: наружу ничего не уходит"
 in_client "$ctl" install
-no_leak in_client tcp 203.0.113.1 8080
-no_leak in_client udp 203.0.113.1 9090
-no_leak in_client tcp 2001:db8:1::1 8080
+no_leaks in_client "tcp 203.0.113.1 8080" "udp 203.0.113.1 9090" "tcp 2001:db8:1::1 8080"
 expect_reply in_client "srv 10.99.0.1:8080" tcp 10.99.0.1 8080
 expect_reply in_client "srv fd00:99::1:8080" tcp fd00:99::1 8080
 expect_reply in_client "srv 203.0.113.1:8080" tcp 203.0.113.1 8080 --mark "$own_mark"
@@ -230,11 +273,8 @@ if in_client ping -c1 -W2 203.0.113.1 >/dev/null 2>&1; then
 fi
 
 echo "== kill switch, xray остановлен: падаем закрыто"
-sudo pkill -f '[l]abel tproxy' || true
-sleep 1
-no_leak in_client tcp 203.0.113.1 8080
-no_leak in_client udp 203.0.113.1 9090
-no_leak in_client tcp 10.99.0.1 53
+stop_peers tproxy in_client "$port"
+no_leaks in_client "tcp 203.0.113.1 8080" "udp 203.0.113.1 9090" "tcp 10.99.0.1 53"
 expect_reply in_client "srv 10.99.0.1:8080" tcp 10.99.0.1 8080
 expect_reply in_server "cli 203.0.113.2:9000" tcp 203.0.113.2 9000
 
@@ -251,10 +291,15 @@ expect_reply in_client "srv 2001:db8:1::1:8080" tcp 2001:db8:1::1 8080
 
 stream=$root/.github/e2e/stream.py
 
-# alive ФАЙЛ ГДЕ: соединение целое, tick и pong идут.
+# alive ГДЕ ФАЙЛ...: соединения целы, tick и pong идут; все файлы проверяются за одну паузу.
 alive() {
-  local state=$1 what=$2 out
-  out=$(python3 "$stream" check --state "$state" 2>&1) || fail "соединение не пережило: $what ($out)"
+  local what=$1 out state
+  shift
+  local states=()
+  for state in "$@"; do
+    states+=(--state "$state")
+  done
+  out=$(python3 "$stream" check "${states[@]}" 2>&1) || fail "соединение не пережило: $what ($out)"
   echo "  $what: $out"
 }
 
@@ -275,26 +320,22 @@ echo "== соединение к хосту, открытое до правил,
 in_client python3 "$stream" serve --bind 0.0.0.0 --port 9100 >>"$work/peers.log" 2>&1 &
 wait_listening in_client t 9100
 watch_stream in_server 203.0.113.2 9100 "$work/stream-old.state"
-alive "$work/stream-old.state" "до установки правил"
+alive "до установки правил" "$work/stream-old.state"
 in_client "$ctl" install --kill-switch
-alive "$work/stream-old.state" "правила с kill switch поставлены, соединение было открыто раньше"
+alive "правила с kill switch поставлены, соединение было открыто раньше" "$work/stream-old.state"
 watch_stream in_server 203.0.113.2 9100 "$work/stream-new.state"
-alive "$work/stream-new.state" "новое входящее соединение при правилах"
+alive "новое входящее соединение при правилах" "$work/stream-new.state"
 serve in_client tcp --bind 0.0.0.0 --port "$port" --label tproxy --transparent
 serve in_client udp --bind 0.0.0.0 --port "$port" --label tproxy --transparent
 wait_listening in_client t "$port"
 wait_listening in_client u "$port"
-alive "$work/stream-old.state" "xray запущен"
-alive "$work/stream-new.state" "xray запущен, новое соединение"
-sudo pkill -f '[l]abel tproxy' || true
-sleep 1
+alive "xray запущен, оба соединения" "$work/stream-old.state" "$work/stream-new.state"
+stop_peers tproxy in_client "$port"
 no_leak in_client tcp 203.0.113.1 8080
-alive "$work/stream-old.state" "xray остановлен, kill switch держит"
-alive "$work/stream-new.state" "xray остановлен, новое соединение"
+alive "xray остановлен, kill switch держит, оба соединения" "$work/stream-old.state" "$work/stream-new.state"
 in_client "$ctl" remove --kill-switch
 assert_clean
-alive "$work/stream-old.state" "правила сняты"
-alive "$work/stream-new.state" "правила сняты, новое соединение"
+alive "правила сняты, оба соединения" "$work/stream-old.state" "$work/stream-new.state"
 
 lan_flags=(--kill-switch --lan-interface rcl-l --lan-subnets 10.88.0.0/24)
 lan_log=$work/lan-server.log
@@ -311,6 +352,8 @@ lan_no_leak() {
   fi
   [ "$(lan_hits)" = "$before" ] || fail "запрос устройства дошёл до сервера мимо перехвата: $*"
 }
+
+lan_no_leaks() { parallel_no_leak lan_hits in_lclient "$@"; }
 
 lan_rule_count() { in_lrouter ip -4 rule show | grep -c fwmark || true; }
 
@@ -358,8 +401,7 @@ in_lclient ping -c1 -W2 203.0.113.1 >/dev/null || fail "стенд не пере
 watch_stream in_lserver 203.0.113.2 9100 "$work/lan-stream-wan.state"
 watch_stream in_lclient 10.88.0.1 9100 "$work/lan-stream-lan.state"
 lan_streams() {
-  alive "$work/lan-stream-wan.state" "$1 (из интернета к хосту)"
-  alive "$work/lan-stream-lan.state" "$1 (из сети к хосту)"
+  alive "$1 (из интернета и из сети к хосту)" "$work/lan-stream-wan.state" "$work/lan-stream-lan.state"
 }
 lan_streams "до правил"
 
@@ -395,20 +437,15 @@ lan_no_leak tcp 10.88.0.1 12345
 lan_streams "пересылка включена"
 
 echo "== xray остановлен: устройства закрыты, хост доступен"
-sudo pkill -f '[l]abel lantproxy' || true
-sleep 1
-lan_no_leak tcp 203.0.113.1 8080
-lan_no_leak udp 203.0.113.1 9090
-lan_no_leak udp 10.88.0.1 53
-lan_no_leak tcp 10.88.0.1 53
+stop_peers lantproxy in_lrouter "$port"
+lan_no_leaks "tcp 203.0.113.1 8080" "udp 203.0.113.1 9090" "udp 10.88.0.1 53" "tcp 10.88.0.1 53"
 expect_reply in_lclient "rtr 10.88.0.1:8080" tcp 10.88.0.1 8080
 lan_streams "xray остановлен"
 
 echo "== правило маршрутизации пропало: пересылка всё равно закрыта"
 in_lrouter ip -4 rule del fwmark "$(default intercept_mark)" lookup "$table" priority "$(default priority)"
 [ "$(lan_rule_count)" = 0 ] || fail "правило маршрутизации не удалилось"
-lan_no_leak tcp 203.0.113.1 8080
-lan_no_leak udp 203.0.113.1 9090
+lan_no_leaks "tcp 203.0.113.1 8080" "udp 203.0.113.1 9090"
 lan_streams "правило маршрутизации пропало"
 in_lrouter "$ctl" install "${lan_flags[@]}"
 [ "$(lan_rule_count)" = 1 ] || fail "повторная установка не вернула правило"

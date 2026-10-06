@@ -31,6 +31,33 @@ tap() {
   return 1
 }
 captured() { ls "$out"/*.http >/dev/null 2>&1; }
+# Ждёт первый запрос приложения, не дольше $1 секунд; после него ещё 3 с на повторные запросы.
+wait_captured() {
+  local _
+  for _ in $(seq "$1"); do
+    if captured; then
+      sleep 3
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+# Ждёт, пока на экране появится элемент с одним из текстов (или придёт запрос), не дольше $1 секунд.
+wait_ui() {
+  local limit=$1 _ word
+  shift
+  for _ in $(seq "$limit"); do
+    captured && return 0
+    adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+    xml=$(adb exec-out cat /sdcard/ui.xml)
+    for word in "$@"; do
+      printf '%s' "$xml" | grep -qi "text=\"$word\"" && return 0
+    done
+    sleep 1
+  done
+  return 1
+}
 
 # DATE=MMDDhhmmCCYY.ss переводит часы эмулятора (проверка значений, зависящих от дня).
 if [ -n "${DATE:-}" ]; then
@@ -81,7 +108,7 @@ adb shell getprop ro.build.version.release >>"$out/device.txt"
 adb shell settings get secure android_id >>"$out/device.txt"
 
 [ -n "$pkg" ] && adb shell monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
-sleep 15
+wait_ui 15 "Wait" "Allow" "OK" "Accept" "Agree" "Continue" "Next" "Skip" "Got it" "Разрешить" "Принять" "Продолжить" "Далее" "Пропустить" || true
 snap launched
 for _ in 1 2 3 4 5 6; do
   tap "Wait" "Allow" "OK" "Accept" "Agree" "Continue" "Next" "Skip" "Got it" "Разрешить" "Принять" "Продолжить" "Далее" "Пропустить" || break
@@ -92,16 +119,18 @@ snap onboarding
 for host in $HOSTS; do
   captured && break
   adb shell am start -a android.intent.action.VIEW -d "$SCHEME://add/${PROTO:-http}://$host:$port/sub/capture-android" 2>&1 | tail -1
-  sleep 12
+  wait_ui 12 "Wait" "Add" "OK" "Import" "Yes" "Confirm" "Добавить" "Импорт" "Да" "Подтвердить" || true
   snap "deeplink-$host"
   for _ in 1 2 3; do
     tap "Wait" "Add" "OK" "Import" "Yes" "Confirm" "Добавить" "Импорт" "Да" "Подтвердить" || break
-    sleep 8
+    if wait_captured 8; then
+      break
+    fi
   done
   snap "added-$host"
-  sleep 15
+  wait_captured 15 || true
 done
-sleep 10
+wait_captured 10 || true
 snap final
 [ -n "$pkg" ] && adb logcat -d --pid="$(adb shell pidof "$pkg" | awk '{print $1}')" >"$out/logcat-app.txt" 2>&1
 ls -la "$out"

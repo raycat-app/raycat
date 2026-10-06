@@ -16,14 +16,17 @@ on:
 permissions: {}
 
 jobs:
-  files:
-    name: Версия и архивы
+  version:
+    name: Версия
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      previous: ${{ steps.version.outputs.previous }}
+      last_tag: ${{ steps.version.outputs.last_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -34,6 +37,19 @@ jobs:
         env:
           RUN_NUMBER: ${{ github.run_number }}
         run: bash .github/release/dev-version.sh
+
+  files:
+    name: Архивы
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: raycat-*
@@ -50,17 +66,17 @@ jobs:
         run: bash .github/release/inputs.sh artifacts inputs
       - name: Архивы
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct HEAD)
           export SOURCE_DATE_EPOCH
           bash .github/release/package.sh "$VERSION" inputs release
       - name: Заметки
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
           REPOSITORY: ${{ github.repository }}
-          PREVIOUS: ${{ steps.version.outputs.previous }}
-          LAST_TAG: ${{ steps.version.outputs.last_tag }}
+          PREVIOUS: ${{ needs.version.outputs.previous }}
+          LAST_TAG: ${{ needs.version.outputs.last_tag }}
         run: |
           base=${PREVIOUS:-$LAST_TAG}
           bash .github/release/collect.sh "$base" HEAD | bash .github/release/notes.sh >"$RUNNER_TEMP/changes.md"
@@ -83,15 +99,16 @@ jobs:
 
   images:
     name: Образы
-    needs: files
+    needs: version
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
       id-token: write
       attestations: write
     env:
-      VERSION: ${{ needs.files.outputs.version }}
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -220,8 +237,9 @@ jobs:
 
   publish:
     name: Выпуск
-    needs: [files, images]
+    needs: [version, files, images]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
       id-token: write
@@ -241,7 +259,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          TAG: ${{ needs.files.outputs.tag }}
+          TAG: ${{ needs.version.outputs.tag }}
           SHA: ${{ github.sha }}
         run: |
           gh release create "$TAG" release/*.tar.gz release/SHA256SUMS \
@@ -249,7 +267,7 @@ jobs:
       - name: Сухой прогон
         if: ${{ inputs.dry_run }}
         env:
-          TAG: ${{ needs.files.outputs.tag }}
+          TAG: ${{ needs.version.outputs.tag }}
         run: echo "Сухой прогон. Выпуск $TAG не создан, файлы лежат в артефакте release-dev."
 
   cleanup:
@@ -257,6 +275,7 @@ jobs:
     needs: publish
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:

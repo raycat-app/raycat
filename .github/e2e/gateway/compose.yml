@@ -26,10 +26,21 @@ volumes:
 
 # Служебные контейнеры из того же образа не шлюзы: HEALTHCHECK образа у них провалился бы.
 x-idle-health: &idle-health
-  test: ["CMD", "true"]
-  interval: 2s
-  timeout: 2s
-  retries: 3
+  disable: true
+
+# Шлюз ждёт, пока панель начнёт отвечать: при отказе в соединении демон повторяет запрос
+# только через 30 с.
+x-after-panel: &after-panel
+  panel:
+    condition: service_healthy
+  node1:
+    condition: service_started
+  node2:
+    condition: service_started
+  site:
+    condition: service_started
+  canary:
+    condition: service_started
 
 x-node: &node
   image: raycat:ci
@@ -73,6 +84,11 @@ services:
       - /e2e/gateway/subscription.txt
       - --requests
       - /tmp/requests.log
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 1).close()"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
     volumes:
       - ..:/e2e:ro
     networks:
@@ -116,13 +132,15 @@ services:
     networks:
       wan:
         ipv4_address: 11.30.0.2
-    depends_on: [panel, node1, node2, site, canary]
+    depends_on: *after-panel
 
   app:
     image: raycat:ci
     container_name: raycat-e2e-app
     entrypoint: ["sleep", "infinity"]
     healthcheck: *idle-health
+    # sleep без init не реагирует на SIGTERM, и перезапуск ждал бы 10 с до SIGKILL.
+    stop_grace_period: 1s
     network_mode: service:raycat
     depends_on:
       raycat:
@@ -158,4 +176,7 @@ services:
       - ..:/e2e:ro
       - state2:/var/lib/raycat
     network_mode: service:holder
-    depends_on: [holder, panel, node1, node2, site, canary]
+    depends_on:
+      <<: *after-panel
+      holder:
+        condition: service_started
