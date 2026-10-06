@@ -140,6 +140,7 @@ if gateway_run sh -c 'touch /probe' 2>/dev/null; then
   fail "в корень шлюза удалось записать файл"
 fi
 gateway_run test -S /var/lib/raycat/raycat.sock || fail "сокет API не в каталоге состояния"
+wait_for "raycat health: узел выбран" 30 gateway_run raycat health
 health_line=$(gateway_run raycat health 2>&1) || fail "raycat health в работающем шлюзе: $health_line"
 grep -q '^готов: xray работает' <<<"$health_line" || fail "неожиданный вывод raycat health: $health_line"
 echo "  $health_line"

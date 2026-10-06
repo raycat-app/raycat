@@ -22,7 +22,7 @@ env:
   # профиль ci: те же проверки, но без полного LTO.
   BUILD_PROFILE: ${{ github.ref == 'refs/heads/main' && 'release' || 'ci' }}
   # Кэш пишется только с main: запуски из PR и веток его читают, но не меняют.
-  CACHE_SAVE: ${{ github.ref == 'refs/heads/main' }}
+  CACHE_SAVE: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
   BINFMT_IMAGE: tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
 
 jobs:

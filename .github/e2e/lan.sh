@@ -264,6 +264,7 @@ log_has "$daemon" "локальная сеть: интерфейс $lan_if" || f
 expect_via_node "$site" "${nodes_inet[@]}"
 expect_via_node "$canary" "${nodes_wan[@]}"
 [ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$daemon")" = true ] || fail "корень демона не только для чтения"
+wait_for "raycat health: узел выбран" 30 docker exec "$daemon" raycat health
 health_line=$(docker exec "$daemon" raycat health 2>&1) || fail "raycat health в работающем шлюзе: $health_line"
 grep -q '^готов: xray работает' <<<"$health_line" || fail "неожиданный вывод raycat health: $health_line"
 status_json=$(docker exec "$daemon" raycat status --json) || fail "raycat status внутри контейнера не нашёл демон: $status_json"
