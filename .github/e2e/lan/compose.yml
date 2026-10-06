@@ -31,7 +31,12 @@ networks:
 
 # Служебные контейнеры из того же образа не шлюзы: HEALTHCHECK образа у них провалился бы.
 x-idle-health: &idle-health
-  disable: true
+  test: ["CMD", "true"]
+  interval: 2s
+  timeout: 2s
+  retries: 3
+  start_period: 10s
+  start_interval: 500ms
 
 x-node: &node
   image: raycat:ci
