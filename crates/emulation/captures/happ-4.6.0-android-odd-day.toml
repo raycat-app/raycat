@@ -1,6 +1,7 @@
 app = "happ"
 platform = "android"
 arch = "x64"
+release = "4.6.0"
 url = "http://10.0.2.2:{PORT}/sub/capture-android"
 # Tue Sep 29 12:00:00 UTC 2026: нечётное число, маркер «5»; эмулятор в UTC.
 unix = 1_790_683_200

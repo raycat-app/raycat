@@ -101,13 +101,13 @@ impl Values<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Part {
+pub(crate) enum Part {
     Text(String),
     Var(Var),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Template(Vec<Part>);
+pub(crate) struct Template(pub(crate) Vec<Part>);
 
 impl Template {
     pub(crate) fn parse(source: &str) -> Result<Self> {

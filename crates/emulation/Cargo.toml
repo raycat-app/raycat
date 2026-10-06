@@ -16,5 +16,14 @@ ring.workspace = true
 serde.workspace = true
 toml.workspace = true
 
+[features]
+# Инструмент обновления профилей по захватам (`update-profiles`): в бинарник raycat не попадает.
+tool = []
+
+[[bin]]
+name = "update-profiles"
+path = "src/bin/update-profiles.rs"
+required-features = ["tool"]
+
 [lints]
 workspace = true

@@ -1,0 +1,70 @@
+name: Новые версии клиентов
+
+# Раз в сутки узнаёт последние стабильные версии Happ (Windows, Android) и INCY (Android)
+# и сравнивает их с версиями, по которым сняты образцы запросов. Для каждой новой версии
+# client-update.yml снимает настоящий запрос, обновляет профиль и сам сливает PR, если
+# проверки зелёные. Новых версий нет — ничего не запускается.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Пересобрать профиль по текущей версии вместо новой (none, all, happ-windows, happ-android, incy-android)
+        type: choice
+        options: [none, all, happ-windows, happ-android, incy-android]
+        default: none
+      merge:
+        description: Сливать PR бота после зелёных проверок
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: clients
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: Поиск новых версий
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      apps: ${{ steps.watch.outputs.apps }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: watch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          FORCE: ${{ inputs.force }}
+        run: bash .github/capture/watch.sh
+
+  update:
+    name: ${{ matrix.key }} ${{ matrix.release }}
+    needs: watch
+    if: ${{ needs.watch.outputs.apps != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.watch.outputs.apps) }}
+    # Синтаксис $/ из совета zizmor actionlint не разбирает, поэтому ./
+    uses: ./.github/workflows/client-update.yml # zizmor: ignore[self-repository]
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+      statuses: write
+    with:
+      app: ${{ matrix.app }}
+      platform: ${{ matrix.platform }}
+      release: ${{ matrix.release }}
+      merge: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.merge) }}
