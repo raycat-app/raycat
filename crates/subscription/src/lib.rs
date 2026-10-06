@@ -22,6 +22,10 @@ pub use info::{HwidFlags, ProviderInfo, Usage};
 pub use redact::{redact, redact_in};
 pub use routing::{DnsServer, Routing, RoutingProfile};
 
+/// Начало замечания о пропущенных узлах-заглушках рядом с рабочими узлами: это
+/// обычные строки провайдера («обходы ниже»), а не неполадка.
+pub const SKIPPED_STUBS: &str = "пропущены узлы-заглушки";
+
 /// Почему ответ нельзя применять: он не заменяет последний рабочий конфиг.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Problem {
@@ -135,10 +139,7 @@ fn drop_stubs(nodes: &mut Vec<Node>, warnings: &mut Vec<String>) -> Option<Strin
         ));
     }
     nodes.retain(|node| !stub::is_stub(node));
-    push_warning(
-        warnings,
-        format!("пропущены узлы-заглушки: {}", names.join(" | ")),
-    );
+    push_warning(warnings, format!("{SKIPPED_STUBS}: {}", names.join(" | ")));
     None
 }
 

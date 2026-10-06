@@ -1,18 +1,19 @@
 //! Получение подписки: запрос как у приложения, перенаправления, запасные адреса,
 //! проверка ответа и запись в кэш.
 
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use raycat_config::{Config, Platform as ConfigPlatform, Subscription};
 use raycat_emulation::{Arch, Device, Emulation, Platform, machine_id_from_seed};
 use raycat_http::{Client, Request, Response, Scheme, Url, redact};
-use raycat_subscription::{Analysis, ProviderInfo, analyze, redact_in};
+use raycat_subscription::{Analysis, ProviderInfo, Problem, analyze, redact_in};
 use raycat_xray::Node;
 
-use crate::log::{hide, info, warn};
+use crate::log::{self, Latch, Level, hide, info, warn};
 use crate::plan;
-use crate::schedule::{interval, retry_delay};
+use crate::schedule::{after_retry_header, interval, is_outage, retry_delay};
 use crate::store::{Store, SubState};
 use crate::util::{fnv1a, format_bytes, format_date, now_unix};
 
@@ -93,6 +94,8 @@ pub(crate) struct Source {
     client: Client,
     fingerprint: String,
     origin: Origin,
+    /// Основной адрес не отвечает, но запасной подошёл: об этом пишется один раз.
+    address_problem: Mutex<Latch>,
 }
 
 impl Source {
@@ -138,6 +141,7 @@ impl Source {
             },
             fingerprint,
             origin,
+            address_problem: Mutex::new(Latch::default()),
         })
     }
 
@@ -272,10 +276,12 @@ pub(crate) fn follow(
 }
 
 /// Пробует адреса по порядку до первого ответа 2xx; если такого нет, возвращает
-/// последний исход.
+/// последний исход. Отказ первого адреса — предупреждение, пока он не сменился
+/// (`first_failed`); отказы остальных — только debug.
 pub(crate) fn fetch_candidates(
     candidates: &[Url],
     send: &mut dyn FnMut(&Url) -> Result<Response>,
+    first_failed: &mut Latch,
 ) -> Result<Fetched> {
     let mut last = None;
     for (index, requested) in candidates.iter().enumerate() {
@@ -285,6 +291,9 @@ pub(crate) fn fetch_candidates(
             served,
         });
         if matches!(&attempt, Ok(fetched) if (200..300).contains(&fetched.response.status)) {
+            if index == 0 {
+                first_failed.clear();
+            }
             return attempt;
         }
         let reason = match &attempt {
@@ -292,10 +301,16 @@ pub(crate) fn fetch_candidates(
             Err(error) => format!("{error:#}"),
         };
         if index + 1 < candidates.len() {
-            warn!(
+            let text = format!(
                 "адрес {} не подошёл ({reason}), пробую следующий",
                 redact(requested)
             );
+            let level = if index == 0 {
+                first_failed.level(&text)
+            } else {
+                Level::Debug
+            };
+            log::write(level, format_args!("{text}"));
         }
         last = Some(attempt);
     }
@@ -330,9 +345,10 @@ fn with_host(url: &Url, domain: &str) -> Option<Url> {
 pub(crate) enum Outcome {
     /// Рабочий ответ: узлы можно применять.
     Applied(Box<Analysis>),
-    /// Ответ получен, но применять его нельзя; кэш прежний.
+    /// Провайдер ответил по существу, но применять ответ нельзя (заглушка, отказ
+    /// устройству, 4xx); кэш прежний. Повтор по обычному интервалу подписки.
     Rejected(String),
-    /// Ответ получить не удалось.
+    /// Ответа нет: сбой связи или ошибка панели (5xx). Повтор с нарастающей паузой.
     Failed(String),
 }
 
@@ -343,13 +359,25 @@ pub(crate) struct Refresh {
 }
 
 /// Одно обновление подписки вместе с записью в кэш. Блокирует поток: вызывать из
-/// `spawn_blocking`.
+/// `spawn_blocking`. `failures` — сколько сбоев ([`Outcome::Failed`]) подряд было до этого.
 pub(crate) fn refresh(source: &Source, store: &Store, failures: u32, now: u64) -> Refresh {
     let (mut state, cached) = source.load(store);
     let candidates = source.candidates(&state);
     let mut send = |url: &Url| source.send(url);
-    let (outcome, next_in) = match fetch_candidates(&candidates, &mut send) {
-        Err(error) => reject(&mut state, Outcome::Failed, format!("{error:#}"), failures),
+    let fetched = {
+        let mut latch = source
+            .address_problem
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        fetch_candidates(&candidates, &mut send, &mut latch)
+    };
+    let (outcome, next_in) = match fetched {
+        Err(error) => reject(
+            &mut state,
+            Outcome::Failed,
+            format!("{error:#}"),
+            retry_delay(failures.saturating_add(1), cached.is_some()),
+        ),
         Ok(fetched) => process(
             source,
             store,
@@ -374,10 +402,10 @@ fn reject(
     state: &mut SubState,
     kind: fn(String) -> Outcome,
     message: String,
-    failures: u32,
+    delay: Duration,
 ) -> (Outcome, Duration) {
     state.last_error = Some(message.clone());
-    (kind(message), retry_delay(failures.saturating_add(1)))
+    (kind(message), delay)
 }
 
 fn process(
@@ -393,7 +421,15 @@ fn process(
     let analysis = analyze(response.status, &response.headers, &response.body);
     if let Some(problem) = &analysis.problem {
         let message = redact_in(problem.message(), &[source.config.url.expose()]);
-        return reject(state, Outcome::Rejected, message, failures);
+        let retry_after = response.header("retry-after");
+        if matches!(problem, Problem::Http(_)) && is_outage(response.status) {
+            let backoff = retry_delay(failures.saturating_add(1), cached.is_some());
+            let delay = after_retry_header(backoff, retry_after);
+            return reject(state, Outcome::Failed, message, delay);
+        }
+        let regular = interval(source.config.update_interval, analysis.info.update_interval);
+        let delay = after_retry_header(regular, retry_after);
+        return reject(state, Outcome::Rejected, message, delay);
     }
     let body = response.body.as_slice();
     let saved = cached == Some(body)
@@ -625,7 +661,7 @@ mod tests {
             url("https://main.example.com/sub/aaaa"),
             url("https://reserve.example.com/sub/bbbb"),
         ];
-        let fetched = fetch_candidates(&candidates, &mut send).unwrap();
+        let fetched = fetch_candidates(&candidates, &mut send, &mut Latch::default()).unwrap();
         assert_eq!(fetched.requested, candidates[1]);
         assert_eq!(fetched.response.status, 200);
     }
@@ -643,7 +679,7 @@ mod tests {
             url("https://main.example.com/sub/aaaa"),
             url("https://reserve.example.com/sub/bbbb"),
         ];
-        let fetched = fetch_candidates(&candidates, &mut send).unwrap();
+        let fetched = fetch_candidates(&candidates, &mut send, &mut Latch::default()).unwrap();
         assert_eq!(fetched.requested.host, "reserve.example.com");
     }
 
@@ -658,7 +694,7 @@ mod tests {
             url("https://main.example.com/sub/aaaa"),
             url("https://reserve.example.com/sub/bbbb"),
         ];
-        fetch_candidates(&candidates, &mut send).unwrap();
+        fetch_candidates(&candidates, &mut send, &mut Latch::default()).unwrap();
         assert_eq!(calls, ["main.example.com"]);
     }
 
@@ -675,9 +711,38 @@ mod tests {
             url("https://main.example.com/sub/aaaa"),
             url("https://reserve.example.com/sub/bbbb"),
         ];
-        let error = fetch_candidates(&candidates, &mut send).err().unwrap();
+        let mut latch = Latch::default();
+        let error = fetch_candidates(&candidates, &mut send, &mut latch)
+            .err()
+            .unwrap();
         assert!(error.to_string().contains("нет связи"));
-        assert!(fetch_candidates(&[], &mut send).is_err());
+        assert!(fetch_candidates(&[], &mut send, &mut latch).is_err());
+    }
+
+    #[test]
+    fn a_dead_first_address_is_remembered_until_it_answers_again() {
+        let mut send = |url: &Url| -> Result<Response> {
+            if url.host == "main.example.com" {
+                Err(anyhow!("нет связи"))
+            } else {
+                Ok(response(200, &[], "ok"))
+            }
+        };
+        let candidates = [
+            url("https://main.example.com/sub/aaaa"),
+            url("https://reserve.example.com/sub/bbbb"),
+        ];
+        let mut latch = Latch::default();
+        fetch_candidates(&candidates, &mut send, &mut latch).unwrap();
+        assert!(latch.clear());
+        fetch_candidates(&candidates, &mut send, &mut latch).unwrap();
+        fetch_candidates(&candidates, &mut send, &mut latch).unwrap();
+        assert!(latch.clear());
+
+        fetch_candidates(&candidates, &mut send, &mut latch).unwrap();
+        let mut working = |_: &Url| -> Result<Response> { Ok(response(200, &[], "ok")) };
+        fetch_candidates(&candidates, &mut working, &mut latch).unwrap();
+        assert!(!latch.clear());
     }
 
     #[test]
@@ -914,18 +979,132 @@ mod tests {
         ));
 
         let second = refresh(&source, &store, 0, 2_000);
-        let Outcome::Rejected(reason) = second.outcome else {
-            panic!("ответ должен быть отклонён");
+        let Outcome::Failed(reason) = second.outcome else {
+            panic!("ошибка панели должна быть сбоем");
         };
         assert!(reason.contains("500"), "{reason}");
-        assert_eq!(second.next_in, retry_delay(1));
+        assert_eq!(second.next_in, retry_delay(1, true));
 
         let (state, body) = store.load("тест");
         assert_eq!(state.fetched_at, 1_000);
-        assert_eq!(state.next_update, 2_000 + retry_delay(1).as_secs());
+        assert_eq!(state.next_update, 2_000 + retry_delay(1, true).as_secs());
         assert!(state.last_error.unwrap().contains("500"));
         assert_eq!(body.unwrap(), LINKS.as_bytes());
         assert_eq!(source.cached(&store).unwrap().nodes.len(), 2);
+    }
+
+    /// Панель, которая первым запросом отдаёт рабочий ответ, а дальше — `later`.
+    fn then_answers(later: String) -> FakePanel {
+        let calls = Arc::new(AtomicU32::new(0));
+        FakePanel::start(move |_| {
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                http_response("200 OK", &[], LINKS)
+            } else {
+                later.clone()
+            }
+        })
+    }
+
+    fn after_a_good_answer(later: String, failures: u32) -> Refresh {
+        let panel = then_answers(later);
+        let (_, source) = source_for(&panel.url("/sub/token1234"));
+        let temp = TempDir::new("after-good");
+        let store = store(&temp);
+        assert!(matches!(
+            refresh(&source, &store, 0, 1_000).outcome,
+            Outcome::Applied(_)
+        ));
+        refresh(&source, &store, failures, 2_000)
+    }
+
+    const STUB_LINK: &str = "vless://00000000-0000-0000-0000-000000000000@0.0.0.0:1?security=none#Expired%20stub\n";
+    const HOURS: u64 = 3_600;
+
+    #[test]
+    fn server_errors_back_off_with_a_ceiling() {
+        let later = http_response("503 Service Unavailable", &[], "");
+        let first = after_a_good_answer(later.clone(), 0);
+        assert!(matches!(first.outcome, Outcome::Failed(_)));
+        assert_eq!(first.next_in, Duration::from_secs(30));
+        let fifth = after_a_good_answer(later.clone(), 4);
+        assert_eq!(fifth.next_in, Duration::from_secs(480));
+        let endless = after_a_good_answer(later, 50);
+        assert_eq!(endless.next_in, Duration::from_secs(30 * 60));
+    }
+
+    #[test]
+    fn a_stub_is_answered_at_the_regular_interval_however_often_it_repeats() {
+        let later = http_response("200 OK", &[("x-hwid-max-devices-reached", "true")], "");
+        for failures in [0, 1, 7, 50] {
+            let done = after_a_good_answer(later.clone(), failures);
+            assert!(matches!(done.outcome, Outcome::Rejected(_)), "{failures}");
+            assert_eq!(done.next_in, Duration::from_secs(12 * HOURS), "{failures}");
+        }
+    }
+
+    #[test]
+    fn a_stub_node_list_follows_the_provider_interval() {
+        let later = http_response("200 OK", &[("profile-update-interval", "3")], STUB_LINK);
+        let done = after_a_good_answer(later, 5);
+        let Outcome::Rejected(reason) = done.outcome else {
+            panic!("заглушка должна быть отклонена");
+        };
+        assert!(reason.contains("Expired stub"), "{reason}");
+        assert_eq!(done.next_in, Duration::from_secs(3 * HOURS));
+    }
+
+    #[test]
+    fn client_errors_wait_for_the_regular_interval() {
+        for status in ["403 Forbidden", "404 Not Found", "410 Gone"] {
+            let done = after_a_good_answer(http_response(status, &[], ""), 3);
+            assert!(matches!(done.outcome, Outcome::Rejected(_)), "{status}");
+            assert_eq!(done.next_in, Duration::from_secs(12 * HOURS), "{status}");
+        }
+    }
+
+    #[test]
+    fn too_many_requests_waits_at_least_as_long_as_the_panel_asks() {
+        let plain = http_response("429 Too Many Requests", &[], "");
+        let done = after_a_good_answer(plain, 0);
+        assert!(matches!(done.outcome, Outcome::Rejected(_)));
+        assert_eq!(done.next_in, Duration::from_secs(12 * HOURS));
+
+        let short = http_response("429 Too Many Requests", &[("Retry-After", "60")], "");
+        assert_eq!(
+            after_a_good_answer(short, 0).next_in,
+            Duration::from_secs(12 * HOURS)
+        );
+        let long = http_response("429 Too Many Requests", &[("Retry-After", "172800")], "");
+        assert_eq!(
+            after_a_good_answer(long, 0).next_in,
+            Duration::from_secs(24 * HOURS)
+        );
+    }
+
+    #[test]
+    fn a_server_error_waits_for_retry_after_when_it_is_longer() {
+        let later = http_response("503 Service Unavailable", &[("Retry-After", "3600")], "");
+        let done = after_a_good_answer(later, 0);
+        assert!(matches!(done.outcome, Outcome::Failed(_)));
+        assert_eq!(done.next_in, Duration::from_secs(HOURS));
+    }
+
+    #[test]
+    fn the_configured_interval_applies_to_stubs() {
+        let panel = then_answers(http_response(
+            "200 OK",
+            &[("x-hwid-max-devices-reached", "true")],
+            "",
+        ));
+        let config = config_for(&panel.url("/sub/token1234"), "update_interval = \"6h\"\n");
+        let source = Source::new(&config, &config.subscriptions[0], MACHINE_ID).unwrap();
+        let temp = TempDir::new("configured");
+        let store = store(&temp);
+        refresh(&source, &store, 0, 1_000);
+        let done = refresh(&source, &store, 0, 2_000);
+        assert!(matches!(done.outcome, Outcome::Rejected(_)));
+        assert_eq!(done.next_in, Duration::from_secs(6 * HOURS));
+        assert_eq!(store.load("тест").0.next_update, 2_000 + 6 * HOURS);
     }
 
     #[test]
@@ -942,9 +1121,21 @@ mod tests {
 
         let failed = refresh(&source, &store, 2, 3_000);
         assert!(matches!(failed.outcome, Outcome::Failed(_)));
-        assert_eq!(failed.next_in, retry_delay(3));
+        assert_eq!(failed.next_in, retry_delay(3, true));
         assert!(store.load("тест").0.last_error.is_some());
         assert_eq!(source.cached(&store).unwrap().nodes.len(), 2);
+    }
+
+    #[test]
+    fn without_a_cache_retries_are_capped_lower() {
+        let panel = FakePanel::start(|_| http_response("200 OK", &[], LINKS));
+        let (_, source) = source_for(&panel.url("/sub/token1234"));
+        drop(panel);
+        let temp = TempDir::new("cold");
+        let store = store(&temp);
+        let failed = refresh(&source, &store, 50, 1_000);
+        assert!(matches!(failed.outcome, Outcome::Failed(_)));
+        assert_eq!(failed.next_in, Duration::from_secs(10 * 60));
     }
 
     #[test]

@@ -7,7 +7,11 @@ use raycat_config::DEFAULT_UPDATE_INTERVAL;
 /// Чаще панель не опрашивается, что бы ни просил провайдер.
 const MIN_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const RETRY_FIRST: Duration = Duration::from_secs(30);
-const RETRY_MAX: Duration = Duration::from_secs(10 * 60);
+/// Узлы уже есть (кэш), xray работает: панель можно не беспокоить чаще.
+const RETRY_MAX: Duration = Duration::from_secs(30 * 60);
+/// Без кэша xray стоит, пока подписка не получена: после сбоя связи ждать долго нельзя.
+const RETRY_MAX_COLD: Duration = Duration::from_secs(10 * 60);
+const RETRY_AFTER_MAX: Duration = Duration::from_secs(24 * 3_600);
 pub(crate) const RESTART_FIRST: Duration = Duration::from_secs(1);
 const RESTART_MAX: Duration = Duration::from_secs(30);
 /// Процесс, проработавший столько, считается здоровым: пауза перед перезапуском
@@ -22,11 +26,28 @@ pub(crate) fn interval(configured: Option<Duration>, provider: Option<Duration>)
         .max(MIN_INTERVAL)
 }
 
-/// Пауза перед повтором после `failures`-й подряд неудачи (считая с единицы):
-/// 30 с, 1 мин, 2 мин, … не дольше 10 мин.
-pub(crate) fn retry_delay(failures: u32) -> Duration {
+/// Пауза перед повтором после `failures`-го подряд сбоя связи или панели (считая с
+/// единицы): 30 с, 1 мин, 2 мин, … не дольше 30 мин, а без кэша — не дольше 10 мин.
+pub(crate) fn retry_delay(failures: u32, cached: bool) -> Duration {
     let doublings = failures.saturating_sub(1).min(16);
-    RETRY_FIRST.saturating_mul(1 << doublings).min(RETRY_MAX)
+    let cap = if cached { RETRY_MAX } else { RETRY_MAX_COLD };
+    RETRY_FIRST.saturating_mul(1 << doublings).min(cap)
+}
+
+/// Статусы, после которых панель, скорее всего, скоро оправится: повтор с нарастающей
+/// паузой. Остальные не-2xx — ответ панели по существу (нет подписки, нет доступа,
+/// клиент не пускают): долбить её бессмысленно, следующая попытка по обычному интервалу.
+pub(crate) fn is_outage(status: u16) -> bool {
+    matches!(status, 408 | 500..=599)
+}
+
+/// Не раньше срока из `Retry-After` (в секундах, не больше суток): дату HTTP не разбираем,
+/// такой заголовок остаётся без внимания.
+pub(crate) fn after_retry_header(delay: Duration, header: Option<&str>) -> Duration {
+    let requested = header
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|secs| Duration::from_secs(secs).min(RETRY_AFTER_MAX));
+    requested.map_or(delay, |requested| delay.max(requested))
 }
 
 /// Следующая пауза перед перезапуском: вдвое дольше предыдущей, не дольше 30 с.
@@ -77,11 +98,58 @@ mod tests {
     }
 
     #[test]
-    fn retries_back_off_from_thirty_seconds_to_ten_minutes() {
-        let seconds: Vec<u64> = (1..=7).map(|n| retry_delay(n).as_secs()).collect();
+    fn retries_back_off_from_thirty_seconds_to_half_an_hour() {
+        let seconds: Vec<u64> = (1..=9).map(|n| retry_delay(n, true).as_secs()).collect();
+        assert_eq!(seconds, [30, 60, 120, 240, 480, 960, 1_800, 1_800, 1_800]);
+        assert_eq!(retry_delay(0, true).as_secs(), 30);
+        assert_eq!(retry_delay(u32::MAX, true).as_secs(), 1_800);
+    }
+
+    #[test]
+    fn without_a_cache_retries_stop_at_ten_minutes() {
+        let seconds: Vec<u64> = (1..=7).map(|n| retry_delay(n, false).as_secs()).collect();
         assert_eq!(seconds, [30, 60, 120, 240, 480, 600, 600]);
-        assert_eq!(retry_delay(0).as_secs(), 30);
-        assert_eq!(retry_delay(u32::MAX).as_secs(), 600);
+        assert_eq!(retry_delay(u32::MAX, false).as_secs(), 600);
+    }
+
+    #[test]
+    fn only_server_side_statuses_are_outages() {
+        for status in [408, 500, 502, 503, 504, 599] {
+            assert!(is_outage(status), "{status}");
+        }
+        for status in [400, 401, 403, 404, 410, 429, 451, 301, 200] {
+            assert!(!is_outage(status), "{status}");
+        }
+    }
+
+    #[test]
+    fn retry_after_only_postpones() {
+        let delay = Duration::from_secs(120);
+        assert_eq!(after_retry_header(delay, None), delay);
+        assert_eq!(after_retry_header(delay, Some("30")), delay);
+        assert_eq!(
+            after_retry_header(delay, Some(" 3600 ")),
+            Duration::from_secs(3_600)
+        );
+        assert_eq!(after_retry_header(delay, Some("0")), delay);
+    }
+
+    #[test]
+    fn retry_after_is_capped_and_garbage_is_ignored() {
+        let delay = Duration::from_secs(120);
+        assert_eq!(
+            after_retry_header(delay, Some("99999999999")),
+            Duration::from_secs(24 * HOUR)
+        );
+        for garbage in ["", "завтра", "-5", "Wed, 21 Oct 2026 07:28:00 GMT", "1.5"] {
+            assert_eq!(after_retry_header(delay, Some(garbage)), delay, "{garbage}");
+        }
+    }
+
+    #[test]
+    fn the_regular_interval_is_never_shortened_by_retry_after() {
+        let regular = interval(None, None);
+        assert_eq!(after_retry_header(regular, Some("60")), regular);
     }
 
     #[test]

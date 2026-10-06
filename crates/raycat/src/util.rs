@@ -104,9 +104,28 @@ pub(crate) fn sanitize(text: &str) -> String {
         .collect()
 }
 
+/// Не больше `max` символов; обрезанный текст заканчивается многоточием.
+pub(crate) fn truncate(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let mut cut: String = text.chars().take(max.saturating_sub(1)).collect();
+    cut.truncate(cut.trim_end().len());
+    cut.push('…');
+    cut
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncation_keeps_short_text_and_marks_the_cut() {
+        assert_eq!(truncate("коротко", 7), "коротко");
+        assert_eq!(truncate("длинный текст", 8), "длинный…");
+        assert_eq!(truncate("раз два три", 5), "раз…");
+        assert_eq!(truncate("абвгд", 0), "…");
+    }
 
     #[test]
     fn formats_time_in_utc() {

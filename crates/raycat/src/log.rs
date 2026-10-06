@@ -98,6 +98,31 @@ impl Dedup {
     }
 }
 
+/// Помнит последнюю проблему: о новой пишет предупреждением, о той же самой при
+/// повторе — на уровне debug, чтобы журнал не рос от цикла к циклу.
+#[derive(Debug, Default)]
+pub(crate) struct Latch {
+    problem: Option<String>,
+}
+
+impl Latch {
+    /// Уровень для сообщения о проблеме `text`: `Warn`, если проблемы не было или
+    /// текст сменился, иначе `Debug`.
+    pub(crate) fn level(&mut self, text: &str) -> Level {
+        if self.problem.as_deref() == Some(text) {
+            Level::Debug
+        } else {
+            self.problem = Some(text.to_owned());
+            Level::Warn
+        }
+    }
+
+    /// Проблема ушла. `true`, если о ней до этого писали.
+    pub(crate) fn clear(&mut self) -> bool {
+        self.problem.take().is_some()
+    }
+}
+
 struct Logger {
     level: Level,
     dedup: Dedup,
@@ -315,6 +340,26 @@ mod tests {
         let line = dedup.flush().unwrap();
         assert_eq!(line.text, "падение (повторилось 1 раз)");
         assert!(dedup.flush().is_none());
+    }
+
+    #[test]
+    fn a_latch_warns_once_per_problem() {
+        let mut latch = Latch::default();
+        assert_eq!(latch.level("сбой"), Level::Warn);
+        assert_eq!(latch.level("сбой"), Level::Debug);
+        assert_eq!(latch.level("сбой"), Level::Debug);
+        assert_eq!(latch.level("другой сбой"), Level::Warn);
+        assert_eq!(latch.level("другой сбой"), Level::Debug);
+    }
+
+    #[test]
+    fn a_latch_warns_again_after_the_problem_went_away() {
+        let mut latch = Latch::default();
+        assert!(!latch.clear());
+        assert_eq!(latch.level("сбой"), Level::Warn);
+        assert!(latch.clear());
+        assert!(!latch.clear());
+        assert_eq!(latch.level("сбой"), Level::Warn);
     }
 
     #[test]
