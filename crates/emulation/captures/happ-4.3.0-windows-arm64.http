@@ -1,12 +1,12 @@
 GET /sub/capture-windows HTTP/1.1
 Host: 127.0.0.1:18080
-User-Agent: Happ/4.3.0/Windows/2609151455603
+User-Agent: Happ/4.3.0/Windows/2609151502603
 X-App-Version: 4.3.0
 X-Device-Locale: EN
 X-Device-Os: Windows
-X-Device-Model: runnervmfi6oq_x86_64
-X-Hwid: 140da80d-b9fb-4025-bdaf-a293fec29e2b
-X-Ver-Os: 11_10.0.26100
+X-Device-Model: runnervma5ngn_arm64
+X-Hwid: 5d89932b-1008-4e68-9b40-d908dc6b4639
+X-Ver-Os: 11_10.0.26200
 Connection: Keep-Alive
 Accept-Encoding: gzip, deflate
 Accept-Language: en-US,*

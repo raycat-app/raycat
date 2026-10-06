@@ -1,6 +1,6 @@
 GET /sub/capture-windows HTTP/1.1
 Host: 127.0.0.1:18080
-User-Agent: Happ/4.3.0/Windows/2609151455603
+User-Agent: Happ/4.3.0/Windows/2609151455503
 X-App-Version: 4.3.0
 X-Device-Locale: EN
 X-Device-Os: Windows
