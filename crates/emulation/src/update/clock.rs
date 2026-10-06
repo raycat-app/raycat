@@ -151,11 +151,11 @@ mod tests {
 
     #[test]
     fn rubbish_gives_no_instants() {
-        assert!(parse("").is_empty());
-        assert!(parse("before link: сегодня").is_empty());
-        assert!(parse("2026-13-40T25:61:61Z").is_empty());
-        assert!(parse("2026-09-28T12:00:00").is_empty());
-        assert!(parse("Mon Sep 28 12:00:00 MSK 2026").is_empty());
-        assert!(parse("Mon Sep 28 12:00 UTC 2026").is_empty());
+        assert_eq!(parse(""), Vec::<Instant>::new());
+        assert_eq!(parse("before link: сегодня"), Vec::<Instant>::new());
+        assert_eq!(parse("2026-13-40T25:61:61Z"), Vec::<Instant>::new());
+        assert_eq!(parse("2026-09-28T12:00:00"), Vec::<Instant>::new());
+        assert_eq!(parse("Mon Sep 28 12:00:00 MSK 2026"), Vec::<Instant>::new());
+        assert_eq!(parse("Mon Sep 28 12:00 UTC 2026"), Vec::<Instant>::new());
     }
 }

@@ -96,7 +96,7 @@ mod tests {
     fn lists_of_different_length_are_handled() {
         assert_eq!(diff_names(&[], &names(&["A"])), ["  + A"]);
         assert_eq!(diff_names(&names(&["A"]), &[]), ["  - A"]);
-        assert!(diff_names(&[], &[]).is_empty());
+        assert_eq!(diff_names(&[], &[]), Vec::<String>::new());
     }
 
     #[test]
@@ -106,7 +106,7 @@ mod tests {
             "GET / HTTP/1.1\r\nA: 1\r\nB: 3",
         );
         assert_eq!(lines, ["  захват:  B: 2", "  профиль: B: 3"]);
-        assert!(diff_lines("same", "same").is_empty());
+        assert_eq!(diff_lines("same", "same"), Vec::<String>::new());
         assert_eq!(diff_lines("a\r\nb", "a").len(), 2);
     }
 }
