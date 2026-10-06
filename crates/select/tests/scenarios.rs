@@ -515,7 +515,7 @@ fn pinned_node_is_kept_even_when_dead() {
             node: "NL-3".into()
         }
     );
-    assert!(last.warnings.is_empty());
+    assert_eq!(last.warnings, Vec::<Warning>::new());
     let snapshot = selector.snapshot(secs(40));
     assert_eq!(node(&snapshot, "a3").status, Status::Dead);
     assert!(node(&snapshot, "a3").pinned);

@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn tls_is_rustls_without_alpn() {
         let config = tls_config().unwrap();
-        assert!(config.alpn_protocols.is_empty());
+        assert_eq!(config.alpn_protocols, Vec::<Vec<u8>>::new());
     }
 
     #[test]

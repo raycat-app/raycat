@@ -319,7 +319,7 @@ fn lan_details_are_left_to_the_daemon_by_default() {
         }
     );
     assert_eq!(config.lan.interface, None);
-    assert!(config.lan.subnets.is_empty());
+    assert_eq!(config.lan.subnets, Vec::<raycat_netfilter::Cidr>::new());
 }
 
 #[test]
