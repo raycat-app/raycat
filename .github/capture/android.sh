@@ -33,8 +33,8 @@ tap() {
 captured() { ls "$out"/*.http >/dev/null 2>&1; }
 # Ждёт первый запрос приложения, не дольше $1 секунд; после него ещё 3 с на повторные запросы.
 wait_captured() {
-  local _
-  for _ in $(seq "$1"); do
+  local deadline=$((SECONDS + $1))
+  while [ "$SECONDS" -lt "$deadline" ]; do
     if captured; then
       sleep 3
       return 0
@@ -44,10 +44,11 @@ wait_captured() {
   return 1
 }
 # Ждёт, пока на экране появится элемент с одним из текстов (или придёт запрос), не дольше $1 секунд.
+# Дамп интерфейса в эмуляторе занимает секунды, поэтому предел считается по часам.
 wait_ui() {
-  local limit=$1 _ word
+  local deadline=$((SECONDS + $1)) word
   shift
-  for _ in $(seq "$limit"); do
+  while [ "$SECONDS" -lt "$deadline" ]; do
     captured && return 0
     adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
     xml=$(adb exec-out cat /sdcard/ui.xml)
@@ -121,14 +122,17 @@ for host in $HOSTS; do
   adb shell am start -a android.intent.action.VIEW -d "$SCHEME://add/${PROTO:-http}://$host:$port/sub/capture-android" 2>&1 | tail -1
   wait_ui 12 "Wait" "Add" "OK" "Import" "Yes" "Confirm" "Добавить" "Импорт" "Да" "Подтвердить" || true
   snap "deeplink-$host"
-  for _ in 1 2 3; do
-    tap "Wait" "Add" "OK" "Import" "Yes" "Confirm" "Добавить" "Импорт" "Да" "Подтвердить" || break
-    if wait_captured 8; then
-      break
-    fi
-  done
-  snap "added-$host"
-  wait_captured 15 || true
+  # Некоторые приложения добавляют подписку без диалога: тогда нажимать нечего.
+  if ! captured; then
+    for _ in 1 2 3; do
+      tap "Wait" "Add" "OK" "Import" "Yes" "Confirm" "Добавить" "Импорт" "Да" "Подтвердить" || break
+      if wait_captured 8; then
+        break
+      fi
+    done
+    snap "added-$host"
+    wait_captured 15 || true
+  fi
 done
 wait_captured 10 || true
 snap final
