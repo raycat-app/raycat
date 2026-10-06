@@ -40,6 +40,7 @@ jobs:
         with:
           save-if: ${{ env.CACHE_SAVE }}
           cache-on-failure: true
+          add-rust-environment-hash-key: false
       - id: fmt
         run: cargo fmt --all --check
       - name: Патч форматирования
@@ -95,6 +96,7 @@ jobs:
           shared-key: dev
           save-if: ${{ env.CACHE_SAVE }}
           cache-on-failure: true
+          add-rust-environment-hash-key: false
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-nextest
@@ -123,6 +125,7 @@ jobs:
         with:
           save-if: ${{ env.CACHE_SAVE }}
           cache-on-failure: true
+          add-rust-environment-hash-key: false
       - name: Проверка сборки
         run: cargo check --workspace --all-targets --all-features --locked
 
@@ -200,6 +203,7 @@ jobs:
           shared-key: build-x86_64-${{ env.BUILD_PROFILE }}
           save-if: ${{ env.CACHE_SAVE }}
           cache-on-failure: true
+          add-rust-environment-hash-key: false
       - name: Сборка
         run: cargo build --profile "$BUILD_PROFILE" --locked --target "$TARGET"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -236,6 +240,7 @@ jobs:
           shared-key: build-aarch64-${{ env.BUILD_PROFILE }}
           save-if: ${{ env.CACHE_SAVE }}
           cache-on-failure: true
+          add-rust-environment-hash-key: false
       - name: Сборка
         run: cargo build --profile "$BUILD_PROFILE" --locked --target "$TARGET"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -272,6 +277,7 @@ jobs:
           shared-key: build-armv7-${{ env.BUILD_PROFILE }}
           save-if: ${{ env.CACHE_SAVE }}
           cache-on-failure: true
+          add-rust-environment-hash-key: false
       - name: Сборка
         run: cargo build --profile "$BUILD_PROFILE" --locked --target "$TARGET"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -326,6 +332,7 @@ jobs:
         with:
           shared-key: build-${{ matrix.key }}-ci
           cache-on-failure: true
+          add-rust-environment-hash-key: false
       - name: Сборка зависимостей
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         run: cargo build --profile ci --locked --target "$TARGET"
@@ -345,6 +352,7 @@ jobs:
           shared-key: test-aarch64
           save-if: ${{ env.CACHE_SAVE }}
           cache-on-failure: true
+          add-rust-environment-hash-key: false
       - run: cargo test --locked --target aarch64-unknown-linux-musl
 
   test-armv7:
@@ -364,6 +372,7 @@ jobs:
           shared-key: test-armv7
           save-if: ${{ env.CACHE_SAVE }}
           cache-on-failure: true
+          add-rust-environment-hash-key: false
       - run: cargo test --locked --target armv7-unknown-linux-musleabihf
 
   image-amd64:
@@ -431,11 +440,28 @@ jobs:
         with:
           name: raycat-aarch64-unknown-linux-musl
           path: dist/arm64
+      # Сборка xray из исходников (noaes) идёт через buildx с кэшем слоёв в GitHub Actions:
+      # пока versions.toml и Dockerfile те же, Go-стадия берётся из кэша.
+      - name: Buildx
+        if: ${{ matrix.xray_build == 'noaes' }}
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Доступ buildx к кэшу Actions
+        if: ${{ matrix.xray_build == 'noaes' }}
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
       - name: Сборка образа
+        env:
+          CACHE_SCOPE: ${{ matrix.xray_build == 'noaes' && 'noaes-arm64' || '' }}
         run: |
           bash .github/build/docker-args.sh "$XRAY_KEY" "$XRAY_ARCHIVE" "$XRAY_BUILD" > "$RUNNER_TEMP/docker-args.txt"
           mapfile -t args < "$RUNNER_TEMP/docker-args.txt"
-          docker build "${args[@]}" --tag raycat:ci .
+          cache=()
+          if [ -n "$CACHE_SCOPE" ]; then
+            cache+=(--cache-from "type=gha,scope=$CACHE_SCOPE")
+            if [ "$CACHE_SAVE" = true ]; then
+              cache+=(--cache-to "type=gha,mode=max,scope=$CACHE_SCOPE")
+            fi
+          fi
+          docker buildx build --load "${cache[@]}" "${args[@]}" --tag raycat:ci .
       - name: Сохранение образа
         run: docker save raycat:ci | gzip -1 > "$RUNNER_TEMP/image-${ARCH}.tar.gz"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -458,11 +484,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
       - name: Сборка
         run: |
           bash .github/build/docker-args.sh armv7 Xray-linux-arm32-v7a.zip noaes > "$RUNNER_TEMP/docker-args.txt"
           mapfile -t args < "$RUNNER_TEMP/docker-args.txt"
-          docker build --platform linux/arm/v7 "${args[@]}" --target xray-noaes --output type=local,dest=out .
+          cache=(--cache-from "type=gha,scope=noaes-armv7")
+          if [ "$CACHE_SAVE" = true ]; then
+            cache+=(--cache-to "type=gha,mode=max,scope=noaes-armv7")
+          fi
+          docker buildx build --platform linux/arm/v7 "${cache[@]}" "${args[@]}" --target xray-noaes --output type=local,dest=out .
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: xray-noaes-armv7
@@ -521,6 +553,7 @@ jobs:
         with:
           shared-key: dev
           save-if: false
+          add-rust-environment-hash-key: false
       - name: Скачивание xray
         run: bash .github/build/fetch-xray.sh
       - name: Тесты клиента с настоящим xray
@@ -542,6 +575,7 @@ jobs:
         with:
           shared-key: dev
           save-if: false
+          add-rust-environment-hash-key: false
       - name: Сборка
         run: cargo build --locked
       - name: Скачивание xray
@@ -563,6 +597,7 @@ jobs:
         with:
           shared-key: dev
           save-if: false
+          add-rust-environment-hash-key: false
       - name: nftables
         run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends nftables
       - name: Сборка
@@ -585,10 +620,14 @@ jobs:
         with:
           name: image-amd64
           path: ${{ runner.temp }}/image
-      - name: Загрузка образа
+      # Образ python для служебных контейнеров стенда качается параллельно с загрузкой образа raycat.
+      - name: Загрузка образов
         env:
           IMAGE_DIR: ${{ runner.temp }}/image
-        run: gunzip -c "$IMAGE_DIR/image-amd64.tar.gz" | docker load
+        run: |
+          docker pull --quiet python:3.13-alpine > /dev/null &
+          gunzip -c "$IMAGE_DIR/image-amd64.tar.gz" | docker load
+          wait
       - name: Стенд
         run: bash .github/e2e/gateway.sh
 
@@ -695,10 +734,14 @@ jobs:
         with:
           name: image-amd64
           path: ${{ runner.temp }}/image
-      - name: Загрузка образа
+      # Образ python для служебных контейнеров стенда качается параллельно с загрузкой образа raycat.
+      - name: Загрузка образов
         env:
           IMAGE_DIR: ${{ runner.temp }}/image
-        run: gunzip -c "$IMAGE_DIR/image-amd64.tar.gz" | docker load
+        run: |
+          docker pull --quiet python:3.13-alpine > /dev/null &
+          gunzip -c "$IMAGE_DIR/image-amd64.tar.gz" | docker load
+          wait
       - name: Стенд
         run: bash .github/e2e/lan.sh
 
