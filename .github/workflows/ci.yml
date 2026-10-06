@@ -16,11 +16,20 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  # Отладочные сведения до строк кода: тот же вывод паник, но сборка и кэш заметно меньше.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # На main собирается то, что публикует «Выпуск dev» (полный LTO), в остальных запусках
+  # профиль ci: те же проверки, но без полного LTO.
+  BUILD_PROFILE: ${{ github.ref == 'refs/heads/main' && 'release' || 'ci' }}
+  # Кэш пишется только с main: запуски из PR и веток его читают, но не меняют.
+  CACHE_SAVE: ${{ github.ref == 'refs/heads/main' }}
+  BINFMT_IMAGE: tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
 
 jobs:
   lint:
     name: Форматирование и линтеры
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -28,6 +37,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ env.CACHE_SAVE }}
+          cache-on-failure: true
       - id: fmt
         run: cargo fmt --all --check
       - name: Патч форматирования
@@ -45,13 +57,17 @@ jobs:
   lockfile:
     name: Cargo.lock
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Для проверки хватает cargo с образа раннера: rustup не качает тулчейн из rust-toolchain.toml.
       - id: lock
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Обновлённый Cargo.lock
         if: ${{ failure() && steps.lock.outcome == 'failure' }}
@@ -63,9 +79,11 @@ jobs:
           path: Cargo.lock
           retention-days: 7
 
+  # Единственная задача, которая пишет кэш dev: остальные задачи с профилем dev его только читают.
   test:
     name: Тесты
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -73,6 +91,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: dev
+          save-if: ${{ env.CACHE_SAVE }}
+          cache-on-failure: true
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-nextest
@@ -81,6 +103,7 @@ jobs:
   msrv:
     name: Минимальная версия Rust
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -93,27 +116,37 @@ jobs:
       - name: Установка
         env:
           MSRV: ${{ steps.msrv.outputs.version }}
-        run: rustup toolchain install "$MSRV" --profile minimal
+        run: |
+          rustup toolchain install "$MSRV" --profile minimal
+          echo "RUSTUP_TOOLCHAIN=$MSRV" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ env.CACHE_SAVE }}
+          cache-on-failure: true
       - name: Проверка сборки
-        env:
-          MSRV: ${{ steps.msrv.outputs.version }}
-        run: cargo "+$MSRV" check --workspace --all-targets --all-features --locked
+        run: cargo check --workspace --all-targets --all-features --locked
 
   deny:
     name: Лицензии и уязвимости зависимостей
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: cargo-deny
+      - run: cargo deny --log-level warn --manifest-path ./Cargo.toml --all-features check
 
   workflows:
     name: Проверка workflow
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
@@ -136,8 +169,8 @@ jobs:
           echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum -c -
           tar -xzf "$archive" actionlint
           ./actionlint -color
-      - name: shellcheck скриптов выпуска
-        run: shellcheck --severity=warning .github/release/*.sh
+      - name: shellcheck скриптов выпуска и сборки
+        run: shellcheck --severity=warning .github/release/*.sh .github/build/fetch-xray.sh .github/build/smoke-image.sh
       - name: hadolint
         run: |
           curl -fsSLo hadolint "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
@@ -148,9 +181,125 @@ jobs:
         with:
           advanced-security: false
 
-  build:
-    name: Сборка ${{ matrix.target }}
+  # Сборки по целям разнесены на отдельные задачи: образ, установщик и e2e ждут только свою цель.
+  build-x86_64:
+    name: Сборка x86_64-unknown-linux-musl
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      TARGET: x86_64-unknown-linux-musl
+      RAYCAT_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: build-x86_64-${{ env.BUILD_PROFILE }}
+          save-if: ${{ env.CACHE_SAVE }}
+          cache-on-failure: true
+      - name: Сборка
+        run: cargo build --profile "$BUILD_PROFILE" --locked --target "$TARGET"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: raycat-x86_64-unknown-linux-musl
+          path: target/x86_64-unknown-linux-musl/${{ env.BUILD_PROFILE }}/raycat
+          retention-days: 14
+          if-no-files-found: error
+      - name: Запуск
+        run: |
+          bin="target/$TARGET/$BUILD_PROFILE/raycat"
+          version_line=$("$bin" --version)
+          echo "$version_line"
+          [[ "$version_line" == *" (${GITHUB_SHA:0:7})" ]]
+          "$bin" --help > /dev/null
+          file "$bin"
+          ls -l "$bin"
+
+  build-aarch64:
+    name: Сборка aarch64-unknown-linux-musl
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      TARGET: aarch64-unknown-linux-musl
+      RAYCAT_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: build-aarch64-${{ env.BUILD_PROFILE }}
+          save-if: ${{ env.CACHE_SAVE }}
+          cache-on-failure: true
+      - name: Сборка
+        run: cargo build --profile "$BUILD_PROFILE" --locked --target "$TARGET"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: raycat-aarch64-unknown-linux-musl
+          path: target/aarch64-unknown-linux-musl/${{ env.BUILD_PROFILE }}/raycat
+          retention-days: 14
+          if-no-files-found: error
+      - name: Запуск
+        run: |
+          bin="target/$TARGET/$BUILD_PROFILE/raycat"
+          version_line=$("$bin" --version)
+          echo "$version_line"
+          [[ "$version_line" == *" (${GITHUB_SHA:0:7})" ]]
+          "$bin" --help > /dev/null
+          file "$bin"
+          ls -l "$bin"
+
+  build-armv7:
+    name: Сборка armv7-unknown-linux-musleabihf
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      TARGET: armv7-unknown-linux-musleabihf
+      RAYCAT_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: build-armv7-${{ env.BUILD_PROFILE }}
+          save-if: ${{ env.CACHE_SAVE }}
+          cache-on-failure: true
+      - name: Сборка
+        run: cargo build --profile "$BUILD_PROFILE" --locked --target "$TARGET"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: raycat-armv7-unknown-linux-musleabihf
+          path: target/armv7-unknown-linux-musleabihf/${{ env.BUILD_PROFILE }}/raycat
+          retention-days: 14
+          if-no-files-found: error
+      # Статический armv7-бинарник запускается напрямую: ядро передаёт его в qemu через binfmt_misc.
+      - name: qemu
+        run: docker run --privileged --rm "$BINFMT_IMAGE" --install arm
+      - name: Запуск
+        run: |
+          bin="target/$TARGET/$BUILD_PROFILE/raycat"
+          version_line=$("$bin" --version)
+          echo "$version_line"
+          [[ "$version_line" == *" (${GITHUB_SHA:0:7})" ]]
+          "$bin" --help > /dev/null
+          file "$bin"
+          ls -l "$bin"
+
+  # Прогрев кэша профиля ci: PR и ручные запуски с веток собираются этим профилем и читают кэш
+  # main, а сборки main идут профилем release и кэш ci не создают.
+  warm-ci:
+    name: Кэш сборки ${{ matrix.target }}
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     permissions:
       contents: read
     strategy:
@@ -158,147 +307,50 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
+            key: x86_64
             runner: ubuntu-24.04
           - target: aarch64-unknown-linux-musl
+            key: aarch64
             runner: ubuntu-24.04-arm
           - target: armv7-unknown-linux-musleabihf
+            key: armv7
             runner: ubuntu-24.04
     env:
       TARGET: ${{ matrix.target }}
-      CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUNNER: qemu-arm-static
-      RAYCAT_COMMIT: ${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: clang и qemu
-        run: sudo apt-get update -q && sudo apt-get install -y -q clang qemu-user-static
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - id: cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: ${{ matrix.target }}
-      - name: Сборка
-        run: cargo build --release --locked --target "$TARGET"
-      - name: Запуск
-        run: |
-          bin="target/$TARGET/release/raycat"
-          case "$TARGET" in
-            armv7-*) run() { qemu-arm-static "$@"; } ;;
-            *) run() { "$@"; } ;;
-          esac
-          version_line=$(run "$bin" --version)
-          echo "$version_line"
-          [[ "$version_line" == *" (${GITHUB_SHA:0:7})" ]]
-          run "$bin" --help > /dev/null
-          file "$bin"
-          ls -l "$bin"
-      - name: Тесты на целевой архитектуре
-        if: ${{ !startsWith(matrix.target, 'x86_64') }}
-        run: cargo test --locked --target "$TARGET"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: raycat-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/raycat
-          retention-days: 14
-          if-no-files-found: error
+          shared-key: build-${{ matrix.key }}-ci
+          cache-on-failure: true
+      - name: Сборка зависимостей
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        run: cargo build --profile ci --locked --target "$TARGET"
 
-  image:
-    name: Образ Docker (${{ matrix.arch }}${{ matrix.suffix }})
-    needs: build
-    runs-on: ${{ matrix.runner }}
+  test-aarch64:
+    name: Тесты на aarch64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            suffix: ""
-            runner: ubuntu-24.04
-            target: x86_64-unknown-linux-musl
-            xray_key: x86_64
-            xray_archive: Xray-linux-64.zip
-            xray_build: release
-          - arch: arm64
-            suffix: ""
-            runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
-            xray_key: aarch64
-            xray_archive: Xray-linux-arm64-v8a.zip
-            xray_build: release
-          - arch: arm64
-            suffix: -noaes
-            runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
-            xray_key: aarch64
-            xray_archive: Xray-linux-arm64-v8a.zip
-            xray_build: noaes
-    env:
-      ARCH: ${{ matrix.arch }}${{ matrix.suffix }}
-      XRAY_KEY: ${{ matrix.xray_key }}
-      XRAY_ARCHIVE: ${{ matrix.xray_archive }}
-      XRAY_BUILD: ${{ matrix.xray_build }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          name: raycat-${{ matrix.target }}
-          path: dist/${{ matrix.arch }}
-      - name: Сборка образа
-        run: |
-          bash .github/build/docker-args.sh "$XRAY_KEY" "$XRAY_ARCHIVE" "$XRAY_BUILD" > "$RUNNER_TEMP/docker-args.txt"
-          mapfile -t args < "$RUNNER_TEMP/docker-args.txt"
-          docker build "${args[@]}" --tag raycat:ci .
-      - name: Дымовая проверка
-        run: |
-          version_line=$(docker run --rm raycat:ci --version)
-          echo "$version_line"
-          [[ "$version_line" == *" (${GITHUB_SHA:0:7})" ]]
-          healthcheck=$(docker image inspect -f '{{json .Config.Healthcheck.Test}}' raycat:ci)
-          test "$healthcheck" = '["CMD","raycat","health"]'
-          socket=$(docker run --rm --entrypoint printenv raycat:ci RAYCAT_SOCKET)
-          test "$socket" = /var/lib/raycat/raycat.sock
-          if health_output=$(docker run --rm raycat:ci health 2>&1); then
-            echo "raycat health без демона завершился успешно" >&2
-            exit 1
-          fi
-          echo "$health_output"
-          grep -q 'демон не запущен' <<<"$health_output"
-          version_output=$(docker run --rm --entrypoint /usr/libexec/raycat/xray raycat:ci version)
-          echo "$version_output"
-          if [ "$XRAY_BUILD" = noaes ]; then
-            go_version=$(sed -n 's/^go_version = "\(.*\)"/\1/p' versions.toml)
-            grep -qF "(go${go_version} " <<<"$version_output"
-          fi
-          for config in crates/xray/tests/golden/*.json; do
-            echo "::group::${config}"
-            docker run --rm -v "$PWD/crates/xray/tests/golden:/golden:ro" \
-              --entrypoint /usr/libexec/raycat/xray raycat:ci run -test -c "/golden/$(basename "$config")"
-            echo "::endgroup::"
-          done
-          docker run --rm --entrypoint nft raycat:ci --version
-          docker run --rm --entrypoint ip raycat:ci -V
-          volumes=$(docker image inspect -f '{{json .Config.Volumes}}' raycat:ci)
-          test "$volumes" = null
-          command=$(docker image inspect -f '{{json .Config.Entrypoint}} {{json .Config.Cmd}}' raycat:ci)
-          test "$command" = '["raycat"] ["daemon"]'
-          size=$(docker image inspect -f '{{.Size}}' raycat:ci)
-          echo "Образ ${ARCH}: $((size / 1024 / 1024)) МиБ ($size байт)"
-          echo "Образ ${ARCH}: $((size / 1024 / 1024)) МиБ" >> "$GITHUB_STEP_SUMMARY"
-      - name: Сохранение образа
-        run: docker save raycat:ci | gzip -9 > "$RUNNER_TEMP/image-${ARCH}.tar.gz"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: image-${{ matrix.arch }}${{ matrix.suffix }}
-          path: ${{ runner.temp }}/image-${{ matrix.arch }}${{ matrix.suffix }}.tar.gz
-          retention-days: 7
-          compression-level: 0
-          if-no-files-found: error
+          shared-key: test-aarch64
+          save-if: ${{ env.CACHE_SAVE }}
+          cache-on-failure: true
+      - run: cargo test --locked --target aarch64-unknown-linux-musl
 
-  xray-noaes-armv7:
-    name: xray для процессоров без AES (armv7)
+  test-armv7:
+    name: Тесты на armv7 (qemu)
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -306,37 +358,139 @@ jobs:
         with:
           persist-credentials: false
       - name: qemu
-        run: sudo apt-get update -q && sudo apt-get install -y -q qemu-user-static
+        run: docker run --privileged --rm "$BINFMT_IMAGE" --install arm
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: test-armv7
+          save-if: ${{ env.CACHE_SAVE }}
+          cache-on-failure: true
+      - run: cargo test --locked --target armv7-unknown-linux-musleabihf
+
+  image-amd64:
+    name: Образ Docker (amd64)
+    needs: build-x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      ARCH: amd64
+      XRAY_KEY: x86_64
+      XRAY_ARCHIVE: Xray-linux-64.zip
+      XRAY_BUILD: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: raycat-x86_64-unknown-linux-musl
+          path: dist/amd64
+      - name: Сборка образа
+        run: |
+          bash .github/build/docker-args.sh "$XRAY_KEY" "$XRAY_ARCHIVE" "$XRAY_BUILD" > "$RUNNER_TEMP/docker-args.txt"
+          mapfile -t args < "$RUNNER_TEMP/docker-args.txt"
+          docker build "${args[@]}" --tag raycat:ci .
+      - name: Сохранение образа
+        run: docker save raycat:ci | gzip -1 > "$RUNNER_TEMP/image-${ARCH}.tar.gz"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-amd64
+          path: ${{ runner.temp }}/image-amd64.tar.gz
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+      - name: Дымовая проверка
+        run: bash .github/build/smoke-image.sh
+
+  image-arm64:
+    name: Образ Docker (arm64${{ matrix.suffix }})
+    needs: build-aarch64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suffix: ""
+            xray_build: release
+          - suffix: -noaes
+            xray_build: noaes
+    env:
+      ARCH: arm64${{ matrix.suffix }}
+      XRAY_KEY: aarch64
+      XRAY_ARCHIVE: Xray-linux-arm64-v8a.zip
+      XRAY_BUILD: ${{ matrix.xray_build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: raycat-aarch64-unknown-linux-musl
+          path: dist/arm64
+      - name: Сборка образа
+        run: |
+          bash .github/build/docker-args.sh "$XRAY_KEY" "$XRAY_ARCHIVE" "$XRAY_BUILD" > "$RUNNER_TEMP/docker-args.txt"
+          mapfile -t args < "$RUNNER_TEMP/docker-args.txt"
+          docker build "${args[@]}" --tag raycat:ci .
+      - name: Сохранение образа
+        run: docker save raycat:ci | gzip -1 > "$RUNNER_TEMP/image-${ARCH}.tar.gz"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-arm64${{ matrix.suffix }}
+          path: ${{ runner.temp }}/image-arm64${{ matrix.suffix }}.tar.gz
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+      - name: Дымовая проверка
+        run: bash .github/build/smoke-image.sh
+
+  xray-noaes-armv7:
+    name: xray для процессоров без AES (armv7)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Сборка
         run: |
           bash .github/build/docker-args.sh armv7 Xray-linux-arm32-v7a.zip noaes > "$RUNNER_TEMP/docker-args.txt"
           mapfile -t args < "$RUNNER_TEMP/docker-args.txt"
           docker build --platform linux/arm/v7 "${args[@]}" --target xray-noaes --output type=local,dest=out .
-      - name: Проверка
-        run: |
-          bin=out/out/xray
-          file "$bin"
-          ls -l "$bin"
-          file "$bin" | grep -q 'ELF 32-bit.*ARM, EABI5'
-          version_output=$(qemu-arm-static "$bin" version)
-          echo "$version_output"
-          go_version=$(sed -n 's/^go_version = "\(.*\)"/\1/p' versions.toml)
-          grep -qF "(go${go_version} " <<<"$version_output"
-          for config in crates/xray/tests/golden/*.json; do
-            echo "::group::${config}"
-            qemu-arm-static "$bin" run -test -c "$config"
-            echo "::endgroup::"
-          done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: xray-noaes-armv7
           path: out/out/xray
           retention-days: 7
           if-no-files-found: error
+      - name: qemu
+        run: docker run --privileged --rm "$BINFMT_IMAGE" --install arm
+      - name: Проверка
+        run: |
+          bin=out/out/xray
+          file "$bin"
+          ls -l "$bin"
+          file "$bin" | grep -q 'ELF 32-bit.*ARM, EABI5'
+          version_output=$("$bin" version)
+          echo "$version_output"
+          go_version=$(sed -n 's/^go_version = "\(.*\)"/\1/p' versions.toml)
+          grep -qF "(go${go_version} " <<<"$version_output"
+          for config in crates/xray/tests/golden/*.json; do
+            echo "::group::${config}"
+            "$bin" run -test -c "$config"
+            echo "::endgroup::"
+          done
 
   xray-config:
     name: Проверка конфигов xray
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -344,15 +498,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Скачивание xray
-        run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' versions.toml)
-          sha256=$(sed -n 's/^x86_64 = "\(.*\)"/\1/p' versions.toml)
-          test -n "$version" && test -n "$sha256"
-          archive="Xray-linux-64.zip"
-          curl -fsSLO "https://github.com/XTLS/Xray-core/releases/download/v${version}/${archive}"
-          echo "${sha256}  ${archive}" | sha256sum -c -
-          unzip -q "$archive" xray
-          ./xray version
+        run: bash .github/build/fetch-xray.sh
       - name: xray run -test
         run: |
           for config in crates/xray/tests/golden/*.json; do
@@ -364,6 +510,7 @@ jobs:
   xray-api:
     name: API xray
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -371,16 +518,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: dev
+          save-if: false
       - name: Скачивание xray
-        run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' versions.toml)
-          sha256=$(sed -n 's/^x86_64 = "\(.*\)"/\1/p' versions.toml)
-          test -n "$version" && test -n "$sha256"
-          archive="Xray-linux-64.zip"
-          curl -fsSLO "https://github.com/XTLS/Xray-core/releases/download/v${version}/${archive}"
-          echo "${sha256}  ${archive}" | sha256sum -c -
-          unzip -q "$archive" xray
-          ./xray version
+        run: bash .github/build/fetch-xray.sh
       - name: Тесты клиента с настоящим xray
         env:
           XRAY_BIN: ./xray
@@ -389,6 +531,7 @@ jobs:
   e2e-proxy:
     name: "e2e: прокси"
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -396,24 +539,20 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: dev
+          save-if: false
       - name: Сборка
         run: cargo build --locked
       - name: Скачивание xray
-        run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' versions.toml)
-          sha256=$(sed -n 's/^x86_64 = "\(.*\)"/\1/p' versions.toml)
-          test -n "$version" && test -n "$sha256"
-          archive="Xray-linux-64.zip"
-          curl -fsSLO "https://github.com/XTLS/Xray-core/releases/download/v${version}/${archive}"
-          echo "${sha256}  ${archive}" | sha256sum -c -
-          unzip -q "$archive" xray
-          ./xray version
+        run: bash .github/build/fetch-xray.sh
       - name: Стенд
         run: bash .github/e2e/proxy.sh
 
   nftables:
     name: Правила nftables
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -421,8 +560,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: nftables и ping
-        run: sudo apt-get update -q && sudo apt-get install -y -q nftables iputils-ping
+        with:
+          shared-key: dev
+          save-if: false
+      - name: nftables
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends nftables
       - name: Сборка
         run: cargo build --locked -p raycat-netfilter --example ctl
       - name: Стенд
@@ -430,8 +572,9 @@ jobs:
 
   e2e-gateway:
     name: "e2e: шлюз"
-    needs: image
+    needs: image-amd64
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -452,6 +595,7 @@ jobs:
   installer-lint:
     name: "Установщик: shellcheck"
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -474,8 +618,9 @@ jobs:
 
   installer:
     name: "Установщик: ${{ matrix.image }}"
-    needs: build
+    needs: build-x86_64
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
@@ -493,15 +638,7 @@ jobs:
           name: raycat-x86_64-unknown-linux-musl
           path: dist
       - name: Скачивание xray
-        run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' versions.toml)
-          sha256=$(sed -n 's/^x86_64 = "\(.*\)"/\1/p' versions.toml)
-          test -n "$version" && test -n "$sha256"
-          archive="Xray-linux-64.zip"
-          curl -fsSLO "https://github.com/XTLS/Xray-core/releases/download/v${version}/${archive}"
-          echo "${sha256}  ${archive}" | sha256sum -c -
-          unzip -q "$archive" xray
-          ./xray version
+        run: bash .github/build/fetch-xray.sh
       - name: Ресурсы выпуска
         run: |
           chmod +x dist/raycat
@@ -518,8 +655,9 @@ jobs:
 
   installer-systemd:
     name: "Установщик: systemd"
-    needs: build
+    needs: build-x86_64
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -531,17 +669,9 @@ jobs:
           name: raycat-x86_64-unknown-linux-musl
           path: dist
       - name: Скачивание xray
-        run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' versions.toml)
-          sha256=$(sed -n 's/^x86_64 = "\(.*\)"/\1/p' versions.toml)
-          test -n "$version" && test -n "$sha256"
-          archive="Xray-linux-64.zip"
-          curl -fsSLO "https://github.com/XTLS/Xray-core/releases/download/v${version}/${archive}"
-          echo "${sha256}  ${archive}" | sha256sum -c -
-          unzip -q "$archive" xray
-          ./xray version
+        run: bash .github/build/fetch-xray.sh
       - name: nftables
-        run: sudo apt-get update -q && sudo apt-get install -y -q nftables
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends nftables
       - name: Ресурсы выпуска
         run: |
           chmod +x dist/raycat
@@ -552,8 +682,9 @@ jobs:
 
   e2e-lan:
     name: "e2e: шлюз для локальной сети"
-    needs: image
+    needs: image-amd64
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -574,6 +705,7 @@ jobs:
   release-scripts:
     name: Скрипты выпуска
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -585,8 +717,33 @@ jobs:
   result:
     name: Итог
     if: ${{ always() }}
-    needs: [lint, lockfile, test, msrv, deny, workflows, build, image, xray-noaes-armv7, xray-config, xray-api, e2e-proxy, nftables, e2e-gateway, e2e-lan, installer-lint, installer, installer-systemd, release-scripts]
+    needs:
+      - lint
+      - lockfile
+      - test
+      - msrv
+      - deny
+      - workflows
+      - build-x86_64
+      - build-aarch64
+      - build-armv7
+      - test-aarch64
+      - test-armv7
+      - image-amd64
+      - image-arm64
+      - xray-noaes-armv7
+      - xray-config
+      - xray-api
+      - e2e-proxy
+      - nftables
+      - e2e-gateway
+      - e2e-lan
+      - installer-lint
+      - installer
+      - installer-systemd
+      - release-scripts
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions: {}
     steps:
       - name: Все проверки пройдены
