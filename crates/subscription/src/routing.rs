@@ -214,7 +214,7 @@ mod tests {
             ["geosite:category-ru", "domain:example.org"]
         );
         assert_eq!(profile.direct_ip.len(), 2);
-        assert_eq!(profile.proxy_sites, Vec::<String>::new());
+        assert!(profile.proxy_sites.is_empty());
 
         let Routing::Profile(added) = parse(&link("add", &json!({"globalproxy": true}))).unwrap()
         else {

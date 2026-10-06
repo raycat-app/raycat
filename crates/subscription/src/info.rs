@@ -339,7 +339,7 @@ mod tests {
             ("profile-update-interval", "6"),
         ]);
         let (info, warnings) = parse(&http, &body, None);
-        assert_eq!(warnings, Vec::<String>::new());
+        assert!(warnings.is_empty());
         assert_eq!(info.title.as_deref(), Some("Из заголовка"));
         assert_eq!(
             info.support_url.as_deref(),
@@ -362,7 +362,7 @@ mod tests {
     fn routing_header_and_body_line() {
         let (info, warnings) = parse(&pairs(&[("routing", "happ://routing/off")]), &[], None);
         assert_eq!(info.routing, Some(Routing::Off));
-        assert_eq!(warnings, Vec::<String>::new());
+        assert!(warnings.is_empty());
 
         let (info, _) = parse(&[], &pairs(&[("routing", "happ://routing/off")]), None);
         assert_eq!(info.routing, Some(Routing::Off));

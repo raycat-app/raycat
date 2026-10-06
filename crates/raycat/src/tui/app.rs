@@ -726,7 +726,7 @@ mod tests {
         typed(&mut app, "quaUa?");
         assert!(!app.quit);
         assert_eq!(app.filter.text, "quaUa?");
-        assert_eq!(app.visible, Vec::<usize>::new());
+        assert!(app.visible.is_empty());
         assert_eq!(press(&mut app, KeyCode::Enter), None);
     }
 

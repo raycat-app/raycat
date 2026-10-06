@@ -612,7 +612,7 @@ mod tests {
         );
         let parsed = parsed(&link);
         assert_eq!(parsed.node.name, "🇳🇱 NL");
-        assert_eq!(parsed.warnings, Vec::<String>::new());
+        assert!(parsed.warnings.is_empty());
         let ob = &parsed.node.outbounds[0];
         assert_eq!(ob["tag"], "proxy");
         assert_eq!(ob["protocol"], "vless");
@@ -938,7 +938,7 @@ mod tests {
              &obfs-password=mask&pinSHA256=AB:CD:EF&mport=20000-30000#HY",
         );
         assert_eq!(parsed.node.name, "HY");
-        assert_eq!(parsed.warnings, Vec::<String>::new());
+        assert!(parsed.warnings.is_empty());
         let ob = &parsed.node.outbounds[0];
         assert_eq!(ob["protocol"], "hysteria");
         assert_eq!(

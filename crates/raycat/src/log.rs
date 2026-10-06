@@ -236,10 +236,7 @@ mod tests {
         assert_eq!(dedup.push(start, Level::Warn, "сбой".to_owned()).len(), 1);
         for second in [1, 20, 59] {
             let now = start + Duration::from_secs(second);
-            assert_eq!(
-                dedup.push(now, Level::Warn, "сбой".to_owned()),
-                Vec::<Line>::new()
-            );
+            assert!(dedup.push(now, Level::Warn, "сбой".to_owned()).is_empty());
         }
     }
 
@@ -303,7 +300,7 @@ mod tests {
             Level::Warn,
             "сбой".to_owned(),
         );
-        assert_eq!(again, Vec::<Line>::new());
+        assert!(again.is_empty());
     }
 
     #[test]

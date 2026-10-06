@@ -288,10 +288,7 @@ mod tests {
     fn plain_links() {
         let body = parse(links().as_bytes());
         assert_eq!(names(&body), ["Первый", "Второй", "Третий"]);
-        assert_eq!(
-            body.content.as_ref().ok().unwrap().warnings,
-            Vec::<String>::new()
-        );
+        assert!(body.content.as_ref().ok().unwrap().warnings.is_empty());
     }
 
     #[test]
@@ -387,10 +384,7 @@ mod tests {
     #[test]
     fn headers_only_count_at_the_start() {
         let text = format!("{}#support-url: https://example.com\n", links());
-        assert_eq!(
-            parse(text.as_bytes()).headers,
-            Vec::<(String, String)>::new()
-        );
+        assert!(parse(text.as_bytes()).headers.is_empty());
     }
 
     #[test]
@@ -399,10 +393,7 @@ mod tests {
         let body = parse(text.as_bytes());
         assert_eq!(body.routing.as_deref(), Some("happ://routing/onadd/e30="));
         assert_eq!(names(&body).len(), 3);
-        assert_eq!(
-            body.content.as_ref().ok().unwrap().warnings,
-            Vec::<String>::new()
-        );
+        assert!(body.content.as_ref().ok().unwrap().warnings.is_empty());
     }
 
     #[test]

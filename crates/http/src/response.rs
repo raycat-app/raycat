@@ -365,9 +365,9 @@ mod tests {
             100,
         )
         .unwrap();
-        assert_eq!(r.body, Vec::<u8>::new());
+        assert!(r.body.is_empty());
         let r = parse(b"HTTP/1.1 204 No Content\r\nContent-Encoding: gzip\r\n\r\n");
-        assert_eq!(r.body, Vec::<u8>::new());
+        assert!(r.body.is_empty());
     }
 
     #[test]
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn empty_encoded_body_is_not_decoded() {
         let r = parse(b"HTTP/1.1 200 OK\r\nContent-Encoding: br\r\nContent-Length: 0\r\n\r\n");
-        assert_eq!(r.body, Vec::<u8>::new());
+        assert!(r.body.is_empty());
     }
 
     #[test]

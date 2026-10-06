@@ -204,7 +204,7 @@ mod tests {
         for (name, var) in Var::NAMES {
             let template = Template::parse(&format!("{{{name}}}")).unwrap();
             assert_eq!(template.vars().collect::<Vec<_>>(), [*var]);
-            assert!(!template.render(&values()).is_empty(), "{name}");
+            assert_ne!(template.render(&values()), "", "{name}");
         }
     }
 

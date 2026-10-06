@@ -447,7 +447,7 @@ mod tests {
             ..Rules::default()
         };
         assert!(install_with(&fake, &rules).is_err());
-        assert_eq!(fake.calls(), Vec::<String>::new());
+        assert!(fake.calls().is_empty());
     }
 
     #[test]

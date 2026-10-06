@@ -293,8 +293,8 @@ mod tests {
             ["раз два", "три", "четыре"]
         );
         assert_eq!(wrap("абвгдежзик", 4, 5), ["абвг", "дежз", "ик"]);
-        assert_eq!(wrap("текст", 0, 5), Vec::<String>::new());
-        assert_eq!(wrap("текст", 5, 0), Vec::<String>::new());
+        assert!(wrap("текст", 0, 5).is_empty());
+        assert!(wrap("текст", 5, 0).is_empty());
     }
 
     #[test]

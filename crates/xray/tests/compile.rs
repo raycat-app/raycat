@@ -5,9 +5,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::Path;
 use std::time::Duration;
 
-use raycat_xray::{
-    CompileError, Compiled, Mode, Node, Settings, SkippedNode, Subscription, compile,
-};
+use raycat_xray::{CompileError, Compiled, Mode, Node, Settings, Subscription, compile};
 use serde_json::{Value, json};
 
 const ZERO_UUID: &str = "00000000-0000-0000-0000-000000000000";
@@ -689,7 +687,7 @@ fn tag_table_maps_tags_back_to_subscription_and_node() {
     );
     assert_eq!(compiled.tags.get("node-003-main").unwrap().name, "Узел 3");
     assert!(compiled.tags.get("node-002-x-hop").is_none());
-    assert_eq!(compiled.skipped, Vec::<SkippedNode>::new());
+    assert!(compiled.skipped.is_empty());
 }
 
 #[test]

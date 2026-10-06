@@ -337,7 +337,7 @@ mod tests {
         let temp = TempDir::new("missing");
         let path = temp.path().join("nope/file");
         assert!(write_atomic(&path, b"data").is_err());
-        assert_eq!(names(temp.path()), Vec::<String>::new());
+        assert!(names(temp.path()).is_empty());
     }
 
     #[test]

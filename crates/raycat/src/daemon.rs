@@ -894,7 +894,7 @@ mod tests {
         assert_eq!(updates.results[0].subscription, "a");
         assert!(!updates.results[1].ok);
         assert_eq!(updates.results[1].message, "нет связи");
-        assert_eq!(daemon.pending_updates.len(), 0);
+        assert!(daemon.pending_updates.is_empty());
     }
 
     #[test]
@@ -918,7 +918,7 @@ mod tests {
         daemon.start_update(Some("x"), reply);
         let refusal = answer.try_recv().unwrap().unwrap_err();
         assert!(matches!(refusal, Refusal::NotFound(ref text) if text.contains("«x»")));
-        assert_eq!(daemon.pending_updates.len(), 0);
+        assert!(daemon.pending_updates.is_empty());
     }
 
     #[test]

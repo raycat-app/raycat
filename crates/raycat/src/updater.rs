@@ -965,7 +965,7 @@ mod tests {
             store.load("тест").0.fallback_url,
             Some(reserve.url("/reserve/tokenABCD"))
         );
-        assert_eq!(reserve.requests(), Vec::<String>::new());
+        assert!(reserve.requests().is_empty());
         drop(main);
 
         let second = refresh(&source, &store, 0, 2_000);
