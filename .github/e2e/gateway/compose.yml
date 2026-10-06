@@ -28,6 +28,8 @@ x-node: &node
   image: raycat:ci
   entrypoint: ["/usr/libexec/raycat/xray"]
   command: ["run", "-c", "/e2e/gateway/node.json"]
+  healthcheck:
+    disable: true
   volumes:
     - ..:/e2e:ro
 
@@ -114,6 +116,8 @@ services:
     image: raycat:ci
     container_name: raycat-e2e-app
     entrypoint: ["sleep", "infinity"]
+    healthcheck:
+      disable: true
     network_mode: service:raycat
     depends_on:
       raycat:
@@ -127,6 +131,8 @@ services:
     image: raycat:ci
     container_name: raycat-e2e-holder
     entrypoint: ["sleep", "infinity"]
+    healthcheck:
+      disable: true
     cap_add: [NET_ADMIN]
     dns: [1.1.1.1]
     networks:

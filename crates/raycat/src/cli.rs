@@ -419,6 +419,9 @@ mod tests {
             version.starts_with(&format!("raycat {}", env!("CARGO_PKG_VERSION"))),
             "{version}"
         );
-        assert_eq!(version.trim_end(), format!("raycat {}", env!("RAYCAT_VERSION")));
+        assert_eq!(
+            version.trim_end(),
+            format!("raycat {}", env!("RAYCAT_VERSION"))
+        );
     }
 }
