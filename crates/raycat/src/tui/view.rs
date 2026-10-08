@@ -47,7 +47,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &mut App, palette: Palette) {
     draw_at(frame, app, palette, local_zone());
 }
 
-fn draw_at(frame: &mut Frame<'_>, app: &mut App, palette: Palette, zone: &TimeZone) {
+pub(super) fn draw_at(frame: &mut Frame<'_>, app: &mut App, palette: Palette, zone: &TimeZone) {
     let mut canvas = Canvas::new(frame.buffer_mut(), palette);
     compose(&mut canvas, app, zone);
 }
@@ -317,12 +317,12 @@ fn subscription_segs(sub: &SubscriptionStatus, now: u64, zone: &TimeZone) -> Vec
     }
     if let Some(expire) = sub.expire {
         let (text, tone) = render::expiry_text(expire, now, zone);
-        segs.push(Seg::new(text, tone, 3));
+        segs.push(Seg::new(text, tone, 2));
     }
     match sub.updated_at {
         Some(then) => {
             let text = format!("обновлена {}", render::ago(now, then));
-            segs.push(Seg::new(text, Tone::Plain, 2));
+            segs.push(Seg::new(text, Tone::Plain, 3));
         }
         None => segs.push(Seg::new("ещё не получена", Tone::Yellow, 1)),
     }
@@ -893,8 +893,8 @@ mod tests {
             "▶ main/NL-1  31 мс  закреплён  выбран лучший живой узел".to_owned(),
             format!("╭─ Подписки · всего 1 {}╮", d(57)),
             format!(
-                "│ main  узлов: 3  ▱▱▱▱▱▱▱▱▱▱ 0% 3.0 МиБ/100.0 ГиБ  обновлена 2 ч назад{}│",
-                s(9)
+                "│ main  узлов: 3  ▱▱▱▱▱▱▱▱▱▱ 0% 3.0 МиБ/100.0 ГиБ{}│",
+                s(30)
             ),
             format!("╰{}╯", d(78)),
             format!("╭─ Узлы · всего 3 {}╮", d(61)),
@@ -1279,7 +1279,7 @@ mod tests {
         status.subscriptions[0].last_error = Some("панель ответила 403".to_owned());
         status.subscriptions[0].updating = true;
         let mut app = app_with(status, sample_nodes());
-        let lines = screen(&mut app, 100, 24);
+        let lines = screen(&mut app, 200, 24);
         let at = lines
             .iter()
             .position(|line| line.starts_with("╭─ Подписки"))
@@ -1294,6 +1294,18 @@ mod tests {
             "{:?}",
             lines[at + 2]
         );
+    }
+
+    #[test]
+    fn the_expiry_outlives_the_update_time_on_a_narrow_line() {
+        let mut app = sample_app();
+        let lines = screen(&mut app, 100, 20);
+        let line = lines
+            .iter()
+            .find(|line| line.starts_with("│ main"))
+            .unwrap();
+        assert!(line.contains("осталось 40 дн"), "{line:?}");
+        assert!(!line.contains("обновлена"), "{line:?}");
     }
 
     #[test]

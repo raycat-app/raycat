@@ -9,6 +9,8 @@
 mod app;
 mod canvas;
 mod link;
+#[cfg(test)]
+mod svg;
 mod view;
 
 use std::io::{self, IsTerminal as _};
