@@ -240,7 +240,11 @@ fn header_node(canvas: &mut Canvas<'_>, app: &App, y: usize) {
         );
         return;
     };
-    let choice = if node.pinned { "закреплён" } else { "авто" };
+    let choice = if node.pinned {
+        "закреплён"
+    } else {
+        "авто"
+    };
     let mut segs = vec![
         Seg::new(format!("▶ {}", node.id), Tone::Bold, 0),
         Seg::new(
@@ -310,13 +314,7 @@ fn subscription_lines(app: &App, zone: &TimeZone) -> Vec<Vec<Seg>> {
     lines
 }
 
-fn subscriptions(
-    canvas: &mut Canvas<'_>,
-    y0: usize,
-    room: usize,
-    lines: Vec<Vec<Seg>>,
-    app: &App,
-) {
+fn subscriptions(canvas: &mut Canvas<'_>, y0: usize, room: usize, lines: Vec<Vec<Seg>>, app: &App) {
     let count = app
         .status
         .as_ref()
@@ -626,10 +624,7 @@ fn keys_line(canvas: &mut Canvas<'_>, y: usize, hints: Vec<Seg>) {
         if index > 0 {
             x += GAP;
         }
-        let (key, desc) = seg
-            .text
-            .split_once(' ')
-            .unwrap_or((seg.text.as_str(), ""));
+        let (key, desc) = seg.text.split_once(' ').unwrap_or((seg.text.as_str(), ""));
         let room = canvas.width.saturating_sub(x);
         canvas.put(x, y, key, room, Tone::Bold);
         x += display_width(key);
@@ -843,8 +838,18 @@ mod tests {
                 s(9),
                 s(18)
             ),
-            format!("│ ★  main      NL-1  ● жив{}31 мс{}0{}│", s(13), s(8), s(26)),
-            format!("│    main      DE-2  ● жив{}45 мс{}0{}│", s(13), s(8), s(26)),
+            format!(
+                "│ ★  main      NL-1  ● жив{}31 мс{}0{}│",
+                s(13),
+                s(8),
+                s(26)
+            ),
+            format!(
+                "│    main      DE-2  ● жив{}45 мс{}0{}│",
+                s(13),
+                s(8),
+                s(26)
+            ),
             format!(
                 "│    main      US-3  ✗ не отвечает{}—{}3  тайм-аут{}│",
                 s(9),
@@ -1029,9 +1034,9 @@ mod tests {
         let mut app = sample_app();
         let lines = screen(&mut app, 80, 12);
         assert!(
-            lines.iter().any(|line| line.starts_with(
-                "╭─ Узлы · всего 3 · (журнал скрыт: мало строк) "
-            )),
+            lines
+                .iter()
+                .any(|line| line.starts_with("╭─ Узлы · всего 3 · (журнал скрыт: мало строк) ")),
             "{lines:?}"
         );
         app.apply(Msg::Down {
@@ -1127,9 +1132,11 @@ mod tests {
                 .unwrap()
                 .ends_with("Enter — применить, Esc — сбросить и выйти")
         );
-        assert!(lines.iter().any(|line| line.starts_with(
-            "╭─ Узлы · показано 1 из 3 · фильтр: «de» "
-        )));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("╭─ Узлы · показано 1 из 3 · фильтр: «de» "))
+        );
         assert!(lines.iter().any(|line| line.contains("DE-2")));
         assert!(!lines.iter().any(|line| line.contains("US-3")));
 
@@ -1137,9 +1144,9 @@ mod tests {
         press(&mut app, KeyCode::Tab);
         let lines = screen(&mut app, 80, 20);
         assert!(
-            lines.iter().any(|line| line.starts_with(
-                "╭─ Узлы · всего 3 · подписка: main "
-            )),
+            lines
+                .iter()
+                .any(|line| line.starts_with("╭─ Узлы · всего 3 · подписка: main ")),
             "{lines:?}"
         );
 
