@@ -10,12 +10,19 @@ use raycat_proto::{
     XrayState, XrayStatus,
 };
 
-use crate::term::{Align, Cell, Column, Term, Tone, pad, table};
+use crate::term::{Align, Cell, Column, Term, Tone, display_width, pad, table, truncate};
 use crate::util::{format_bytes, format_date, format_duration, format_moment, sanitize};
 
-const LABEL_WIDTH: usize = 13;
+const LABEL_WIDTH: usize = 14;
 const DAY: u64 = 86_400;
 const WARN_BEFORE_EXPIRY: u64 = 3 * DAY;
+/// Задержка (мс) ниже `LATENCY_FAST_MS` зелёная, ниже `LATENCY_SLOW_MS` жёлтая, дальше красная.
+pub(crate) const LATENCY_FAST_MS: u64 = 150;
+pub(crate) const LATENCY_SLOW_MS: u64 = 400;
+const ERROR_WIDTH: usize = 40;
+const COLUMN_GAP: usize = 2;
+const COLUMNS_WITHOUT_ERROR: usize = 7;
+const NODE_LEGEND: &str = "▶ выбран  ★ закреплён  ● жив  ○ не проверен  ✗ не отвечает";
 
 fn field(term: Term, indent: usize, label: &str, value: &str) -> String {
     format!(
@@ -124,7 +131,7 @@ fn header_lines(term: Term, status: &Status) -> Vec<String> {
             &format!("raycat {}", sanitize(&status.version)),
         ),
         field(term, 2, "режим:", mode_name(status.mode)),
-        field(term, 2, "работает:", &span(status.uptime_secs)),
+        field(term, 2, "время работы:", &span(status.uptime_secs)),
         field(term, 2, "xray:", &xray_text(term, &status.xray)),
     ];
     match status.kill_switch {
@@ -132,7 +139,11 @@ fn header_lines(term: Term, status: &Status) -> Vec<String> {
             term,
             2,
             "kill switch:",
-            &term.paint(Tone::Green, "включён"),
+            &format!(
+                "{} {}",
+                term.paint(Tone::Green, "включён"),
+                term.paint(Tone::Dim, "(трафик не уйдёт мимо VPN)")
+            ),
         )),
         Some(false) => lines.push(field(
             term,
@@ -288,13 +299,19 @@ fn node_columns() -> Vec<Column> {
             min: 0,
         },
         Column {
-            title: "Провалы",
+            title: "Сбои",
             align: Align::Right,
             shrink: 0,
             min: 0,
         },
         Column {
             title: "Трафик",
+            align: Align::Left,
+            shrink: 0,
+            min: 0,
+        },
+        Column {
+            title: "Ошибка",
             align: Align::Left,
             shrink: 0,
             min: 0,
@@ -332,6 +349,31 @@ pub(crate) fn node_traffic(node: &Node) -> String {
     }
 }
 
+/// Статус узла в таблице: символ и слово.
+pub(crate) fn node_status_mark(status: NodeStatus) -> (&'static str, Tone) {
+    match status {
+        NodeStatus::Alive => ("● жив", Tone::Green),
+        NodeStatus::Dead => ("✗ не отвечает", Tone::Red),
+        NodeStatus::Unknown => ("○ не проверен", Tone::Dim),
+    }
+}
+
+pub(crate) fn latency_tone(latency_ms: Option<u64>) -> Tone {
+    match latency_ms {
+        None => Tone::Plain,
+        Some(ms) if ms < LATENCY_FAST_MS => Tone::Green,
+        Some(ms) if ms < LATENCY_SLOW_MS => Tone::Yellow,
+        Some(_) => Tone::Red,
+    }
+}
+
+fn error_text(error: Option<&str>) -> String {
+    match error {
+        Some(text) => truncate(&sanitize(text), ERROR_WIDTH),
+        None => String::new(),
+    }
+}
+
 fn node_row(node: &Node) -> Vec<Cell> {
     let (mark, mark_tone) = node_marker(node);
     let name_tone = if node.selected {
@@ -339,7 +381,7 @@ fn node_row(node: &Node) -> Vec<Cell> {
     } else {
         Tone::Plain
     };
-    let (status_text, status_tone) = node_status(node.status);
+    let (status_text, status_tone) = node_status_mark(node.status);
     let failures_tone = if node.failures > 0 {
         Tone::Yellow
     } else {
@@ -350,10 +392,43 @@ fn node_row(node: &Node) -> Vec<Cell> {
         Cell::new(sanitize(&node.subscription), Tone::Plain),
         Cell::new(sanitize(&node.name), name_tone),
         Cell::new(status_text, status_tone),
-        Cell::new(latency_text(node.latency_ms), Tone::Plain),
+        Cell::new(latency_text(node.latency_ms), latency_tone(node.latency_ms)),
         Cell::new(node.failures.to_string(), failures_tone),
         Cell::new(node_traffic(node), Tone::Plain),
+        Cell::new(error_text(node.last_error.as_deref()), Tone::Red),
     ]
+}
+
+/// Ширина таблицы без сужения: самые широкие ячейки каждой колонки и промежутки.
+fn natural_width(columns: &[Column], rows: &[Vec<Cell>]) -> usize {
+    let cells: usize = columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            rows.iter()
+                .filter_map(|row| row.get(index))
+                .map(|cell| display_width(&cell.text))
+                .fold(display_width(column.title), usize::max)
+        })
+        .sum();
+    cells + COLUMN_GAP * columns.len().saturating_sub(1)
+}
+
+/// Подсказка, как закрепить узел; пример — первый живой узел из таблицы.
+fn pin_hint(shown: &[&Node]) -> String {
+    let base = "Закрепить узел: raycat use <подписка>/<узел>";
+    match shown.iter().find(|node| node.status == NodeStatus::Alive) {
+        Some(node) => {
+            let id = sanitize(&node.id);
+            let example = if id.contains(' ') {
+                format!("\"{id}\"")
+            } else {
+                id
+            };
+            format!("{base}, например: raycat use {example}")
+        }
+        None => base.to_owned(),
+    }
 }
 
 /// `raycat nodes`: по умолчанию живые узлы и выбранный, с `all` — все.
@@ -373,10 +448,22 @@ pub(crate) fn nodes(term: Term, nodes: &Nodes, all: bool) -> String {
             nodes.nodes.len()
         );
     }
-    let rows: Vec<Vec<Cell>> = shown.iter().copied().map(node_row).collect();
-    let mut text = table(term, &node_columns(), &rows);
+    let mut columns = node_columns();
+    let mut rows: Vec<Vec<Cell>> = shown.iter().copied().map(node_row).collect();
+    let fits = term
+        .width()
+        .is_none_or(|width| natural_width(&columns, &rows) <= width);
+    if !fits {
+        columns.truncate(COLUMNS_WITHOUT_ERROR);
+        for row in &mut rows {
+            row.truncate(COLUMNS_WITHOUT_ERROR);
+        }
+    }
+    let mut text = table(term, &columns, &rows);
     text.push('\n');
-    text.push_str(&term.paint(Tone::Dim, "▶ выбран   ★ закреплён вручную"));
+    text.push_str(&term.paint(Tone::Dim, NODE_LEGEND));
+    text.push('\n');
+    text.push_str(&term.paint(Tone::Dim, &pin_hint(&shown)));
     let hidden = nodes.nodes.len() - shown.len();
     if hidden > 0 {
         text.push('\n');
@@ -582,24 +669,24 @@ mod tests {
         let text = status(plain(), &sample_status(), NOW, &TimeZone::UTC);
         let expected = [
             "raycat 0.1.0",
-            "  режим:       шлюз",
-            "  работает:    5 мин 12 с",
-            "  xray:        работает (pid 4127)",
-            "  kill switch: включён",
+            "  режим:        шлюз",
+            "  время работы: 5 мин 12 с",
+            "  xray:         работает (pid 4127)",
+            "  kill switch:  включён (трафик не уйдёт мимо VPN)",
             "",
             "Текущий узел",
-            "  имя:         NL-1",
-            "  подписка:    main",
-            "  задержка:    31 мс",
-            "  выбор:       автоматический",
-            "  причина:     выбран лучший живой узел «NL-1»",
+            "  имя:          NL-1",
+            "  подписка:     main",
+            "  задержка:     31 мс",
+            "  выбор:        автоматический",
+            "  причина:      выбран лучший живой узел «NL-1»",
             "",
             "Подписки",
             "  main  «Мой VPN»",
-            "    узлов:       12",
-            "    трафик:      3.0 МиБ из 100.0 ГиБ (0%)",
-            "    срок:        до 07.11.2026, осталось 40 дн",
-            "    обновлена:   2 ч назад, следующее обновление через 3 ч",
+            "    узлов:        12",
+            "    трафик:       3.0 МиБ из 100.0 ГиБ (0%)",
+            "    срок:         до 07.11.2026, осталось 40 дн",
+            "    обновлена:    2 ч назад, следующее обновление через 3 ч",
         ]
         .join("\n");
         assert_eq!(text, expected);
@@ -618,9 +705,9 @@ mod tests {
             restarts: 2,
         };
         let text = status(plain(), &data, NOW, &TimeZone::UTC);
-        assert!(text.contains("режим:       прокси"));
+        assert!(text.contains("режим:        прокси"));
         assert!(!text.contains("kill switch"));
-        assert!(text.contains("xray:        не запущен"));
+        assert!(text.contains("xray:         не запущен"));
         assert!(text.contains("не выбран: узлов пока нет"));
         assert!(text.contains("подписок нет"));
     }
@@ -643,11 +730,11 @@ mod tests {
         let text = status(plain(), &data, NOW, &TimeZone::UTC);
         assert!(text.contains("работает (pid 4127), перезапусков: 2"));
         assert!(text.contains("закреплён вручную (вернуть автоматику: raycat use auto)"));
-        assert!(text.contains("ошибка:      панель ответила 403"));
+        assert!(text.contains("ошибка:       панель ответила 403"));
         assert!(text.contains("идёт обновление"));
-        assert!(text.contains("срок:        бессрочно"));
+        assert!(text.contains("срок:         бессрочно"));
         assert!(text.contains("3.0 МиБ (без ограничения)"));
-        assert!(text.contains("обновлена:   ещё не получена"));
+        assert!(text.contains("обновлена:    ещё не получена"));
     }
 
     #[test]
@@ -703,30 +790,113 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(
             lines[0],
-            "   Подписка  Узел  Статус  Задержка  Провалы  Трафик"
+            "   Подписка  Узел  Статус  Задержка  Сбои  Трафик                Ошибка"
         );
         assert_eq!(
             lines[1],
-            "★  main      NL-1  жив        31 мс        0  ↑10.0 КиБ ↓200.0 КиБ"
+            "★  main      NL-1  ● жив      31 мс     0  ↑10.0 КиБ ↓200.0 КиБ"
         );
         assert_eq!(
             lines[2],
-            "   main      DE-2  жив        31 мс        0  ↑10.0 КиБ ↓200.0 КиБ"
+            "   main      DE-2  ● жив      31 мс     0  ↑10.0 КиБ ↓200.0 КиБ"
         );
-        assert_eq!(lines[3], "▶ выбран   ★ закреплён вручную");
-        assert_eq!(lines[4], "Скрыто узлов: 2 (все: raycat nodes --all)");
+        assert_eq!(
+            lines[3],
+            "▶ выбран  ★ закреплён  ● жив  ○ не проверен  ✗ не отвечает"
+        );
+        assert_eq!(
+            lines[4],
+            "Закрепить узел: raycat use <подписка>/<узел>, например: raycat use main/NL-1"
+        );
+        assert_eq!(lines[5], "Скрыто узлов: 2 (все: raycat nodes --all)");
         assert!(!text.contains("US-3"));
     }
 
     #[test]
     fn all_shows_dead_and_unchecked_nodes_too() {
         let text = nodes(plain(), &sample_nodes(), true);
-        let dead = format!("US-3  не отвечает{}—{}3", " ".repeat(9), " ".repeat(8));
-        assert!(text.contains(&dead), "{text}");
-        assert!(text.contains("FI-4  не проверен"));
+        assert!(text.contains("US-3  ✗ не отвечает"), "{text}");
+        assert!(text.contains("FI-4  ○ не проверен"));
         assert!(!text.contains("Скрыто"));
         let selected = text.lines().nth(1).unwrap();
         assert!(selected.starts_with("▶  main"), "{selected:?}");
+    }
+
+    #[test]
+    fn the_error_column_shows_the_last_error_when_it_fits() {
+        let mut data = sample_nodes();
+        data.nodes[2].last_error = Some("тайм-аут".to_owned());
+        let text = nodes(Term::new(false, Some(200)), &data, true);
+        assert!(text.lines().next().unwrap().ends_with("Ошибка"), "{text}");
+        assert!(text.contains("US-3  ✗ не отвечает"));
+        assert!(text.contains("тайм-аут"));
+        assert!(nodes(plain(), &data, true).contains("тайм-аут"));
+    }
+
+    #[test]
+    fn the_error_column_goes_first_when_the_width_runs_out() {
+        let mut data = sample_nodes();
+        data.nodes[2].last_error = Some("тайм-аут".to_owned());
+        // Без колонки «Ошибка» таблица занимает 70 ячеек, с ней — 80.
+        let narrow = nodes(Term::new(false, Some(79)), &data, true);
+        assert!(!narrow.contains("Ошибка"), "{narrow}");
+        assert!(!narrow.contains("тайм-аут"), "{narrow}");
+        assert!(!narrow.contains('…'), "{narrow}");
+        let wide = nodes(Term::new(false, Some(80)), &data, true);
+        assert!(wide.contains("Ошибка"), "{wide}");
+        assert!(wide.contains("тайм-аут"), "{wide}");
+    }
+
+    #[test]
+    fn a_long_error_is_cut_with_an_ellipsis() {
+        let mut data = sample_nodes();
+        data.nodes[2].last_error =
+            Some("панель не ответила за отведённое время, попробуйте позже".to_owned());
+        let text = nodes(plain(), &data, true);
+        assert!(
+            text.contains("панель не ответила за отведённое время,…"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn latency_colors_follow_the_thresholds() {
+        assert_eq!(latency_tone(None), Tone::Plain);
+        assert_eq!(latency_tone(Some(LATENCY_FAST_MS - 1)), Tone::Green);
+        assert_eq!(latency_tone(Some(LATENCY_FAST_MS)), Tone::Yellow);
+        assert_eq!(latency_tone(Some(LATENCY_SLOW_MS - 1)), Tone::Yellow);
+        assert_eq!(latency_tone(Some(LATENCY_SLOW_MS)), Tone::Red);
+        let mut data = sample_nodes();
+        data.nodes[0].latency_ms = Some(99);
+        data.nodes[1].latency_ms = Some(400);
+        let text = nodes(Term::new(true, None), &data, false);
+        assert!(text.contains("\x1b[92m99 мс\x1b[0m"), "{text}");
+        assert!(text.contains("\x1b[91m400 мс\x1b[0m"), "{text}");
+        assert!(!nodes(plain(), &data, false).contains('\x1b'));
+    }
+
+    #[test]
+    fn the_pin_hint_gives_an_example_only_with_a_live_node() {
+        let mut data = sample_nodes();
+        for node in &mut data.nodes {
+            node.status = NodeStatus::Dead;
+        }
+        let text = nodes(plain(), &data, false);
+        assert_eq!(
+            text.lines().nth(3),
+            Some("Закрепить узел: raycat use <подписка>/<узел>")
+        );
+    }
+
+    #[test]
+    fn a_pinnable_name_with_spaces_is_quoted_in_the_hint() {
+        let mut data = sample_nodes();
+        data.nodes[0].id = "main/Германия 1".to_owned();
+        let text = nodes(plain(), &data, false);
+        assert!(
+            text.contains("например: raycat use \"main/Германия 1\""),
+            "{text}"
+        );
     }
 
     #[test]
@@ -764,7 +934,8 @@ mod tests {
         for line in text.lines().take(3) {
             assert!(crate::term::display_width(line) <= 80, "{line:?}");
         }
-        assert!(text.contains("Германия, Франкфу…"), "{text}");
+        assert!(!text.contains("Ошибка"), "{text}");
+        assert!(text.contains("Германия, Франкфурт,…"), "{text}");
     }
 
     #[test]

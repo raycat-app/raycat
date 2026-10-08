@@ -156,12 +156,22 @@ fn client_commands(command: Command) -> Command {
                 "Показать таблицу узлов: статус, задержка, трафик (по умолчанию живые и выбранный)",
                 "raycat nodes [ПАРАМЕТРЫ]",
             )
-            .after_help("Примеры:\n  raycat nodes\n  raycat nodes --all")
+            .after_help(
+                "Примеры:\n  raycat nodes\n  raycat nodes --all\n  raycat nodes --subscription основная",
+            )
             .arg(
                 Arg::new("all")
                     .long("all")
                     .action(ArgAction::SetTrue)
                     .help("Показать все узлы, в том числе недоступные и непроверенные")
+                    .help_heading(OPTIONS),
+            )
+            .arg(
+                Arg::new("subscription")
+                    .short('s')
+                    .long("subscription")
+                    .value_name("ИМЯ")
+                    .help("Только узлы этой подписки")
                     .help_heading(OPTIONS),
             )
             .arg(json_flag()),
@@ -434,6 +444,26 @@ mod tests {
         assert!(sub.get_flag("all") && sub.get_flag("json"));
         let matches = command().try_get_matches_from(["raycat", "nodes"]).unwrap();
         assert!(!matches.subcommand().unwrap().1.get_flag("all"));
+        for args in [
+            vec!["raycat", "nodes", "-s", "основная"],
+            vec!["raycat", "nodes", "--subscription", "основная"],
+        ] {
+            let matches = command().try_get_matches_from(args).unwrap();
+            let (_, sub) = matches.subcommand().unwrap();
+            assert_eq!(
+                sub.get_one::<String>("subscription").map(String::as_str),
+                Some("основная")
+            );
+        }
+        let matches = command().try_get_matches_from(["raycat", "nodes"]).unwrap();
+        assert_eq!(
+            matches
+                .subcommand()
+                .unwrap()
+                .1
+                .get_one::<String>("subscription"),
+            None
+        );
 
         let matches = command()
             .try_get_matches_from(["raycat", "use", "main/NL-1"])
@@ -562,6 +592,8 @@ mod tests {
             vec!["raycat", "health", "--json"],
             vec!["raycat", "health", "лишний"],
             vec!["raycat", "nodes", "--all", "лишний"],
+            vec!["raycat", "nodes", "--subscription"],
+            vec!["raycat", "nodes", "-s"],
             vec!["raycat", "tui", "--nope"],
             vec!["raycat", "tui", "лишний"],
             vec!["raycat", "status", "--config", "/x.toml"],
