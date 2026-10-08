@@ -10,6 +10,8 @@ mod app;
 mod canvas;
 mod link;
 mod view;
+#[cfg(test)]
+mod svg;
 
 use std::io::{self, IsTerminal as _};
 use std::path::PathBuf;

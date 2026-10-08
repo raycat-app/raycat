@@ -47,7 +47,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &mut App, palette: Palette) {
     draw_at(frame, app, palette, local_zone());
 }
 
-fn draw_at(frame: &mut Frame<'_>, app: &mut App, palette: Palette, zone: &TimeZone) {
+pub(super) fn draw_at(frame: &mut Frame<'_>, app: &mut App, palette: Palette, zone: &TimeZone) {
     let mut canvas = Canvas::new(frame.buffer_mut(), palette);
     compose(&mut canvas, app, zone);
 }
