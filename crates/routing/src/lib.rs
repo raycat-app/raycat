@@ -194,6 +194,6 @@ mod tests {
     #[test]
     fn foreign_resolvers_are_not_listed() {
         assert!(!ru_contains(Ipv4Addr::new(8, 8, 8, 8)));
-        assert!(!ru_contains(Ipv4Addr::new(1, 1, 1, 1)));
+        assert!(!ru_contains("1.1.1.1".parse().unwrap()));
     }
 }
