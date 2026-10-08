@@ -971,7 +971,7 @@ mod tests {
             reason: "слово ".repeat(40),
             retry_in: Duration::from_secs(1),
         });
-        let lines = screen(&mut app, 40, 20);
+        let lines = screen(&mut app, 44, 20);
         assert!(lines[0].starts_with("демон недоступен: слово"));
         assert!(lines[1].starts_with("слово"));
         assert!(lines[2].ends_with('…'), "{:?}", lines[2]);
@@ -1036,7 +1036,7 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|line| line.starts_with("╭─ Узлы · всего 3 · (журнал скрыт: мало строк) ")),
+                .any(|line| line.starts_with("╭─ Узлы · 1–2 из 3 · (журнал скрыт: мало строк) ")),
             "{lines:?}"
         );
         app.apply(Msg::Down {
