@@ -187,6 +187,19 @@ type = "gateway"
   `restart: true` restarts them together with the gateway. Check by hand:
   `docker compose exec raycat raycat health` (exit code 0 or 1 and the reason).
 
+**Subscription link as a Docker secret.** Instead of `url`, set `url_file = "/run/secrets/raycat_sub"`
+and pass the file through `secrets:` (spaces and line breaks at the ends are ignored; the file
+permissions are the same as for `config.toml`):
+
+```yaml
+services:
+  raycat:
+    secrets: [raycat_sub]     # for the raycat service, the rest unchanged
+secrets:
+  raycat_sub:
+    file: ./raycat_sub.txt    # a file with one line: the subscription link
+```
+
 ## Gateway for the local network
 
 raycat can be a gateway for the devices of your network: TVs, phones, consoles

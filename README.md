@@ -189,6 +189,19 @@ type = "gateway"
   `restart: true` перезапускает их вместе со шлюзом. Проверить вручную:
   `docker compose exec raycat raycat health` (код 0 или 1 и причина).
 
+**Ссылка подписки как секрет Docker.** Вместо `url` укажите `url_file = "/run/secrets/raycat_sub"`
+и передайте файл через `secrets:` (пробелы и перевод строки по краям не важны; права файла
+такие же, как у `config.toml`):
+
+```yaml
+services:
+  raycat:
+    secrets: [raycat_sub]     # к сервису raycat, остальное без изменений
+secrets:
+  raycat_sub:
+    file: ./raycat_sub.txt    # файл с одной строкой: ссылкой подписки
+```
+
 ## Шлюз для локальной сети
 
 raycat может быть шлюзом для устройств сети: телевизоров, телефонов, консолей,

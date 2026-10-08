@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)]
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use raycat_config::{
@@ -695,7 +695,7 @@ fn missing_required_subscription_fields() {
     let list = problems("[[subscription]]\nname = \"a\"\n");
     assert_eq!(list.len(), 3, "{list:?}");
     for field in [
-        "subscription[0].url",
+        "subscription[0]",
         "subscription[0].app",
         "subscription[0].platform",
     ] {
@@ -1181,4 +1181,164 @@ fn seed_is_hidden_in_debug() {
     assert!(!debug.contains("любая фраза"), "seed попал в Debug");
     assert!(!debug.contains("AbCdEfGh1234"), "ссылка попала в Debug");
     assert!(!format!("{:?}", config.subscriptions[0]).contains("sub.example.com"));
+}
+
+fn url_file_config(path: &Path) -> String {
+    format!(
+        "[[subscription]]\nname = \"основная\"\nurl_file = '{}'\napp = \"happ\"\nplatform = \"windows\"\n",
+        path.display()
+    )
+}
+
+#[test]
+fn url_file_is_read_and_trimmed() {
+    let path = temp_file(
+        "url-file-trim",
+        "  https://sub.example.com/api/sub/FileTok0001 \r\n\n".as_bytes(),
+    );
+    let config = Config::from_toml_str(&url_file_config(&path), &Env::new()).unwrap();
+    assert_eq!(
+        config.subscriptions[0].url.expose(),
+        "https://sub.example.com/api/sub/FileTok0001"
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn url_file_errors_name_the_file_and_mask_the_link() {
+    for (name, content, reason, tail) in [
+        (
+            "url-file-space",
+            "https://sub.example.com/a b/FileSecret0002\n",
+            "пробелы",
+            "…0002",
+        ),
+        (
+            "url-file-http",
+            "http://sub.example.com/x/FileSecret0003",
+            "http небезопасен",
+            "…0003",
+        ),
+    ] {
+        let path = temp_file(name, content.as_bytes());
+        let list = problems(&url_file_config(&path));
+        assert_eq!(list.len(), 1, "{list:?}");
+        assert!(has(&list, "subscription[0].url_file"), "{list:?}");
+        assert!(list[0].contains(&path.display().to_string()), "{list:?}");
+        assert!(list[0].contains(reason), "{list:?}");
+        assert!(list[0].contains(tail), "{list:?}");
+        assert!(
+            !list[0].contains("FileSecret"),
+            "ссылка не замаскирована: {list:?}"
+        );
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[test]
+fn empty_url_file_is_refused() {
+    let path = temp_file("url-file-empty", " \n\t\n".as_bytes());
+    let list = problems(&url_file_config(&path));
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(has(&list, "subscription[0].url_file"), "{list:?}");
+    assert!(list[0].ends_with("пустой"), "{list:?}");
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn missing_url_file_is_refused() {
+    let path = std::env::temp_dir().join("raycat-config-test-missing-url-file");
+    let list = problems(&url_file_config(&path));
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(
+        list[0].starts_with("subscription[0].url_file: не удалось прочитать "),
+        "{list:?}"
+    );
+    assert!(list[0].contains(&path.display().to_string()), "{list:?}");
+}
+
+#[test]
+fn url_file_size_is_limited_to_4_kib() {
+    let link = "https://sub.example.com/api/sub/FileTok0005";
+    let padded = format!("{link}{}", " ".repeat(4096 - link.len()));
+    let path = temp_file("url-file-4kib", padded.as_bytes());
+    let config = Config::from_toml_str(&url_file_config(&path), &Env::new()).unwrap();
+    assert_eq!(config.subscriptions[0].url.expose(), link);
+    std::fs::remove_file(path).unwrap();
+
+    let path = temp_file("url-file-too-big", " ".repeat(4097).as_bytes());
+    let list = problems(&url_file_config(&path));
+    assert!(has(&list, "subscription[0].url_file"), "{list:?}");
+    assert!(list[0].contains("больше 4 КиБ"), "{list:?}");
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn url_and_url_file_are_mutually_exclusive() {
+    let file = format!("{OK_SUB}url_file = \"/run/secrets/raycat_sub\"\n");
+    assert_eq!(
+        problems(&file),
+        ["subscription[0]: укажите url или url_file (только одно)"]
+    );
+}
+
+#[test]
+fn url_or_url_file_is_required() {
+    let list =
+        problems("[[subscription]]\nname = \"a\"\napp = \"happ\"\nplatform = \"windows\"\n");
+    assert_eq!(
+        list,
+        ["subscription[0]: укажите url или url_file (только одно)"]
+    );
+}
+
+#[test]
+fn subscription_file_environment_creates_the_first_subscription() {
+    let path = temp_file("url-file-env", b"https://sub.example.com/api/sub/FileTok0006\n");
+    let vars = env(&[
+        ("RAYCAT_SUBSCRIPTION_FILE", path.to_str().unwrap()),
+        ("RAYCAT_APP", "happ"),
+        ("RAYCAT_PLATFORM", "windows"),
+    ]);
+    let config = Config::from_toml_str("", &vars).unwrap();
+    assert_eq!(config.subscriptions.len(), 1);
+    assert_eq!(config.subscriptions[0].name, "основная");
+    assert_eq!(
+        config.subscriptions[0].url.expose(),
+        "https://sub.example.com/api/sub/FileTok0006"
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn subscription_variables_replace_the_file_link() {
+    let path = temp_file("url-file-override", b"https://sub.example.com/api/sub/FileTok0007\n");
+    let vars = env(&[("RAYCAT_SUBSCRIPTION_FILE", path.to_str().unwrap())]);
+    let config = Config::from_toml_str(OK_SUB, &vars).unwrap();
+    assert_eq!(
+        config.subscriptions[0].url.expose(),
+        "https://sub.example.com/api/sub/FileTok0007"
+    );
+
+    let vars = env(&[("RAYCAT_SUBSCRIPTION", "https://sub.example.com/x/EnvTok0008")]);
+    let config = Config::from_toml_str(&url_file_config(&path), &vars).unwrap();
+    assert_eq!(
+        config.subscriptions[0].url.expose(),
+        "https://sub.example.com/x/EnvTok0008"
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn subscription_file_environment_conflicts_with_subscription() {
+    let vars = env(&[
+        ("RAYCAT_SUBSCRIPTION", "https://sub.example.com/x/abcd"),
+        ("RAYCAT_SUBSCRIPTION_FILE", "/run/secrets/raycat_sub"),
+        ("RAYCAT_APP", "happ"),
+        ("RAYCAT_PLATFORM", "windows"),
+    ]);
+    assert_eq!(
+        problems_with_env("", &vars),
+        ["RAYCAT_SUBSCRIPTION_FILE: нельзя задавать вместе с RAYCAT_SUBSCRIPTION"]
+    );
 }

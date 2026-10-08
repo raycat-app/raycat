@@ -35,6 +35,7 @@ pub(crate) struct RawDevice {
 pub(crate) struct RawSubscription {
     pub(crate) name: Option<String>,
     pub(crate) url: Option<String>,
+    pub(crate) url_file: Option<String>,
     pub(crate) allow_http: Option<bool>,
     pub(crate) app: Option<String>,
     pub(crate) platform: Option<String>,

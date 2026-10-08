@@ -8,6 +8,7 @@ use crate::validate::{
 
 pub(crate) const CONFIG: &str = "RAYCAT_CONFIG";
 const SUBSCRIPTION: &str = "RAYCAT_SUBSCRIPTION";
+const SUBSCRIPTION_FILE: &str = "RAYCAT_SUBSCRIPTION_FILE";
 const APP: &str = "RAYCAT_APP";
 const PLATFORM: &str = "RAYCAT_PLATFORM";
 pub(crate) const SEED: &str = "RAYCAT_SEED";
@@ -25,13 +26,14 @@ pub(crate) fn value<'a>(env: &'a Env, key: &str) -> Option<&'a str> {
     env.get(key).map(String::as_str).filter(|v| !v.is_empty())
 }
 
-/// Переменные окружения перекрывают файл. `RAYCAT_SUBSCRIPTION`, `RAYCAT_APP`
-/// и `RAYCAT_PLATFORM` относятся к первой (основной) подписке; если подписок
+/// Переменные окружения перекрывают файл. `RAYCAT_SUBSCRIPTION`, `RAYCAT_SUBSCRIPTION_FILE`,
+/// `RAYCAT_APP` и `RAYCAT_PLATFORM` относятся к первой (основной) подписке; если подписок
 /// в файле нет, она создаётся.
 pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
     let get = |key: &str| value(env, key);
     for key in [
         SUBSCRIPTION,
+        SUBSCRIPTION_FILE,
         APP,
         PLATFORM,
         SEED,
@@ -45,8 +47,16 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
             raw.from_env.insert(key);
         }
     }
-    let (url, app, platform) = (get(SUBSCRIPTION), get(APP), get(PLATFORM));
-    if url.is_some() || app.is_some() || platform.is_some() {
+    let (url, url_file, app, platform) = (
+        get(SUBSCRIPTION),
+        get(SUBSCRIPTION_FILE),
+        get(APP),
+        get(PLATFORM),
+    );
+    if url.is_some() && url_file.is_some() {
+        p.add(SUBSCRIPTION_FILE, "нельзя задавать вместе с RAYCAT_SUBSCRIPTION");
+    }
+    if url.is_some() || url_file.is_some() || app.is_some() || platform.is_some() {
         if raw.subscription.is_empty() {
             raw.subscription.push(RawSubscription {
                 name: Some(ENV_SUBSCRIPTION_NAME.to_owned()),
@@ -56,6 +66,10 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
         if let Some(first) = raw.subscription.first_mut() {
             if let Some(url) = url {
                 first.url = Some(url.to_owned());
+                first.url_file = None;
+            } else if let Some(path) = url_file {
+                first.url_file = Some(path.to_owned());
+                first.url = None;
             }
             if let Some(app) = app {
                 set_text(&mut first.app, APP, app, parse_app, APP_HINT, p);

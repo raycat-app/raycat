@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::fs::File;
+use std::io::{self, Read};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
@@ -24,6 +26,7 @@ const MAX_PATTERNS: usize = 256;
 const MAX_PATTERN_CHARS: usize = 256;
 const MAX_RESOLVERS: usize = 8;
 const MAX_PATH_BYTES: usize = 4_096;
+const MAX_URL_FILE_BYTES: u64 = 4 << 10;
 
 const UPDATE_INTERVAL_RANGE: RangeInclusive<Duration> =
     Duration::from_secs(10 * 60)..=Duration::from_secs(30 * 86_400);
@@ -252,7 +255,7 @@ fn subscriptions(
     if list.is_empty() {
         p.add(
             "subscription",
-            "нужна хотя бы одна подписка ([[subscription]] в файле или RAYCAT_SUBSCRIPTION)",
+            "нужна хотя бы одна подписка ([[subscription]] в файле или RAYCAT_SUBSCRIPTION, RAYCAT_SUBSCRIPTION_FILE)",
         );
     }
     list.iter()
@@ -269,12 +272,15 @@ fn subscription(
 ) -> Option<Subscription> {
     let at = |key: &str| format!("subscription[{index}].{key}");
     let name = name(&at("name"), raw.name.as_deref(), names, p);
-    let url = url_field(
-        &at("url"),
-        raw.url.as_deref(),
-        raw.allow_http == Some(true),
-        p,
-    );
+    let allow_http = raw.allow_http == Some(true);
+    let url = match (raw.url.as_deref(), raw.url_file.as_deref()) {
+        (Some(url), None) => link_field(&at("url"), url, allow_http, "", p),
+        (None, Some(path)) => url_file(&at("url_file"), path, allow_http, p),
+        _ => {
+            p.add(format!("subscription[{index}]"), "укажите url или url_file (только одно)");
+            None
+        }
+    };
     let app = required(&at("app"), raw.app.as_deref(), parse_app, APP_HINT, p);
     let platform = required(
         &at("platform"),
@@ -339,20 +345,19 @@ fn name(
     Some(value.to_owned())
 }
 
-fn url_field(
+/// `prefix` называет источник ссылки в сообщении: пусто для `url`, путь к файлу для `url_file`.
+fn link_field(
     field: &str,
-    value: Option<&str>,
+    value: &str,
     allow_http: bool,
+    prefix: &str,
     p: &mut Problems,
 ) -> Option<Secret> {
-    let Some(value) = value.map(str::trim) else {
-        p.add(field, "не указано");
-        return None;
-    };
+    let value = value.trim();
     let scheme = match link::check(value) {
         Ok(scheme) => scheme,
         Err(message) => {
-            p.add(field, format!("{message} ({})", link::mask(value)));
+            p.add(field, format!("{prefix}{message} ({})", link::mask(value)));
             return None;
         }
     };
@@ -360,13 +365,43 @@ fn url_field(
         p.add(
             field,
             format!(
-                "http небезопасен: используйте https или добавьте allow_http = true ({})",
+                "{prefix}http небезопасен: используйте https или добавьте allow_http = true ({})",
                 link::mask(value)
             ),
         );
         return None;
     }
     Some(Secret::new(value.to_owned()))
+}
+
+fn url_file(field: &str, path: &str, allow_http: bool, p: &mut Problems) -> Option<Secret> {
+    match read_url_file(path) {
+        Ok(value) => link_field(field, &value, allow_http, &format!("файл {path}: "), p),
+        Err(message) => {
+            p.add(field, message);
+            None
+        }
+    }
+}
+
+/// Файл с ссылкой (например, Docker secret): пробелы и перевод строки по краям не значимы.
+fn read_url_file(path: &str) -> Result<String, String> {
+    let fail = |error: io::Error| format!("не удалось прочитать {path}: {error}");
+    let file = File::open(path).map_err(fail)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_URL_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(fail)?;
+    if !u64::try_from(bytes.len()).is_ok_and(|len| len <= MAX_URL_FILE_BYTES) {
+        return Err(format!("файл {path} больше 4 КиБ"));
+    }
+    let text = String::from_utf8(bytes)
+        .map_err(|_| format!("не удалось прочитать {path}: файл не в кодировке UTF-8"))?;
+    let value = text.trim();
+    if value.is_empty() {
+        return Err(format!("файл {path} пустой"));
+    }
+    Ok(value.to_owned())
 }
 
 fn required<T>(
