@@ -401,13 +401,19 @@ fn proxy_warns_about_gateway_keys() {
 fn gateway_warns_about_listen_and_ignores_its_value() {
     let text = format!("{OK_SUB}\n[mode]\ntype = \"gateway\"\nlisten = \"nope\"\n");
     let config = parse(&text);
-    assert_eq!(config.warnings, ["mode.listen действует только в режиме proxy"]);
+    assert_eq!(
+        config.warnings,
+        ["mode.listen действует только в режиме proxy"]
+    );
     let config = Config::from_toml_str(
         &format!("{OK_SUB}\n[mode]\ntype = \"gateway\"\n"),
         &env(&[("RAYCAT_LISTEN", "nowhere")]),
     )
     .unwrap();
-    assert_eq!(config.warnings, ["RAYCAT_LISTEN действует только в режиме proxy"]);
+    assert_eq!(
+        config.warnings,
+        ["RAYCAT_LISTEN действует только в режиме proxy"]
+    );
 }
 
 #[test]

@@ -30,7 +30,17 @@ pub(crate) fn value<'a>(env: &'a Env, key: &str) -> Option<&'a str> {
 /// в файле нет, она создаётся.
 pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
     let get = |key: &str| value(env, key);
-    for key in [SUBSCRIPTION, APP, PLATFORM, SEED, MODE, LISTEN, KILL_SWITCH, LAN, LOG] {
+    for key in [
+        SUBSCRIPTION,
+        APP,
+        PLATFORM,
+        SEED,
+        MODE,
+        LISTEN,
+        KILL_SWITCH,
+        LAN,
+        LOG,
+    ] {
         if get(key).is_some() {
             raw.from_env.insert(key);
         }
