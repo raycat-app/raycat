@@ -137,7 +137,7 @@ fn split(mut start: u64, end: u64) -> Vec<(u64, u32)> {
         } else {
             1 << start.trailing_zeros()
         };
-        let fit: u64 = 1 << (63 - (end - start).leading_zeros());
+        let fit: u64 = 1 << (end - start).ilog2();
         let size = align.min(fit).min(MAX_BLOCK);
         blocks.push((start, 32 - size.trailing_zeros()));
         start += size;
