@@ -43,5 +43,5 @@ body:
     id: logs
     attributes:
       label: Логи
-      description: Вывод `raycat logs` за время ошибки. Проверьте, что в нём нет ссылки подписки.
+      description: 'Журнал за время ошибки: `journalctl -u raycat --since "10 min ago"` или `docker logs raycat`. Проверьте, что в нём нет ссылки подписки.'
       render: text

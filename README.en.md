@@ -716,7 +716,7 @@ xhttp_connections = 4       # 1 to 16; not set means the provider's setting
   publish the output of `identity` in public places.
 - **Proxy without a password.** The default address `127.0.0.1` is reachable only from this server. If you
   change the address to an external one, anyone who can reach it will be able to exit through your VPN.
-- Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
+- Report vulnerabilities privately: [SECURITY.md](.github/SECURITY.md).
 
 ## Versions and channels
 
@@ -747,8 +747,8 @@ gh attestation verify oci://ghcr.io/raycat-app/raycat:latest --repo raycat-app/r
 
 ## Contributing
 
-Suggestions and fixes are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) (in Russian).
-Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
+Suggestions and fixes are welcome: see [CONTRIBUTING.md](.github/CONTRIBUTING.md) (in Russian).
+Report vulnerabilities privately: [SECURITY.md](.github/SECURITY.md).
 
 ## License
 
