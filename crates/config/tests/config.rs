@@ -1691,7 +1691,9 @@ fn routing_action_values() {
         list[0],
         "routing.rule[0].action: допустимо: direct, proxy или block"
     );
-    let config = parse(&with_rule("domains = [\"example.ru\"]\naction = \" Proxy \"\n"));
+    let config = parse(&with_rule(
+        "domains = [\"example.ru\"]\naction = \" Proxy \"\n",
+    ));
     assert_eq!(config.routing.rules[0].action, Action::Proxy);
 }
 
@@ -1796,7 +1798,10 @@ fn routing_ip_forms() {
         );
     }
     assert!(list[0].contains("биты хоста"), "{list:?}");
-    assert!(list[1].ends_with("длина префикса должна быть от 0 до 32"), "{list:?}");
+    assert!(
+        list[1].ends_with("длина префикса должна быть от 0 до 32"),
+        "{list:?}"
+    );
 }
 
 #[test]

@@ -928,11 +928,20 @@ fn rules(list: &[RawRule], warnings: &mut Vec<String>, p: &mut Problems) -> Vec<
 fn rule(index: usize, raw: &RawRule, warnings: &mut Vec<String>, p: &mut Problems) -> Option<Rule> {
     let at = |key: &str| format!("routing.rule[{index}].{key}");
     if raw.domains.is_empty() && raw.ips.is_empty() {
-        p.add(format!("routing.rule[{index}]"), "нужен хотя бы один ключ: domains или ips");
+        p.add(
+            format!("routing.rule[{index}]"),
+            "нужен хотя бы один ключ: domains или ips",
+        );
     }
     let domains = domains(&at("domains"), &raw.domains, warnings, p);
     let ips = ips(&at("ips"), &raw.ips, warnings, p);
-    let action = required(&at("action"), raw.action.as_deref(), parse_action, ACTION_HINT, p);
+    let action = required(
+        &at("action"),
+        raw.action.as_deref(),
+        parse_action,
+        ACTION_HINT,
+        p,
+    );
     action.map(|action| Rule {
         domains,
         ips,
@@ -1030,10 +1039,16 @@ fn domain_name_problem(name: &str) -> Option<String> {
 
 fn label_problem(label: &str) -> Option<String> {
     if label.is_empty() || label.len() > MAX_LABEL_CHARS {
-        return Some(format!("пустая метка или длиннее {MAX_LABEL_CHARS} символов в «{label}»"));
+        return Some(format!(
+            "пустая метка или длиннее {MAX_LABEL_CHARS} символов в «{label}»"
+        ));
     }
     let edge_dash = label.starts_with('-') || label.ends_with('-');
-    if edge_dash || !label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+    if edge_dash
+        || !label
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
         return Some(format!(
             "в «{label}» допустимы латинские буквы, цифры и «-», без «-» в начале и в конце"
         ));
@@ -1062,7 +1077,10 @@ fn ips(field: &str, values: &[String], warnings: &mut Vec<String>, p: &mut Probl
             if seen.insert(net) {
                 Some(net)
             } else {
-                warnings.push(format!("{at} повторяет «{}» этого же правила", value.trim()));
+                warnings.push(format!(
+                    "{at} повторяет «{}» этого же правила",
+                    value.trim()
+                ));
                 None
             }
         })

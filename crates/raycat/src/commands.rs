@@ -103,7 +103,9 @@ fn routing_line(routing: &Routing, zones: usize, subnets: usize, date: Option<&s
     let mut parts = Vec::new();
     if routing.ru_direct {
         let stamp = date.map_or_else(String::new, |date| format!(", данные от {}", ru_date(date)));
-        parts.push(format!("Россия напрямую (зон {zones}, подсетей {subnets}{stamp})"));
+        parts.push(format!(
+            "Россия напрямую (зон {zones}, подсетей {subnets}{stamp})"
+        ));
     }
     if !routing.rules.is_empty() {
         parts.push(format!("своих правил {}", routing.rules.len()));
@@ -398,9 +400,15 @@ mod tests {
             rules: Vec::new(),
         };
         let stamp = Some("2026-10-07");
-        assert_eq!(routing_line(&routing, 8, 8655, stamp), "Маршрутизация: всё через VPN");
+        assert_eq!(
+            routing_line(&routing, 8, 8655, stamp),
+            "Маршрутизация: всё через VPN"
+        );
         routing.rules = vec![rule(), rule(), rule()];
-        assert_eq!(routing_line(&routing, 8, 8655, stamp), "Маршрутизация: своих правил 3");
+        assert_eq!(
+            routing_line(&routing, 8, 8655, stamp),
+            "Маршрутизация: своих правил 3"
+        );
         routing.ru_direct = true;
         assert_eq!(
             routing_line(&routing, 8, 8655, stamp),
