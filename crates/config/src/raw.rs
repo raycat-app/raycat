@@ -146,6 +146,29 @@ pub(crate) struct RawDns {
 pub(crate) struct RawRouting {
     /// Применять маршрутизацию, которую присылает провайдер. По умолчанию `false`.
     pub(crate) provider: Option<bool>,
+    /// Пресет «Россия напрямую»: российские домены и подсети идут мимо VPN. По умолчанию `false`.
+    pub(crate) ru_direct: Option<bool>,
+    /// Свои правила (`[[routing.rule]]`): проверяются сверху вниз, применяется первое подошедшее. До 256 правил.
+    #[serde(default)]
+    #[cfg_attr(feature = "schema", schemars(extend("maxItems" = 256)))]
+    pub(crate) rule: Vec<RawRule>,
+}
+
+#[derive(Default, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RawRule {
+    /// Домены: `example.ru` — только это имя; `*.example.ru` — сам домен и все его поддомены. Без `http://`, пути и порта; только латинские буквы, цифры и «-» (кириллицу записывайте в punycode, например `xn--p1ai`). До 4096 записей.
+    #[serde(default)]
+    #[cfg_attr(feature = "schema", schemars(extend("maxItems" = 4096)))]
+    pub(crate) domains: Vec<String>,
+    /// IP-адреса и подсети IPv4 или IPv6: `203.0.113.0/24`, `2001:db8::/32`, одиночный адрес `198.51.100.7`. До 4096 записей.
+    #[serde(default)]
+    #[cfg_attr(feature = "schema", schemars(extend("maxItems" = 4096)))]
+    pub(crate) ips: Vec<String>,
+    /// Что делать с трафиком: `direct` — напрямую, мимо VPN; `proxy` — через VPN; `block` — заблокировать. Обязательно. Нужен хотя бы один из ключей `domains` или `ips`.
+    #[cfg_attr(feature = "schema", schemars(extend("enum" = ["direct", "proxy", "block"])))]
+    pub(crate) action: Option<String>,
 }
 
 #[derive(Default, Deserialize)]

@@ -384,15 +384,42 @@ resolvers = ["1.1.1.1", "9.9.9.9"]
 </details>
 
 <details>
-<summary><code>[routing]</code> — provider routing</summary>
+<summary><code>[routing]</code> — routing</summary>
+
+For each connection the order is: your rules from top to bottom, then the `ru_direct` preset, then
+the provider's routing (if enabled), and everything else goes through the VPN. The first matching
+rule applies.
 
 | Key | Default | Allowed | What it does |
 | --- | --- | --- | --- |
-| `provider` | `false` | `true`, `false` | Apply the routing that the provider sends in the subscription response. Off by default |
+| `provider` | `false` | `true`, `false` | Apply the routing that the provider sends in the subscription response |
+| `ru_direct` | `false` | `true`, `false` | The "Russia direct" preset: domains of the Russian zones (`ru`, `su`, `рф` and others) and Russian IPv4 subnets bypass the VPN. The list is built into raycat; the date of the subnet snapshot is shown by `raycat check` |
+| `rule` | `[]` | up to 256 rules, `[[routing.rule]]` tables | Your own rules |
+
+Keys of one `[[routing.rule]]`:
+
+| Key | Default | Allowed | What it does |
+| --- | --- | --- | --- |
+| `domains` | `[]` | up to 4096 entries | Domains. `example.ru` is only that name; `*.example.ru` is the domain itself and all its subdomains. No `http://`, path or port. Latin letters, digits and "-", up to 253 characters; write Cyrillic names in punycode (`рф` is `xn--p1ai`) |
+| `ips` | `[]` | up to 4096 entries | IPv4 or IPv6: a network in CIDR form (`203.0.113.0/24`, `2001:db8::/32`) or a single address (`198.51.100.7`) |
+| `action` | required | `direct`, `proxy`, `block` | `direct` goes straight, bypassing the VPN; `proxy` goes through the VPN; `block` drops the traffic |
+
+A rule needs at least one of `domains` and `ips`. A rule matches if any of its domains or any of
+its addresses matches. Repeating an entry within one rule is not an error: raycat prints a warning
+and counts the entry once.
 
 ```toml
 [routing]
-provider = true
+ru_direct = true
+
+[[routing.rule]]
+domains = ["example.ru", "*.bank.example"]
+ips = ["203.0.113.0/24"]
+action = "direct"
+
+[[routing.rule]]
+domains = ["*.stream.example"]
+action = "proxy"
 ```
 
 </details>
@@ -494,6 +521,37 @@ every server. The provider will see one device instead of several.
 ```toml
 [device]
 seed = "one-word-for-all-servers"
+```
+
+**Russian sites direct.** Banks, government services and marketplaces often refuse connections
+from foreign VPN addresses. The preset sends them around the VPN: the domains of Russian zones and
+Russian IPv4 subnets.
+
+```toml
+[routing]
+ru_direct = true
+```
+
+Things to know:
+
+- Traffic to these sites leaves from the server's real address, and the sites see that address.
+  That is what the preset is for. If the server's address must stay hidden from Russian sites too,
+  do not turn the preset on.
+- A Russian subnet may belong to a service that also serves foreign sites. Those sites will go
+  direct. Exclude them with a rule `action = "proxy"`: it is checked before the preset.
+- The subnets come from RIPE NCC registrations. They show where an address is registered, not
+  where the device is.
+
+**Your own rules.** Block an advertising domain, open a home bank directly:
+
+```toml
+[[routing.rule]]
+domains = ["ads.example.com"]
+action = "block"
+
+[[routing.rule]]
+domains = ["*.home-bank.example"]
+action = "direct"
 ```
 
 ## Installing on a server

@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use raycat_config::{
-    App, Config, DEFAULT_UPDATE_INTERVAL, Env, Error, Lan, LogLevel, Mode, Platform, ProxyAuth,
-    TcpCongestion,
+    Action, App, Config, DEFAULT_UPDATE_INTERVAL, DomainMatch, Env, Error, Lan, LogLevel, Mode,
+    Platform, ProxyAuth, TcpCongestion,
 };
 
 const FULL: &str = r#"
@@ -57,6 +57,16 @@ resolvers = ["9.9.9.9", "2606:4700:4700::1111"]
 
 [routing]
 provider = true
+ru_direct = true
+
+[[routing.rule]]
+domains = ["example.ru", "*.bank.example"]
+ips = ["203.0.113.0/24", "2001:db8::/32"]
+action = "direct"
+
+[[routing.rule]]
+ips = ["198.51.100.7"]
+action = "block"
 
 [xray]
 path = "/opt/xray/xray"
@@ -177,6 +187,10 @@ fn full_example() {
         ]
     );
     assert!(config.routing.provider);
+    assert!(config.routing.ru_direct);
+    assert_eq!(config.routing.rules.len(), 2);
+    assert_eq!(config.routing.rules[0].action, Action::Direct);
+    assert_eq!(config.routing.rules[1].action, Action::Block);
     assert_eq!(config.xray.path, PathBuf::from("/opt/xray/xray"));
     assert_eq!(config.xray.memory_limit, 64 << 20);
     assert_eq!(
@@ -223,6 +237,8 @@ fn defaults() {
         ]
     );
     assert!(!config.routing.provider);
+    assert!(!config.routing.ru_direct);
+    assert!(config.routing.rules.is_empty());
     assert_eq!(config.xray.path, PathBuf::from("/usr/libexec/raycat/xray"));
     assert_eq!(config.xray.memory_limit, 96 << 20);
     assert_eq!(config.xray.tcp_congestion, TcpCongestion::Auto);
@@ -1596,4 +1612,271 @@ fn password_is_hidden_in_debug() {
     ));
     let debug = format!("{config:?}");
     assert!(!debug.contains(PASSWORD), "пароль попал в Debug");
+}
+
+fn with_rule(body: &str) -> String {
+    format!("{OK_SUB}\n[[routing.rule]]\n{body}")
+}
+
+fn rule_array(values: &[String]) -> String {
+    let items: Vec<String> = values.iter().map(|value| format!("\"{value}\"")).collect();
+    items.join(", ")
+}
+
+#[test]
+fn routing_rules_keep_their_order_and_values() {
+    let config = parse(&format!(
+        r#"{OK_SUB}
+[routing]
+ru_direct = true
+
+[[routing.rule]]
+domains = ["Example.RU", "*.bank.example"]
+ips = ["203.0.113.0/24", "2001:db8::/32", "198.51.100.7"]
+action = "DIRECT"
+
+[[routing.rule]]
+domains = ["ads.example.com"]
+action = "block"
+"#
+    ));
+    let routing = &config.routing;
+    assert!(routing.ru_direct);
+    assert!(!routing.provider);
+    assert_eq!(routing.rules.len(), 2);
+
+    let first = &routing.rules[0];
+    assert_eq!(first.action, Action::Direct);
+    assert_eq!(
+        first.domains,
+        [
+            DomainMatch {
+                name: "example.ru".to_owned(),
+                subdomains: false,
+            },
+            DomainMatch {
+                name: "bank.example".to_owned(),
+                subdomains: true,
+            },
+        ]
+    );
+    let ips: Vec<String> = first.ips.iter().map(ToString::to_string).collect();
+    assert_eq!(ips, ["203.0.113.0/24", "2001:db8::/32", "198.51.100.7/32"]);
+
+    let second = &routing.rules[1];
+    assert_eq!(second.action, Action::Block);
+    assert!(second.ips.is_empty());
+    assert_eq!(second.domains.len(), 1);
+    assert_eq!(config.warnings, Vec::<String>::new());
+}
+
+#[test]
+fn routing_rule_needs_an_action_and_a_matcher() {
+    let list = problems(&with_rule("domains = [\"example.ru\"]\n"));
+    assert!(has(&list, "routing.rule[0].action"), "{list:?}");
+
+    let list = problems(&with_rule("action = \"direct\"\n"));
+    assert!(has(&list, "routing.rule[0]"), "{list:?}");
+
+    let list = problems(&with_rule("domains = []\nips = []\naction = \"proxy\"\n"));
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(has(&list, "routing.rule[0]"), "{list:?}");
+}
+
+#[test]
+fn routing_action_values() {
+    let list = problems(&with_rule("domains = [\"example.ru\"]\naction = \"vpn\"\n"));
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert_eq!(
+        list[0],
+        "routing.rule[0].action: допустимо: direct, proxy или block"
+    );
+    let config = parse(&with_rule("domains = [\"example.ru\"]\naction = \" Proxy \"\n"));
+    assert_eq!(config.routing.rules[0].action, Action::Proxy);
+}
+
+#[test]
+fn routing_domain_forms_are_accepted() {
+    let config = parse(&with_rule(
+        "domains = [\"example.ru\", \"*.example.ru\", \"xn--p1ai\", \"a-b.c1.example\", \"  Mixed.Example  \"]\naction = \"direct\"\n",
+    ));
+    let names: Vec<(&str, bool)> = config.routing.rules[0]
+        .domains
+        .iter()
+        .map(|domain| (domain.name.as_str(), domain.subdomains))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("example.ru", false),
+            ("example.ru", true),
+            ("xn--p1ai", false),
+            ("a-b.c1.example", false),
+            ("mixed.example", false),
+        ]
+    );
+    assert_eq!(config.warnings, Vec::<String>::new());
+}
+
+#[test]
+fn routing_domain_errors_name_the_entry() {
+    let mut bad: Vec<String> = [
+        "https://example.ru",
+        "example.ru/path",
+        "example.ru:443",
+        "рф",
+        "-bad.ru",
+        "bad-.ru",
+        "a_b.ru",
+        "*example.ru",
+        "*.*.ru",
+        "example..ru",
+        "example.ru.",
+        "*.",
+        "",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    bad.push(format!("{}.ru", "a".repeat(64)));
+    bad.push(format!("{0}.{0}.{0}.{0}.{0}", "a".repeat(60)));
+    let list = problems(&with_rule(&format!(
+        "domains = [{}]\naction = \"direct\"\n",
+        rule_array(&bad)
+    )));
+    for index in 0..bad.len() {
+        assert!(
+            has(&list, &format!("routing.rule[0].domains[{index}]")),
+            "{index}: {list:?}"
+        );
+    }
+    assert_eq!(list.len(), bad.len(), "{list:?}");
+    assert!(list[3].contains("punycode"), "{list:?}");
+    assert!(list[0].contains("без схемы, пути и порта"), "{list:?}");
+    assert!(list[bad.len() - 1].contains("253"), "{list:?}");
+}
+
+#[test]
+fn routing_ip_forms() {
+    let config = parse(&with_rule(
+        "ips = [\"203.0.113.0/24\", \"2001:db8::/32\", \"198.51.100.7\", \"2001:db8::1\"]\naction = \"proxy\"\n",
+    ));
+    let ips: Vec<String> = config.routing.rules[0]
+        .ips
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(
+        ips,
+        [
+            "203.0.113.0/24",
+            "2001:db8::/32",
+            "198.51.100.7/32",
+            "2001:db8::1/128",
+        ]
+    );
+
+    let bad: Vec<String> = [
+        "203.0.113.7/24",
+        "10.0.0.0/33",
+        "2001:db8::/129",
+        "example.com",
+        "10.0.0.0/",
+        "",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    let list = problems(&with_rule(&format!(
+        "ips = [{}]\naction = \"proxy\"\n",
+        rule_array(&bad)
+    )));
+    for index in 0..bad.len() {
+        assert!(
+            has(&list, &format!("routing.rule[0].ips[{index}]")),
+            "{index}: {list:?}"
+        );
+    }
+    assert!(list[0].contains("биты хоста"), "{list:?}");
+    assert!(list[1].ends_with("длина префикса должна быть от 0 до 32"), "{list:?}");
+}
+
+#[test]
+fn routing_errors_name_the_rule_and_the_entry() {
+    let list = problems(&format!(
+        r#"{OK_SUB}
+[[routing.rule]]
+domains = ["a.ru"]
+action = "direct"
+
+[[routing.rule]]
+ips = ["1.1.1.1"]
+action = "proxy"
+
+[[routing.rule]]
+domains = ["a.ru", "b.ru", "c.ru", "d.ru", "e.ru", "https://f.ru"]
+action = "block"
+"#
+    ));
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(
+        list[0].starts_with("routing.rule[2].domains[5]: "),
+        "{list:?}"
+    );
+}
+
+#[test]
+fn routing_repeated_entries_warn_and_are_kept_once() {
+    let config = parse(&with_rule(
+        "domains = [\"example.ru\", \"EXAMPLE.ru\", \"*.example.ru\"]\nips = [\"203.0.113.0/24\", \"203.0.113.0/24\"]\naction = \"direct\"\n",
+    ));
+    let rule = &config.routing.rules[0];
+    assert_eq!(rule.domains.len(), 2);
+    assert_eq!(rule.ips.len(), 1);
+    assert_eq!(
+        config.warnings,
+        [
+            "routing.rule[0].domains[1] повторяет запись «example.ru» этого же правила",
+            "routing.rule[0].ips[1] повторяет «203.0.113.0/24» этого же правила",
+        ]
+    );
+}
+
+#[test]
+fn routing_rule_count_limit_is_inclusive() {
+    let rule = "[[routing.rule]]\ndomains = [\"example.ru\"]\naction = \"direct\"\n";
+    let config = parse(&format!("{OK_SUB}\n{}", rule.repeat(256)));
+    assert_eq!(config.routing.rules.len(), 256);
+
+    let list = problems(&format!("{OK_SUB}\n{}", rule.repeat(257)));
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert_eq!(list[0], "routing.rule: не больше 256 правил");
+}
+
+#[test]
+fn routing_entry_count_limit_is_inclusive() {
+    let domains: Vec<String> = (0..=4_096).map(|i| format!("h{i}.example.ru")).collect();
+    let text = |values: &[String]| {
+        with_rule(&format!(
+            "domains = [{}]\naction = \"direct\"\n",
+            rule_array(values)
+        ))
+    };
+    let config = parse(&text(&domains[..4_096]));
+    assert_eq!(config.routing.rules[0].domains.len(), 4_096);
+    let list = problems(&text(&domains));
+    assert!(has(&list, "routing.rule[0].domains"), "{list:?}");
+    assert!(list[0].ends_with("не больше 4096 записей"), "{list:?}");
+
+    let ips: Vec<String> = (0..=4_096)
+        .map(|i| format!("10.{}.{}.{}", i / 65_536, i / 256 % 256, i % 256))
+        .collect();
+    let text = |values: &[String]| {
+        with_rule(&format!(
+            "ips = [{}]\naction = \"block\"\n",
+            rule_array(values)
+        ))
+    };
+    let config = parse(&text(&ips[..4_096]));
+    assert_eq!(config.routing.rules[0].ips.len(), 4_096);
+    let list = problems(&text(&ips));
+    assert!(has(&list, "routing.rule[0].ips"), "{list:?}");
 }
