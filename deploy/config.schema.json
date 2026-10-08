@@ -1,0 +1,402 @@
+{
+  "$id": "https://raw.githubusercontent.com/raycat-app/raycat/main/deploy/config.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Настройки raycat",
+  "description": "Файл настроек raycat в формате TOML.",
+  "type": "object",
+  "properties": {
+    "device": {
+      "description": "Что сообщается провайдеру об устройстве.",
+      "$ref": "#/$defs/RawDevice"
+    },
+    "dns": {
+      "description": "DNS-серверы, которыми пользуется raycat.",
+      "$ref": "#/$defs/RawDns"
+    },
+    "log": {
+      "description": "Журнал.",
+      "$ref": "#/$defs/RawLog"
+    },
+    "mode": {
+      "description": "Режим работы: прокси или шлюз.",
+      "$ref": "#/$defs/RawMode"
+    },
+    "routing": {
+      "description": "Маршрутизация, которую присылает провайдер.",
+      "$ref": "#/$defs/RawRouting"
+    },
+    "selection": {
+      "description": "Выбор узла: проверки доступности, переключение, закрепление.",
+      "$ref": "#/$defs/RawSelection"
+    },
+    "subscription": {
+      "description": "Подписки (`[[subscription]]`): первая основная, остальные резервные.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RawSubscription"
+      }
+    },
+    "xray": {
+      "description": "Исполняемый файл и параметры xray.",
+      "$ref": "#/$defs/RawXray"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "RawDevice": {
+      "type": "object",
+      "properties": {
+        "hostname": {
+          "description": "Имя компьютера в заголовках запроса к провайдеру. Не задано: значение выбирает raycat. Непустая строка до 128 символов, без управляющих символов.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "locale": {
+          "description": "Язык системы в заголовках запроса к провайдеру, например `ru`. Не задано: значение выбирает raycat. Непустая строка до 128 символов, без управляющих символов.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "machine_id": {
+          "description": "Идентификатор устройства из 32 шестнадцатеричных символов, если провайдер его уже знает. Не задано: raycat создаёт его сам.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "manufacturer": {
+          "description": "Производитель устройства в заголовках запроса к провайдеру. Не задано: значение выбирает raycat. Непустая строка до 128 символов, без управляющих символов.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "description": "Модель устройства в заголовках запроса к провайдеру. Не задано: значение выбирает raycat. Непустая строка до 128 символов, без управляющих символов.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "os_version": {
+          "description": "Версия операционной системы в заголовках запроса к провайдеру. Не задано: значение выбирает raycat. Непустая строка до 128 символов, без управляющих символов.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seed": {
+          "description": "Слово, по которому провайдер узнаёт устройство на любом сервере. Не задано: raycat создаёт машинный идентификатор сам. Непустая строка до 256 символов; нельзя вместе с `machine_id`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RawDns": {
+      "type": "object",
+      "properties": {
+        "resolvers": {
+          "description": "IP-адреса DNS-серверов: от 1 до 8. По умолчанию `1.1.1.1` и `8.8.8.8`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RawLog": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "description": "Уровень журнала: `error`, `warn`, `info` или `debug`. По умолчанию `info`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "error",
+            "warn",
+            "info",
+            "debug"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RawMode": {
+      "type": "object",
+      "properties": {
+        "auth": {
+          "description": "Вход в прокси: `off` или `логин:пароль`, логин и пароль до 128 символов каждый. Обязателен, если прокси слушает не петлевой адрес, например `0.0.0.0`; `off` снимает это требование. Нельзя вместе с `auth_file`. Это секрет.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "auth_file": {
+          "description": "Путь к файлу (до 1 килобайта) с `off` или `логин:пароль`: то же, что `auth`, но значение читается из файла. Нельзя вместе с `auth`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kill_switch": {
+          "description": "Блокировать трафик, когда VPN недоступен, — только в режиме `gateway`. По умолчанию `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "lan": {
+          "description": "Пропускать через шлюз устройства локальной сети — только в режиме `gateway`. По умолчанию `false`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "lan_interface": {
+          "description": "Интерфейс, с которого приходят пакеты устройств сети, например `br-lan`. Не задано: интерфейс маршрута по умолчанию. Действует только при `lan = true`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lan_subnets": {
+          "description": "Подсети устройств в виде CIDR, например `192.168.1.0/24`: от 1 до 32, только `IPv4`. Не задано: подсети интерфейса. Действует только при `lan = true`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "listen": {
+          "description": "Адрес прокси в режиме `proxy`, например `127.0.0.1:7890`. По умолчанию `127.0.0.1:7890`; порт `0` недопустим.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "Режим работы: `proxy` — прокси для программ на сервере, `gateway` — шлюз, через который идёт весь трафик сервера. По умолчанию `proxy`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "proxy",
+            "gateway"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RawRouting": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "description": "Применять маршрутизацию, которую присылает провайдер. По умолчанию `false`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RawSelection": {
+      "type": "object",
+      "properties": {
+        "check_interval": {
+          "description": "Как часто проверять узлы, например `30s`: от `5s` до `10m`. По умолчанию `30s`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "check_url": {
+          "description": "Адрес для проверки доступности узлов: `https://` или `http://`. По умолчанию `https://www.gstatic.com/generate_204`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failures": {
+          "description": "Сколько проверок подряд без ответа делают узел недоступным: целое от 1 до 20. По умолчанию 3.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "maximum": 20,
+          "minimum": 1
+        },
+        "pin": {
+          "description": "Закреплённый узел в виде `имя подписки/имя узла`, например `основная/NL-1`. Подписка должна быть в настройках.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "return_delay": {
+          "description": "Сколько приоритетный узел должен непрерывно работать, прежде чем на него вернуться, например `5m`: от `0ms` до `24h`. По умолчанию `5m`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "switch_gain": {
+          "description": "На сколько узел того же приоритета должен быть быстрее текущего, чтобы переключиться, например `150ms`: от `0ms` до `60s`. По умолчанию `150ms`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RawSubscription": {
+      "type": "object",
+      "properties": {
+        "allow": {
+          "description": "Белый список масок имён узлов: `*` — любое число символов, `?` — один символ, регистр не важен. Пусто — все узлы. До 256 масок.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "allow_http": {
+          "description": "Разрешает `http://` для этой подписки. По умолчанию `false`: по http ссылка и ответ передаются открыто.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "app": {
+          "description": "Приложение, которое имитирует raycat: `happ` или `incy`. Обязательно.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "happ",
+            "incy"
+          ]
+        },
+        "deny": {
+          "description": "Чёрный список масок: узлы, подходящие под маску, не используются. До 256 масок.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "description": "Имя подписки для команд и `selection.pin`: от 1 до 64 символов, без `/` и управляющих символов. Имена не повторяются. Обязательно.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform": {
+          "description": "Платформа, которую имитирует raycat: `windows` или `android`. Для `incy` допустим только `android`. Обязательно.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "windows",
+            "android"
+          ]
+        },
+        "priority": {
+          "description": "Предпочтительные маски узлов по порядку: чем раньше маска, тем выше приоритет. До 256 масок.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "seed": {
+          "description": "Собственное устройство для этой подписки вместо `device.seed`. Непустая строка до 256 символов.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "update_interval": {
+          "description": "Как часто обновлять подписку, например `12h`: от `10m` до `30d`. Не задано: интервал из ответа провайдера, а если его нет, `12h`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "Ссылка подписки: `https://…` (`http://` только с `allow_http = true`), до 2048 символов, без логина и пароля. Обязательна, если не задан `url_file`. Это секрет.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url_file": {
+          "description": "Путь к файлу с одной ссылкой (до 4 килобайт), например Docker secret. Вместе с `url` не задаётся.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RawXray": {
+      "type": "object",
+      "properties": {
+        "memory_limit": {
+          "description": "Лимит памяти процесса xray, например `96MiB`: от `16MiB` до `16GiB`. По умолчанию `96MiB`. Единицы: `B`, `KiB`, `MiB`, `GiB`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Путь к исполняемому файлу xray. По умолчанию `/usr/libexec/raycat/xray`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tcp_congestion": {
+          "description": "Алгоритм управления перегрузкой TCP: `auto` (BBR, если хост это позволяет), `off` или имя алгоритма ядра, например `bbr` или `cubic`. До 15 символов: латиница, цифры, «-» и «_». По умолчанию `auto`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Za-z0-9_-]{1,15}$"
+        },
+        "xhttp_connections": {
+          "description": "Число параллельных соединений XHTTP: целое от 1 до 16. Не задано: как у провайдера.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64",
+          "maximum": 16,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

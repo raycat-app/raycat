@@ -17,3 +17,9 @@ pub use model::{
     ProxyAuth, Routing, Secret, Selection, Subscription, TcpCongestion, Xray,
 };
 pub use pattern::Pattern;
+
+#[cfg(feature = "schema")]
+#[doc(hidden)]
+pub fn settings_schema() -> schemars::Schema {
+    schemars::schema_for!(raw::Raw)
+}

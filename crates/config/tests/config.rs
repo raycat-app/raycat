@@ -919,7 +919,7 @@ fn environment_without_a_file() {
     ] {
         assert_eq!(config.subscriptions.len(), 1);
         let sub = &config.subscriptions[0];
-        assert_eq!(sub.name, "основная");
+        assert_eq!(sub.name, "main");
         assert_eq!(sub.url.expose(), "https://sub.example.com/api/sub/ZzZz0001");
         assert_eq!((sub.app, sub.platform), (App::Happ, Platform::Android));
         assert_eq!(config.device.seed.as_ref().unwrap().expose(), "docker seed");
@@ -1306,7 +1306,7 @@ fn subscription_file_environment_creates_the_first_subscription() {
     ]);
     let config = Config::from_toml_str("", &vars).unwrap();
     assert_eq!(config.subscriptions.len(), 1);
-    assert_eq!(config.subscriptions[0].name, "основная");
+    assert_eq!(config.subscriptions[0].name, "main");
     assert_eq!(
         config.subscriptions[0].url.expose(),
         "https://sub.example.com/api/sub/FileTok0006"

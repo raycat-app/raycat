@@ -80,6 +80,39 @@ jobs:
           path: Cargo.lock
           retention-days: 7
 
+  schema:
+    name: Схема настроек
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: dev
+          save-if: false
+          add-rust-environment-hash-key: false
+      - id: check
+        run: |
+          cargo run --locked -p raycat-config --features schema --bin config-schema > "$RUNNER_TEMP/config.schema.json"
+          diff -u deploy/config.schema.json "$RUNNER_TEMP/config.schema.json"
+      - name: В релизный бинарник schemars не входит
+        run: |
+          cargo tree --locked -p raycat --edges normal > "$RUNNER_TEMP/tree.txt"
+          if grep -q schemars "$RUNNER_TEMP/tree.txt"; then
+            echo "::error::schemars попал в граф зависимостей крейта raycat"
+            exit 1
+          fi
+      - if: ${{ failure() && steps.check.outcome == 'failure' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: config.schema.json
+          path: ${{ runner.temp }}/config.schema.json
+          retention-days: 7
+
   # Единственная задача, которая пишет кэш dev: остальные задачи с профилем dev его только читают.
   test:
     name: Тесты
@@ -771,6 +804,7 @@ jobs:
     needs:
       - lint
       - lockfile
+      - schema
       - test
       - msrv
       - deny
