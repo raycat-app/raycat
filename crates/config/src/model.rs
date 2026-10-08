@@ -171,10 +171,37 @@ pub struct Dns {
     pub resolvers: Vec<IpAddr>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Routing {
     /// Применять маршрутизацию, которую присылает провайдер.
     pub provider: bool,
+    /// Пресет «Россия напрямую»: доменные зоны и подсети РФ идут мимо VPN.
+    pub ru_direct: bool,
+    /// Свои правила по порядку: применяется первое подошедшее.
+    pub rules: Vec<Rule>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rule {
+    pub domains: Vec<DomainMatch>,
+    pub ips: Vec<Cidr>,
+    pub action: Action,
+}
+
+/// Домен из правила: `example.ru` совпадает только с этим именем, `*.example.ru` — с ним и
+/// со всеми поддоменами.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DomainMatch {
+    /// Нижний регистр, ASCII, без `*.`.
+    pub name: String,
+    pub subdomains: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    Direct,
+    Proxy,
+    Block,
 }
 
 /// Алгоритм управления перегрузкой TCP для исходящих соединений к узлам.

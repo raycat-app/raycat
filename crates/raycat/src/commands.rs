@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{self, Write as _};
 
 use anyhow::{Context, Result, anyhow, bail};
-use raycat_config::{Config, Subscription};
+use raycat_config::{Config, Routing, Subscription};
 use raycat_http::{Response, Url, redact};
 use raycat_subscription::{ProviderInfo, analyze, redact as redact_text, redact_in};
 use raycat_xray::Node;
@@ -45,6 +45,15 @@ pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
     if let Some(lan) = rules.as_ref().and_then(|rules| rules.lan.as_ref()) {
         say!("{}", plan::describe_lan(lan));
     }
+    say!(
+        "{}",
+        routing_line(
+            &config.routing,
+            raycat_routing::ru_zones().len(),
+            raycat_routing::ru_ipv4().count(),
+            raycat_routing::data_date(),
+        )
+    );
     let mut cached: Vec<Vec<Node>> = Vec::new();
     for subscription in &config.subscriptions {
         let source = Source::new(config, subscription, &machine_id)?;
@@ -87,6 +96,33 @@ pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
     tested?;
     say!("xray run -test: конфиг принят");
     Ok(())
+}
+
+/// Итог маршрутизации: пресет «Россия напрямую» и число своих правил.
+fn routing_line(routing: &Routing, zones: usize, subnets: usize, date: Option<&str>) -> String {
+    let mut parts = Vec::new();
+    if routing.ru_direct {
+        let stamp = date.map_or_else(String::new, |date| format!(", данные от {}", ru_date(date)));
+        parts.push(format!(
+            "Россия напрямую (зон {zones}, подсетей {subnets}{stamp})"
+        ));
+    }
+    if !routing.rules.is_empty() {
+        parts.push(format!("своих правил {}", routing.rules.len()));
+    }
+    if parts.is_empty() {
+        "Маршрутизация: всё через VPN".to_owned()
+    } else {
+        format!("Маршрутизация: {}", parts.join("; "))
+    }
+}
+
+/// `2026-10-07` → `07.10.2026`.
+fn ru_date(iso: &str) -> String {
+    match iso.split('-').collect::<Vec<_>>().as_slice() {
+        [year, month, day] => format!("{day}.{month}.{year}"),
+        _ => iso.to_owned(),
+    }
 }
 
 /// `raycat fetch`: разовый запрос без применения и без записи в кэш.
@@ -284,6 +320,8 @@ pub(crate) fn identity(config: &Config, store: &Store) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use raycat_config::{Action, Rule};
+
     use super::*;
 
     const HWID: &str = "a1b2c3d4e5f6a7b8";
@@ -344,5 +382,48 @@ mod tests {
     fn empty_hwid_hides_no_value() {
         let headers = [("Accept".to_owned(), "text/html".to_owned())];
         assert_eq!(shown_headers(&headers, "")[0].1, "text/html");
+    }
+
+    fn rule() -> Rule {
+        Rule {
+            domains: Vec::new(),
+            ips: Vec::new(),
+            action: Action::Direct,
+        }
+    }
+
+    #[test]
+    fn routing_line_says_what_leaves_the_vpn() {
+        let mut routing = Routing {
+            provider: false,
+            ru_direct: false,
+            rules: Vec::new(),
+        };
+        let stamp = Some("2026-10-07");
+        assert_eq!(
+            routing_line(&routing, 8, 8655, stamp),
+            "Маршрутизация: всё через VPN"
+        );
+        routing.rules = vec![rule(), rule(), rule()];
+        assert_eq!(
+            routing_line(&routing, 8, 8655, stamp),
+            "Маршрутизация: своих правил 3"
+        );
+        routing.ru_direct = true;
+        assert_eq!(
+            routing_line(&routing, 8, 8655, stamp),
+            "Маршрутизация: Россия напрямую (зон 8, подсетей 8655, данные от 07.10.2026); своих правил 3"
+        );
+        routing.rules.clear();
+        assert_eq!(
+            routing_line(&routing, 8, 8655, None),
+            "Маршрутизация: Россия напрямую (зон 8, подсетей 8655)"
+        );
+    }
+
+    #[test]
+    fn snapshot_date_is_written_day_first() {
+        assert_eq!(ru_date("2026-10-07"), "07.10.2026");
+        assert_eq!(ru_date("2026-10"), "2026-10");
     }
 }

@@ -211,6 +211,57 @@
             "boolean",
             "null"
           ]
+        },
+        "ru_direct": {
+          "description": "Пресет «Россия напрямую»: российские домены и подсети идут мимо VPN. По умолчанию `false`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "rule": {
+          "description": "Свои правила (`[[routing.rule]]`): проверяются сверху вниз, применяется первое подошедшее. До 256 правил.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RawRule"
+          },
+          "maxItems": 256
+        }
+      },
+      "additionalProperties": false
+    },
+    "RawRule": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "Что делать с трафиком: `direct` — напрямую, мимо VPN; `proxy` — через VPN; `block` — заблокировать. Обязательно. Нужен хотя бы один из ключей `domains` или `ips`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "direct",
+            "proxy",
+            "block"
+          ]
+        },
+        "domains": {
+          "description": "Домены: `example.ru` — только это имя; `*.example.ru` — сам домен и все его поддомены. Без `http://`, пути и порта; только латинские буквы, цифры и «-» (кириллицу записывайте в punycode, например `xn--p1ai`). До 4096 записей.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 4096
+        },
+        "ips": {
+          "description": "IP-адреса и подсети IPv4 или IPv6: `203.0.113.0/24`, `2001:db8::/32`, одиночный адрес `198.51.100.7`. До 4096 записей.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 4096
         }
       },
       "additionalProperties": false

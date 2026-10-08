@@ -12,11 +12,13 @@ use crate::envvars;
 use crate::error::{Error, Problems};
 use crate::link::{self, Scheme};
 use crate::model::{
-    App, Config, Device, Dns, Lan, LogLevel, Logging, Mode, Pin, Platform, ProxyAuth, Routing,
-    Secret, Selection, Subscription, TcpCongestion, Xray,
+    Action, App, Config, Device, Dns, DomainMatch, Lan, LogLevel, Logging, Mode, Pin, Platform,
+    ProxyAuth, Routing, Rule, Secret, Selection, Subscription, TcpCongestion, Xray,
 };
 use crate::pattern::Pattern;
-use crate::raw::{Raw, RawDevice, RawDns, RawLog, RawSelection, RawSubscription, RawXray};
+use crate::raw::{
+    Raw, RawDevice, RawDns, RawLog, RawRouting, RawRule, RawSelection, RawSubscription, RawXray,
+};
 use crate::units::{format_duration, format_size, parse_duration, parse_size};
 
 const MAX_NAME_CHARS: usize = 64;
@@ -30,6 +32,10 @@ const MAX_URL_FILE_BYTES: u64 = 4 << 10;
 const MAX_AUTH_FILE_BYTES: u64 = 1 << 10;
 const MAX_CREDENTIAL_CHARS: usize = 128;
 const MIN_PASSWORD_CHARS: usize = 8;
+const MAX_RULES: usize = 256;
+const MAX_RULE_ENTRIES: usize = 4_096;
+const MAX_DOMAIN_CHARS: usize = 253;
+const MAX_LABEL_CHARS: usize = 63;
 
 const UPDATE_INTERVAL_RANGE: RangeInclusive<Duration> =
     Duration::from_secs(10 * 60)..=Duration::from_secs(30 * 86_400);
@@ -63,6 +69,8 @@ const AUTH_HINT: &str = "ожидается «логин:пароль» или o
 const CONGESTION_HINT: &str = "допустимо: auto, off или имя алгоритма ядра (bbr, cubic): латиница, цифры, «-» и «_», до 15 символов";
 const IP_HINT: &str = "ожидается IP-адрес, например 1.1.1.1";
 const DURATION_HINT: &str = "ожидается длительность вроде 500ms, 30s, 5m, 6h или 1d";
+const ACTION_HINT: &str = "допустимо: direct, proxy или block";
+const DOMAIN_HINT: &str = "ожидается имя вида example.ru или *.example.ru";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModeKind {
@@ -147,11 +155,9 @@ pub(crate) fn build(raw: &Raw, mut problems: Problems) -> Result<Config, Error> 
     let mode = mode(raw, p);
     let lan = lan(raw, &mode, p);
     let proxy_auth = proxy_auth(raw, &mode, p);
-    let warnings = warnings(raw, &mode);
+    let mut warnings = warnings(raw, &mode);
     let dns = dns(&raw.dns, p);
-    let routing = Routing {
-        provider: raw.routing.provider.unwrap_or(false),
-    };
+    let routing = routing(&raw.routing, &mut warnings, p);
     let xray = xray(&raw.xray, p);
     let log = log(&raw.log, p);
     if problems.is_empty() {
@@ -897,4 +903,186 @@ fn log(raw: &RawLog, p: &mut Problems) -> Logging {
         }
     };
     Logging { level }
+}
+
+/// Повторы записей внутри одного правила дают предупреждение и не попадают в модель.
+fn routing(raw: &RawRouting, warnings: &mut Vec<String>, p: &mut Problems) -> Routing {
+    Routing {
+        provider: raw.provider.unwrap_or(false),
+        ru_direct: raw.ru_direct.unwrap_or(false),
+        rules: rules(&raw.rule, warnings, p),
+    }
+}
+
+fn rules(list: &[RawRule], warnings: &mut Vec<String>, p: &mut Problems) -> Vec<Rule> {
+    if list.len() > MAX_RULES {
+        p.add("routing.rule", format!("не больше {MAX_RULES} правил"));
+        return Vec::new();
+    }
+    list.iter()
+        .enumerate()
+        .filter_map(|(index, raw)| rule(index, raw, warnings, p))
+        .collect()
+}
+
+fn rule(index: usize, raw: &RawRule, warnings: &mut Vec<String>, p: &mut Problems) -> Option<Rule> {
+    let at = |key: &str| format!("routing.rule[{index}].{key}");
+    if raw.domains.is_empty() && raw.ips.is_empty() {
+        p.add(
+            format!("routing.rule[{index}]"),
+            "нужен хотя бы один ключ: domains или ips",
+        );
+    }
+    let domains = domains(&at("domains"), &raw.domains, warnings, p);
+    let ips = ips(&at("ips"), &raw.ips, warnings, p);
+    let action = required(
+        &at("action"),
+        raw.action.as_deref(),
+        parse_action,
+        ACTION_HINT,
+        p,
+    );
+    action.map(|action| Rule {
+        domains,
+        ips,
+        action,
+    })
+}
+
+fn parse_action(value: &str) -> Option<Action> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "direct" => Some(Action::Direct),
+        "proxy" => Some(Action::Proxy),
+        "block" => Some(Action::Block),
+        _ => None,
+    }
+}
+
+fn domains(
+    field: &str,
+    values: &[String],
+    warnings: &mut Vec<String>,
+    p: &mut Problems,
+) -> Vec<DomainMatch> {
+    if values.len() > MAX_RULE_ENTRIES {
+        p.add(field, format!("не больше {MAX_RULE_ENTRIES} записей"));
+        return Vec::new();
+    }
+    let mut seen = HashSet::new();
+    values
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| {
+            let at = format!("{field}[{index}]");
+            let domain = domain(&at, value, p)?;
+            if seen.insert(domain.clone()) {
+                Some(domain)
+            } else {
+                warnings.push(format!(
+                    "{at} повторяет запись «{}» этого же правила",
+                    domain_text(&domain)
+                ));
+                None
+            }
+        })
+        .collect()
+}
+
+fn domain(field: &str, value: &str, p: &mut Problems) -> Option<DomainMatch> {
+    let text = value.trim().to_ascii_lowercase();
+    if text.is_empty() {
+        p.add(field, "не может быть пустым");
+        return None;
+    }
+    let (name, subdomains) = match text.strip_prefix("*.") {
+        Some(name) => (name, true),
+        None => (text.as_str(), false),
+    };
+    if let Some(problem) = domain_name_problem(name) {
+        p.add(field, problem);
+        return None;
+    }
+    Some(DomainMatch {
+        name: name.to_owned(),
+        subdomains,
+    })
+}
+
+fn domain_text(domain: &DomainMatch) -> String {
+    if domain.subdomains {
+        format!("*.{}", domain.name)
+    } else {
+        domain.name.clone()
+    }
+}
+
+fn domain_name_problem(name: &str) -> Option<String> {
+    if name.is_empty() {
+        return Some(DOMAIN_HINT.to_owned());
+    }
+    if name.len() > MAX_DOMAIN_CHARS {
+        return Some(format!("длиннее {MAX_DOMAIN_CHARS} символов"));
+    }
+    if !name.is_ascii() {
+        return Some(format!(
+            "{DOMAIN_HINT}: кириллица не поддерживается, запишите имя в punycode, например xn--p1ai вместо рф"
+        ));
+    }
+    if name
+        .bytes()
+        .any(|b| b.is_ascii_whitespace() || matches!(b, b':' | b'/' | b'?' | b'#' | b'@'))
+    {
+        return Some(format!("{DOMAIN_HINT} без схемы, пути и порта"));
+    }
+    name.split('.').find_map(label_problem)
+}
+
+fn label_problem(label: &str) -> Option<String> {
+    if label.is_empty() || label.len() > MAX_LABEL_CHARS {
+        return Some(format!(
+            "пустая метка или длиннее {MAX_LABEL_CHARS} символов в «{label}»"
+        ));
+    }
+    let edge_dash = label.starts_with('-') || label.ends_with('-');
+    if edge_dash
+        || !label
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        return Some(format!(
+            "в «{label}» допустимы латинские буквы, цифры и «-», без «-» в начале и в конце"
+        ));
+    }
+    None
+}
+
+fn ips(field: &str, values: &[String], warnings: &mut Vec<String>, p: &mut Problems) -> Vec<Cidr> {
+    if values.len() > MAX_RULE_ENTRIES {
+        p.add(field, format!("не больше {MAX_RULE_ENTRIES} записей"));
+        return Vec::new();
+    }
+    let mut seen = HashSet::new();
+    values
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| {
+            let at = format!("{field}[{index}]");
+            let net = match value.trim().parse::<Cidr>() {
+                Ok(net) => net,
+                Err(error) => {
+                    p.add(at, error.to_string());
+                    return None;
+                }
+            };
+            if seen.insert(net) {
+                Some(net)
+            } else {
+                warnings.push(format!(
+                    "{at} повторяет «{}» этого же правила",
+                    value.trim()
+                ));
+                None
+            }
+        })
+        .collect()
 }

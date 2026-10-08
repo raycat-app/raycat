@@ -1460,6 +1460,7 @@ dependencies = [
  "raycat-http",
  "raycat-netfilter",
  "raycat-proto",
+ "raycat-routing",
  "raycat-select",
  "raycat-subscription",
  "raycat-xray",
