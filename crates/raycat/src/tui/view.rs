@@ -4,7 +4,7 @@
 
 use jiff::tz::TimeZone;
 use ratatui::Frame;
-use raycat_proto::{Node, NodeStatus, SubscriptionStatus, XrayStatus};
+use raycat_proto::{Node, SubscriptionStatus, XrayStatus};
 
 use super::app::{App, InputMode, Link};
 use super::canvas::{Canvas, GAP, Palette, Seg, fit, highlight, wrap};
@@ -22,8 +22,6 @@ const FRAME: usize = 2;
 const NODES_MIN: usize = 5;
 const BANNER_LINES: usize = 3;
 const BANNER_HINT_LINES: usize = 2;
-const LATENCY_FAST_MS: u64 = 150;
-const LATENCY_SLOW_MS: u64 = 400;
 const STATUS_WIDTH: usize = 13;
 
 const HELP: [(&str, &str); 12] = [
@@ -247,7 +245,7 @@ fn header_node(canvas: &mut Canvas<'_>, app: &App, y: usize) {
         Seg::new(format!("▶ {}", node.id), Tone::Bold, 0),
         Seg::new(
             render::latency_text(node.latency_ms),
-            latency_tone(node.latency_ms),
+            delay_tone(node.latency_ms),
             0,
         ),
         Seg::new(choice, Tone::Dim, 0),
@@ -258,20 +256,12 @@ fn header_node(canvas: &mut Canvas<'_>, app: &App, y: usize) {
     canvas.line(y, 0, segs);
 }
 
-fn latency_tone(latency: Option<u64>) -> Tone {
-    match latency {
-        None => Tone::Dim,
-        Some(ms) if ms < LATENCY_FAST_MS => Tone::Green,
-        Some(ms) if ms < LATENCY_SLOW_MS => Tone::Yellow,
-        Some(_) => Tone::Red,
-    }
-}
-
-fn status_cell(status: NodeStatus) -> (&'static str, Tone) {
-    match status {
-        NodeStatus::Alive => ("● жив", Tone::Green),
-        NodeStatus::Dead => ("✗ не отвечает", Tone::Red),
-        NodeStatus::Unknown => ("○ не проверен", Tone::Dim),
+/// Без данных задержка тусклая, иначе цвет по порогам из `render`.
+fn delay_tone(latency: Option<u64>) -> Tone {
+    if latency.is_none() {
+        Tone::Dim
+    } else {
+        render::latency_tone(latency)
     }
 }
 
@@ -408,7 +398,7 @@ fn specs(nodes: &[&Node]) -> Vec<Spec> {
         spec(Kind::Status, "Статус", STATUS_WIDTH, STATUS_WIDTH, false),
         spec(Kind::Latency, "Задержка", 8, 8, true),
         spec(Kind::Sub, "Подписка", 8, sub.clamp(8, 20), false),
-        spec(Kind::Failures, "Провалы", 7, 7, true),
+        spec(Kind::Failures, "Сбои", 7, 7, true),
         spec(Kind::Error, "Ошибка", error.min(12), error, false),
         spec(Kind::Traffic, "Трафик", traffic, traffic, false),
     ]
@@ -468,12 +458,12 @@ fn cell(kind: Kind, node: &Node) -> (String, Tone) {
             (node.name.clone(), tone)
         }
         Kind::Status => {
-            let (text, tone) = status_cell(node.status);
+            let (text, tone) = render::node_status_mark(node.status);
             (text.to_owned(), tone)
         }
         Kind::Latency => (
             render::latency_text(node.latency_ms),
-            latency_tone(node.latency_ms),
+            delay_tone(node.latency_ms),
         ),
         Kind::Failures => {
             let tone = if node.failures > 0 {
@@ -700,7 +690,7 @@ mod tests {
     use ratatui::buffer::{Buffer, Cell};
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::style::{Color, Modifier};
-    use raycat_proto::{CurrentNode, Event, Mode, Nodes, Status};
+    use raycat_proto::{CurrentNode, Event, Mode, NodeStatus, Nodes, Status};
 
     use super::super::app::{Msg, Snapshot};
     use super::*;
@@ -849,7 +839,7 @@ mod tests {
             format!("╰{}╯", d(78)),
             format!("╭─ Узлы · всего 3 {}╮", d(61)),
             format!(
-                "│    Подписка  Узел  Статус{}Задержка  Провалы  Ошибка{}│",
+                "│    Подписка  Узел  Статус{}Задержка     Сбои  Ошибка{}│",
                 s(9),
                 s(18)
             ),
@@ -994,7 +984,7 @@ mod tests {
         }
         let header = lines.iter().find(|line| line.contains("Статус")).unwrap();
         assert!(!header.contains("Подписка"), "{header:?}");
-        assert!(!header.contains("Провалы"), "{header:?}");
+        assert!(!header.contains("Сбои"), "{header:?}");
         assert!(header.contains("Задержка"), "{header:?}");
         let long = lines.iter().find(|line| line.contains("Германия")).unwrap();
         assert!(long.starts_with("│ ★  Германия, Ф…"), "{long:?}");
@@ -1309,20 +1299,26 @@ mod tests {
 
     #[test]
     fn latency_is_colored_by_its_thresholds() {
-        assert_eq!(latency_tone(Some(31)), Tone::Green);
-        assert_eq!(latency_tone(Some(149)), Tone::Green);
-        assert_eq!(latency_tone(Some(150)), Tone::Yellow);
-        assert_eq!(latency_tone(Some(399)), Tone::Yellow);
-        assert_eq!(latency_tone(Some(400)), Tone::Red);
-        assert_eq!(latency_tone(None), Tone::Dim);
+        assert_eq!(delay_tone(Some(31)), Tone::Green);
+        assert_eq!(delay_tone(Some(149)), Tone::Green);
+        assert_eq!(delay_tone(Some(150)), Tone::Yellow);
+        assert_eq!(delay_tone(Some(399)), Tone::Yellow);
+        assert_eq!(delay_tone(Some(400)), Tone::Red);
+        assert_eq!(delay_tone(None), Tone::Dim);
     }
 
     #[test]
     fn node_status_has_a_mark_and_a_color() {
-        assert_eq!(status_cell(NodeStatus::Alive), ("● жив", Tone::Green));
-        assert_eq!(status_cell(NodeStatus::Dead), ("✗ не отвечает", Tone::Red));
         assert_eq!(
-            status_cell(NodeStatus::Unknown),
+            render::node_status_mark(NodeStatus::Alive),
+            ("● жив", Tone::Green)
+        );
+        assert_eq!(
+            render::node_status_mark(NodeStatus::Dead),
+            ("✗ не отвечает", Tone::Red)
+        );
+        assert_eq!(
+            render::node_status_mark(NodeStatus::Unknown),
             ("○ не проверен", Tone::Dim)
         );
     }
