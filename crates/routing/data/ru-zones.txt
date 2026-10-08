@@ -1,0 +1,13 @@
+# Доменные зоны РФ и русскоязычного сегмента, которые администрирует российская сторона.
+# Источник: база корневой зоны IANA, https://www.iana.org/domains/root/db (проверка 2026-10-08).
+# Кириллические зоны записаны в punycode.
+# Не включены: xn--80asehdb (онлайн) и xn--80aswg (сайт) — CORE Association, Швейцария;
+# xn--c1avg (орг) — Public Interest Registry, США.
+moscow
+ru
+su
+tatar
+xn--80adxhks
+xn--d1acj3b
+xn--p1acf
+xn--p1ai

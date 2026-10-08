@@ -19,6 +19,9 @@
 - name: сеть
   color: 1d76db
   description: Шлюз, перехват трафика, kill switch, DNS
+- name: маршрутизация
+  color: 0e8a16
+  description: Раздельная маршрутизация, пресет «Россия напрямую», подсети и зоны РФ
 - name: ci
   color: ededed
   description: GitHub Actions, сборка, релизы

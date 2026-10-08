@@ -43,6 +43,7 @@ raycat-emulation = { path = "crates/emulation" }
 raycat-http = { path = "crates/http" }
 raycat-netfilter = { path = "crates/netfilter" }
 raycat-proto = { path = "crates/proto" }
+raycat-routing = { path = "crates/routing" }
 raycat-select = { path = "crates/select" }
 raycat-subscription = { path = "crates/subscription" }
 raycat-xray = { path = "crates/xray" }

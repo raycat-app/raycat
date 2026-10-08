@@ -1,0 +1,4 @@
+# Российские IPv4-подсети: код страны RU в статистике RIPE NCC (allocated и assigned), агрегированные.
+# Источник: https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest
+# Подсетей: 0
+# Файл создаёт инструмент update-ru-ipv4, вручную не править.
