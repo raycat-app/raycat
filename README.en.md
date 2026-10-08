@@ -102,25 +102,19 @@ Stronger isolation of the gateway and other options are described in the
 
 ### Whole server (systemd)
 
-The installer creates `/etc/raycat/config.toml` with an example. Put your subscription link and
-the gateway mode into it, then start the service:
-
-```toml
-# /etc/raycat/config.toml
-[[subscription]]
-name = "main"
-url = "https://…"
-app = "happ"
-platform = "windows"
-
-[mode]
-type = "gateway"
-```
+The installer creates `/etc/raycat/config.toml` with an example. The setup wizard replaces it
+with your settings and then the service is started:
 
 ```sh
+sudo raycat init --force
 sudo systemctl start raycat
 sudo raycat status
 ```
+
+`raycat init` asks for the subscription link (it is not shown on the screen), the app, the
+platform and the mode: a proxy or a gateway for the whole server. The old file is kept as
+`config.toml.bak`. Without a terminal, for example in a script, pass the values as flags:
+`sudo raycat init --subscription https://… --mode gateway` (help: `raycat init --help`).
 
 ### Proxy for apps
 
@@ -216,6 +210,7 @@ running service through a socket and do not read the settings file. Help: `rayca
 
 | Command | What it does |
 | --- | --- |
+| `raycat init [--force]` | Setup wizard: asks for the subscription link, the app, the platform and the mode, and writes `/etc/raycat/config.toml` (or `--config`). Without a terminal, use the flags, see `raycat init --help`. |
 | `raycat daemon` | Runs in the foreground: fetches subscriptions and keeps xray running. This is how the service and the container start. |
 | `raycat check` | Validates the settings, builds the xray config from the subscription cache and runs `xray run -test`. The cache is needed: the daemon must have fetched a subscription. |
 | `raycat fetch <subscription>` | Fetches a subscription once and shows the response, the provider's information and the nodes. Applies and saves nothing. |

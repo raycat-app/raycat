@@ -122,6 +122,77 @@ fn base_command() -> Command {
             )
             .arg(config_option()),
         )
+        .subcommand(init_command())
+}
+
+fn init_command() -> Command {
+    subcommand(
+        "init",
+        "Мастер настроек: спрашивает ссылку подписки, приложение, платформу и режим и пишет файл настроек",
+        "raycat init [ПАРАМЕТРЫ]",
+    )
+    .after_help(
+        "Примеры:\n  sudo raycat init\n  sudo raycat init --force\n  raycat init --config ./config.toml --subscription https://example.com/sub/… --mode gateway",
+    )
+    .arg(config_option())
+    .arg(
+        Arg::new("force")
+            .long("force")
+            .action(ArgAction::SetTrue)
+            .help("Перезаписать существующий файл; старый сохранится как ФАЙЛ.bak")
+            .help_heading(OPTIONS),
+    )
+    .arg(
+        Arg::new("subscription")
+            .long("subscription")
+            .value_name("ССЫЛКА")
+            .conflicts_with("subscription-file")
+            .help("Ссылка подписки; без неё мастер спросит")
+            .help_heading(OPTIONS),
+    )
+    .arg(
+        Arg::new("subscription-file")
+            .long("subscription-file")
+            .value_name("ПУТЬ")
+            .value_parser(value_parser!(PathBuf))
+            .conflicts_with("subscription")
+            .help("Файл с одной ссылкой подписки (до 4 КиБ)")
+            .help_heading(OPTIONS),
+    )
+    .arg(
+        Arg::new("app")
+            .long("app")
+            .value_name("ПРИЛОЖЕНИЕ")
+            .value_parser(["happ", "incy"])
+            .hide_possible_values(true)
+            .help("happ (по умолчанию) или incy: какое приложение указано у провайдера")
+            .help_heading(OPTIONS),
+    )
+    .arg(
+        Arg::new("platform")
+            .long("platform")
+            .value_name("ПЛАТФОРМА")
+            .value_parser(["windows", "android"])
+            .hide_possible_values(true)
+            .help("windows (по умолчанию) или android; для incy только android")
+            .help_heading(OPTIONS),
+    )
+    .arg(
+        Arg::new("mode")
+            .long("mode")
+            .value_name("РЕЖИМ")
+            .value_parser(["proxy", "gateway"])
+            .hide_possible_values(true)
+            .help("proxy (по умолчанию) или gateway: шлюз для всего сервера")
+            .help_heading(OPTIONS),
+    )
+    .arg(
+        Arg::new("lan")
+            .long("lan")
+            .action(ArgAction::SetTrue)
+            .help("Шлюз для сервера и устройств локальной сети (то же, что --mode gateway с локальной сетью)")
+            .help_heading(OPTIONS),
+    )
 }
 
 pub(crate) fn command() -> Command {
@@ -333,6 +404,11 @@ pub(crate) fn parse_error_text(error: &clap::Error, args: &[String]) -> Option<S
             format!("не {verb} {noun} {}", missing.join(", "))
         }
         ErrorKind::MissingSubcommand => "не указана команда".to_owned(),
+        ErrorKind::ArgumentConflict => {
+            let arg = joined(error, ContextKind::InvalidArg);
+            let prior = joined(error, ContextKind::PriorArg);
+            format!("нельзя указывать вместе «{arg}» и «{prior}»")
+        }
         _ => return None,
     };
     Some(format!("ошибка: {problem}\nСправка: {}", help_hint(args)))
@@ -532,7 +608,7 @@ mod tests {
                 .get_arguments()
                 .any(|arg| arg.get_long() == Some("config"))
         };
-        for name in ["daemon", "check", "fetch", "identity"] {
+        for name in ["daemon", "check", "fetch", "identity", "init"] {
             assert!(takes_config(name), "{name}");
         }
         for name in [
@@ -559,6 +635,45 @@ mod tests {
         let none = command().try_get_matches_from(["raycat", "check"]).unwrap();
         let (_, sub) = none.subcommand().unwrap();
         assert_eq!(config_path(sub), None);
+    }
+
+    #[test]
+    fn init_takes_its_flags() {
+        let matches = command()
+            .try_get_matches_from([
+                "raycat",
+                "init",
+                "--force",
+                "--app",
+                "incy",
+                "--lan",
+                "--subscription",
+                "https://example.com/sub/abcd1234",
+            ])
+            .unwrap();
+        let (name, sub) = matches.subcommand().unwrap();
+        assert_eq!(name, "init");
+        assert!(sub.get_flag("force") && sub.get_flag("lan"));
+        assert_eq!(
+            sub.get_one::<String>("app").map(String::as_str),
+            Some("incy")
+        );
+        assert_eq!(sub.get_one::<String>("mode"), None);
+    }
+
+    #[test]
+    fn init_refuses_two_sources_of_the_link() {
+        let args = [
+            "raycat",
+            "init",
+            "--subscription",
+            "https://example.com/a",
+            "--subscription-file",
+            "/tmp/link",
+        ];
+        let text = parse_error(&args);
+        assert!(text.contains("нельзя указывать вместе"), "{text}");
+        assert!(text.ends_with("\nСправка: raycat init --help"), "{text}");
     }
 
     #[test]
@@ -634,6 +749,7 @@ mod tests {
             "check",
             "fetch",
             "identity",
+            "init",
             "status",
             "health",
             "nodes",
