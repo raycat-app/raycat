@@ -35,7 +35,7 @@ use crate::selection;
 use crate::store::{Store, StoredPin};
 use crate::tuning;
 use crate::updater::{self, Outcome, Refresh, Source};
-use crate::util::{format_duration, format_time, now_unix};
+use crate::util::{format_duration, local_zone, moment, now_unix};
 use crate::xray::{Exit, Process};
 
 const XRAY_CONFIG: &str = "xray.json";
@@ -351,7 +351,7 @@ impl Daemon {
             if let Some(cached) = sub.source.cached(&store) {
                 info!(
                     "подписка «{name}»: кэш от {}, узлов: {}",
-                    format_time(cached.fetched_at),
+                    moment(cached.fetched_at),
                     cached.nodes.len()
                 );
                 sub.nodes = cached.nodes;
@@ -614,7 +614,7 @@ impl Daemon {
                 sub.usage.clone_from(&analysis.info.usage);
                 let url = sub.source.config().url.expose();
                 let summary = redact_in(
-                    &updater::summary(&analysis.info, analysis.nodes.len()),
+                    &updater::summary(&analysis.info, analysis.nodes.len(), local_zone()),
                     &[url],
                 );
                 if sub.problem.clear() {

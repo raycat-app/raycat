@@ -1,4 +1,4 @@
-//! Лог только в stderr: `2026-09-30T12:00:00Z INFO сообщение`. Хранение и ротацию
+//! Лог только в stderr: `12:00:00 INFO сообщение`. Хранение и ротацию
 //! берут на себя journald и Docker. Одинаковые сообщения подряд схлопываются.
 
 use std::fmt;
@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use raycat_config::LogLevel;
 
-use crate::util::{format_time, now_unix, sanitize};
+use crate::util::{moment, now_unix, sanitize};
 
 const REPEAT_WINDOW: Duration = Duration::from_secs(60);
 
@@ -196,7 +196,7 @@ fn emit(lines: &[Line]) {
     if lines.is_empty() {
         return;
     }
-    let time = format_time(now_unix());
+    let time = moment(now_unix());
     let mut stderr = io::stderr().lock();
     for line in lines {
         let _ = writeln!(stderr, "{time} {} {}", line.level.label(), line.text);

@@ -2,6 +2,7 @@
 //! подстраивается под размер окна: сначала пропадают второстепенные колонки и
 //! куски строк, потом секции.
 
+use jiff::tz::TimeZone;
 use ratatui::Frame;
 use raycat_proto::{Node, Status, SubscriptionStatus, XrayStatus};
 
@@ -9,7 +10,7 @@ use super::app::{App, InputMode, Link};
 use super::canvas::{Canvas, GAP, Palette, Seg, highlight, wrap};
 use crate::render;
 use crate::term::{Tone, display_width, pad, truncate};
-use crate::util::format_clock;
+use crate::util::{format_moment, is_utc, local_zone};
 
 const MIN_WIDTH: usize = 24;
 const MIN_HEIGHT: usize = 8;
@@ -33,11 +34,15 @@ const HELP: [(&str, &str); 12] = [
 ];
 
 pub(super) fn draw(frame: &mut Frame<'_>, app: &mut App, palette: Palette) {
-    let mut canvas = Canvas::new(frame.buffer_mut(), palette);
-    compose(&mut canvas, app);
+    draw_at(frame, app, palette, local_zone());
 }
 
-fn compose(canvas: &mut Canvas<'_>, app: &mut App) {
+fn draw_at(frame: &mut Frame<'_>, app: &mut App, palette: Palette, zone: &TimeZone) {
+    let mut canvas = Canvas::new(frame.buffer_mut(), palette);
+    compose(&mut canvas, app, zone);
+}
+
+fn compose(canvas: &mut Canvas<'_>, app: &mut App, zone: &TimeZone) {
     if canvas.width < MIN_WIDTH || canvas.height < MIN_HEIGHT {
         let text = format!("Окно слишком маленькое: нужно не меньше {MIN_WIDTH}×{MIN_HEIGHT}");
         canvas.line(0, 0, vec![Seg::new(text, Tone::Yellow, 0)]);
@@ -52,7 +57,7 @@ fn compose(canvas: &mut Canvas<'_>, app: &mut App) {
     canvas.set_dim(matches!(app.link, Link::Down { .. }));
     y = header(canvas, app, y, top_limit);
 
-    let subs = subscription_lines(app);
+    let subs = subscription_lines(app, zone);
     let subs_want = if app.status.is_some() {
         1 + subs.len().max(1)
     } else {
@@ -70,7 +75,7 @@ fn compose(canvas: &mut Canvas<'_>, app: &mut App) {
     nodes_section(canvas, y, layout.nodes, app);
     y += layout.nodes;
     if layout.log > 0 {
-        log_section(canvas, y, layout.log, app);
+        log_section(canvas, y, layout.log, app, zone);
     }
     canvas.set_dim(false);
     bottom(canvas, app);
@@ -197,7 +202,7 @@ fn header_lines(app: &App) -> Vec<Vec<Seg>> {
     lines
 }
 
-fn subscription_segs(sub: &SubscriptionStatus, now: u64) -> Vec<Seg> {
+fn subscription_segs(sub: &SubscriptionStatus, now: u64, zone: &TimeZone) -> Vec<Seg> {
     let mut segs = vec![Seg::new(sub.name.clone(), Tone::Bold, 0)];
     if let Some(title) = sub.title.as_deref().filter(|title| !title.is_empty()) {
         segs.push(Seg::new(format!("«{title}»"), Tone::Dim, 4));
@@ -208,7 +213,7 @@ fn subscription_segs(sub: &SubscriptionStatus, now: u64) -> Vec<Seg> {
         segs.push(Seg::new(text, tone, 1));
     }
     if let Some(expire) = sub.expire {
-        let (text, tone) = render::expiry_text(expire, now);
+        let (text, tone) = render::expiry_text(expire, now, zone);
         segs.push(Seg::new(text, tone, 3));
     }
     match sub.updated_at {
@@ -228,13 +233,13 @@ fn subscription_segs(sub: &SubscriptionStatus, now: u64) -> Vec<Seg> {
     segs
 }
 
-fn subscription_lines(app: &App) -> Vec<Vec<Seg>> {
+fn subscription_lines(app: &App, zone: &TimeZone) -> Vec<Vec<Seg>> {
     let Some(status) = &app.status else {
         return Vec::new();
     };
     let mut lines = Vec::new();
     for sub in &status.subscriptions {
-        lines.push(subscription_segs(sub, app.now));
+        lines.push(subscription_segs(sub, app.now, zone));
         if let Some(error) = &sub.last_error {
             lines.push(vec![Seg::new(format!("  ✗ {error}"), Tone::Red, 0)]);
         }
@@ -491,11 +496,11 @@ fn nodes_section(canvas: &mut Canvas<'_>, y0: usize, room: usize, app: &mut App)
     }
 }
 
-fn log_section(canvas: &mut Canvas<'_>, y0: usize, room: usize, app: &App) {
-    let title = vec![
-        Seg::new("Журнал", Tone::Header, 0),
-        Seg::new("время UTC", Tone::Dim, 1),
-    ];
+fn log_section(canvas: &mut Canvas<'_>, y0: usize, room: usize, app: &App, zone: &TimeZone) {
+    let mut title = vec![Seg::new("Журнал", Tone::Header, 0)];
+    if is_utc(zone) {
+        title.push(Seg::new("время UTC", Tone::Dim, 1));
+    }
     canvas.line(y0, 0, title);
     if app.log.is_empty() {
         canvas.line(y0 + 1, 0, vec![Seg::new("пока пусто", Tone::Dim, 0)]);
@@ -505,7 +510,7 @@ fn log_section(canvas: &mut Canvas<'_>, y0: usize, room: usize, app: &App) {
     let first = app.log.len().saturating_sub(capacity);
     for (row, entry) in app.log.iter().skip(first).enumerate() {
         let segs = vec![
-            Seg::new(format_clock(entry.at), Tone::Dim, 0),
+            Seg::new(format_moment(entry.at, app.now, zone), Tone::Dim, 0),
             Seg::new(entry.text.clone(), entry.tone, 0),
         ];
         canvas.line(y0 + 1 + row, 0, segs);
@@ -697,7 +702,7 @@ mod tests {
     fn paint(app: &mut App, width: u16, height: u16, color: bool) -> Terminal<TestBackend> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
-            .draw(|frame| draw(frame, app, Palette::new(color)))
+            .draw(|frame| draw_at(frame, app, Palette::new(color), &TimeZone::UTC))
             .unwrap();
         terminal
     }
@@ -734,7 +739,7 @@ mod tests {
             "узел: main/NL-1  31 мс  закреплён вручную",
             "причина: выбран лучший живой узел",
             "Подписки",
-            "  main  узлов: 3  3.0 МиБ из 100.0 ГиБ (0%)  обновлена 2 ч 0 мин назад",
+            "  main  узлов: 3  3.0 МиБ из 100.0 ГиБ (0%)  обновлена 2 ч назад",
             "Узлы  всего 3",
             "   Подписка  Узел  Статус       Задержка  Провалы  Ошибка",
             pinned.as_str(),

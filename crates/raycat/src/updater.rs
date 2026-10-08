@@ -5,6 +5,7 @@ use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
+use jiff::tz::TimeZone;
 use raycat_config::{Config, Platform as ConfigPlatform, Subscription};
 use raycat_emulation::{Arch, Device, Emulation, Platform, machine_id_from_seed};
 use raycat_http::{Client, Request, Response, Scheme, Url, redact};
@@ -493,7 +494,7 @@ fn remember_addresses(name: &str, state: &mut SubState, info: &ProviderInfo, fet
 }
 
 /// Строка для лога: название, число узлов, трафик и срок.
-pub(crate) fn summary(info: &ProviderInfo, nodes: usize) -> String {
+pub(crate) fn summary(info: &ProviderInfo, nodes: usize, zone: &TimeZone) -> String {
     let mut parts = Vec::new();
     if let Some(title) = &info.title {
         parts.push(title.clone());
@@ -509,7 +510,7 @@ pub(crate) fn summary(info: &ProviderInfo, nodes: usize) -> String {
         parts.push(if usage.expire == 0 {
             "срок не ограничен".to_owned()
         } else {
-            format!("срок до {}", format_date(usage.expire))
+            format!("срок до {}", format_date(usage.expire, zone))
         });
     }
     parts.join(", ")
@@ -884,7 +885,7 @@ mod tests {
     #[test]
     fn summary_lists_title_nodes_traffic_and_expiry() {
         let mut info = ProviderInfo::default();
-        assert_eq!(summary(&info, 3), "узлов: 3");
+        assert_eq!(summary(&info, 3, &TimeZone::UTC), "узлов: 3");
         info.title = Some("Тест".to_owned());
         info.usage = Some(raycat_subscription::Usage {
             upload: 1,
@@ -893,7 +894,7 @@ mod tests {
             expire: 0,
         });
         assert_eq!(
-            summary(&info, 2),
+            summary(&info, 2, &TimeZone::UTC),
             "Тест, узлов: 2, трафик: 3 Б из 100 Б, срок не ограничен"
         );
         if let Some(usage) = &mut info.usage {
@@ -901,8 +902,8 @@ mod tests {
             usage.expire = 1_790_596_800;
         }
         assert_eq!(
-            summary(&info, 2),
-            "Тест, узлов: 2, трафик: 3 Б (без лимита), срок до 2026-09-28"
+            summary(&info, 2, &TimeZone::UTC),
+            "Тест, узлов: 2, трафик: 3 Б (без лимита), срок до 28.09.2026"
         );
     }
 
