@@ -133,6 +133,9 @@ async fn serve(config: Config, store: Store, socket: PathBuf) -> Result<()> {
         daemon.store.root().display(),
         socket.display()
     );
+    for warning in &daemon.config.warnings {
+        warn!("{warning}");
+    }
     let congestion = tuning::congestion(&daemon.config.xray.tcp_congestion);
     if let Some(line) = congestion.describe() {
         info!("{line}");

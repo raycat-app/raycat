@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use serde::Deserialize;
 
 #[derive(Default, Deserialize)]
@@ -11,6 +13,9 @@ pub(crate) struct Raw {
     pub(crate) routing: RawRouting,
     pub(crate) xray: RawXray,
     pub(crate) log: RawLog,
+    /// Переменные окружения, которые задали значения (например `RAYCAT_LAN`).
+    #[serde(skip)]
+    pub(crate) from_env: BTreeSet<&'static str>,
 }
 
 #[derive(Default, Deserialize)]
