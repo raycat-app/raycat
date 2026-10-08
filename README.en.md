@@ -258,6 +258,8 @@ In filter mode, letters, including `q`, go into the search line.
 
 ## Settings
 
+For autocompletion and hints in the editor (VS Code with Even Better TOML, Taplo), add this line first in the file: `#:schema https://raw.githubusercontent.com/raycat-app/raycat/main/deploy/config.schema.json`.
+
 The settings file is TOML. In the service it is `/etc/raycat/config.toml`; in Docker, it is the
 mounted file. An unknown key is an error, so a typo does not go unnoticed. raycat shows all
 errors at once, with the field names. The file must be no larger than 1 MiB.
@@ -435,7 +437,7 @@ not set. The `RAYCAT_INSTALL_*` variables are needed only by the installer's tes
 | Variable | What it sets |
 | --- | --- |
 | `RAYCAT_CONFIG` | The path to the settings file, if `--config` is not given. If the file does not exist, it is an error. Default: `/etc/raycat/config.toml`, if it exists |
-| `RAYCAT_SUBSCRIPTION` | The `url` of the first subscription. If the file has no subscriptions, a subscription named `основная` (main) is created. Cannot be used together with `RAYCAT_SUBSCRIPTION_FILE` |
+| `RAYCAT_SUBSCRIPTION` | The `url` of the first subscription. If the file has no subscriptions, a subscription named `main` is created. Cannot be used together with `RAYCAT_SUBSCRIPTION_FILE` |
 | `RAYCAT_SUBSCRIPTION_FILE` | The path to a file with the link of the first subscription (up to 4 KiB) |
 | `RAYCAT_APP`, `RAYCAT_PLATFORM` | The app and the platform of the first subscription |
 | `RAYCAT_SEED` | `device.seed`. Cannot be used together with `device.machine_id` from the file |

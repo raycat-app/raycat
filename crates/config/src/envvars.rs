@@ -20,7 +20,7 @@ pub(crate) const PROXY_AUTH: &str = "RAYCAT_PROXY_AUTH";
 pub(crate) const PROXY_AUTH_FILE: &str = "RAYCAT_PROXY_AUTH_FILE";
 const LOG: &str = "RAYCAT_LOG";
 
-const ENV_SUBSCRIPTION_NAME: &str = "основная";
+const ENV_SUBSCRIPTION_NAME: &str = "main";
 
 /// Пустая переменная считается незаданной: `${VAR:-}` в compose не должен
 /// молча выключать, например, kill switch.

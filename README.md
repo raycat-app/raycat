@@ -255,6 +255,8 @@ raycat получает подписку, выбирает узел по при�
 
 ## Настройки
 
+Для автодополнения и подсказок в редакторе (VS Code с Even Better TOML, Taplo) добавьте первой строкой файла `#:schema https://raw.githubusercontent.com/raycat-app/raycat/main/deploy/config.schema.json`.
+
 Файл настроек — TOML. В службе это `/etc/raycat/config.toml`, в Docker — смонтированный файл.
 Неизвестный ключ — ошибка, опечатка не пройдёт незамеченной. raycat показывает все ошибки
 сразу, с именами полей. Размер файла не больше 1 МиБ.
@@ -432,7 +434,7 @@ level = "debug"
 | Переменная | Что задаёт |
 | --- | --- |
 | `RAYCAT_CONFIG` | Путь к файлу настроек, если не указан `--config`. Если файла нет, это ошибка. По умолчанию `/etc/raycat/config.toml`, если он существует |
-| `RAYCAT_SUBSCRIPTION` | `url` первой подписки. Если подписок в файле нет, создаётся подписка `основная`. Нельзя вместе с `RAYCAT_SUBSCRIPTION_FILE` |
+| `RAYCAT_SUBSCRIPTION` | `url` первой подписки. Если подписок в файле нет, создаётся подписка `main`. Нельзя вместе с `RAYCAT_SUBSCRIPTION_FILE` |
 | `RAYCAT_SUBSCRIPTION_FILE` | Путь к файлу со ссылкой первой подписки (до 4 КиБ) |
 | `RAYCAT_APP`, `RAYCAT_PLATFORM` | Приложение и платформа первой подписки |
 | `RAYCAT_SEED` | `device.seed`. Нельзя вместе с `device.machine_id` из файла |
