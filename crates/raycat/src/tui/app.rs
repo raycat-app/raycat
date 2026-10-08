@@ -891,7 +891,7 @@ mod tests {
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Tab);
         assert_eq!(app.filter.subscription.as_deref(), Some("backup"));
-        assert!(app.visible.is_empty());
+        assert_eq!(app.visible, Vec::<usize>::new());
         assert_eq!(
             press(&mut app, KeyCode::Char('U')),
             Some(Effect::Update(Some("backup".to_owned())))
