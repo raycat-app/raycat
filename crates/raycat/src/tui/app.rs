@@ -23,7 +23,12 @@ const DEFAULT_ROWS: usize = 10;
 pub(super) enum Link {
     Connecting,
     Up,
-    Down { reason: String, retry_at: u64 },
+    Down {
+        reason: String,
+        /// Что сделать, если демон сообщил вторую строку.
+        hint: Option<String>,
+        retry_at: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,6 +119,15 @@ pub(super) struct App {
 
 fn clip(text: &str) -> String {
     truncate(&sanitize(text), TEXT_WIDTH)
+}
+
+/// Ошибка демона: первая строка — что случилось, вторая — что сделать. Делить надо до
+/// очистки: `sanitize` превращает перевод строки в пробел.
+fn split_lines(text: &str) -> (&str, Option<&str>) {
+    match text.split_once('\n') {
+        Some((first, rest)) => (first, Some(rest)),
+        None => (text, None),
+    }
 }
 
 impl App {
@@ -218,9 +232,9 @@ impl App {
             KeyCode::BackTab => self.cycle_subscription(false),
             KeyCode::Esc => self.clear_filter(),
             KeyCode::Enter => return self.pin_current(),
-            KeyCode::Char('a') => return Some(Effect::Unpin),
+            KeyCode::Char('a') => return self.unpin(),
             KeyCode::Char('u') => return self.start_update(None),
-            KeyCode::Char('U') => return self.update_current(),
+            KeyCode::Char('U') => return self.update_subscription(),
             _ => {}
         }
         None
@@ -284,12 +298,14 @@ impl App {
     }
 
     fn on_down(&mut self, reason: &str, retry_in: Duration) {
-        let reason = clip(reason);
+        let (cause, hint) = split_lines(reason);
+        let cause = clip(cause);
         if !matches!(self.link, Link::Down { .. }) {
-            self.push_log(Tone::Red, &format!("демон недоступен: {reason}"));
+            self.push_log(Tone::Red, &format!("демон недоступен: {cause}"));
         }
         self.link = Link::Down {
-            reason,
+            reason: cause,
+            hint: hint.map(clip).filter(|hint| !hint.trim().is_empty()),
             retry_at: self.now + retry_in.as_secs(),
         };
     }
@@ -314,7 +330,10 @@ impl App {
                 "Закрепление снято: узел выбирается автоматически",
                 NOTICE_SECS,
             ),
-            Err(error) => self.fail(&format!("Не удалось изменить закрепление: {error}")),
+            Err(error) => {
+                let (cause, _) = split_lines(&error);
+                self.fail(&format!("Не удалось изменить закрепление: {cause}"));
+            }
         }
     }
 
@@ -334,7 +353,10 @@ impl App {
                 let text = format!("Обновление завершено: {}", lines.replace('\n', "; "));
                 self.notify(tone, &text, RESULT_SECS);
             }
-            Err(error) => self.fail(&format!("Не удалось обновить подписки: {error}")),
+            Err(error) => {
+                let (cause, _) = split_lines(&error);
+                self.fail(&format!("Не удалось обновить подписки: {cause}"));
+            }
         }
     }
 
@@ -374,14 +396,35 @@ impl App {
         None
     }
 
-    fn update_current(&mut self) -> Option<Effect> {
+    fn unpin(&mut self) -> Option<Effect> {
+        // Без статуса не знаем, закреплён ли узел: спрашиваем демон.
+        let automatic = self
+            .status
+            .as_ref()
+            .is_some_and(|status| !status.node.as_ref().is_some_and(|node| node.pinned));
+        if !automatic {
+            return Some(Effect::Unpin);
+        }
+        self.notify(
+            Tone::Yellow,
+            "Узел и так выбирается автоматически",
+            NOTICE_SECS,
+        );
+        None
+    }
+
+    /// Обновляет подписку, выбранную Tab, а без неё — подписку узла под курсором.
+    fn update_subscription(&mut self) -> Option<Effect> {
+        if let Some(name) = self.filter.subscription.clone() {
+            return self.start_update(Some(name));
+        }
         if let Some(node) = self.current() {
             let subscription = node.subscription.clone();
             return self.start_update(Some(subscription));
         }
         self.notify(
             Tone::Yellow,
-            "Нет узла, по которому можно выбрать подписку",
+            "Нет подписки для обновления: выберите её Tab или узел",
             NOTICE_SECS,
         );
         None
@@ -494,7 +537,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use raycat_proto::{Mode, SubscriptionStatus, UpdateResult, XrayStatus};
+    use raycat_proto::{CurrentNode, Mode, SubscriptionStatus, UpdateResult, XrayStatus};
 
     use super::*;
 
@@ -502,6 +545,19 @@ mod tests {
 
     fn press(app: &mut App, code: KeyCode) -> Option<Effect> {
         app.handle_key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn set_pinned(app: &mut App, pinned: bool) {
+        if let Some(status) = app.status.as_mut() {
+            status.node = Some(CurrentNode {
+                id: "main/DE-2".to_owned(),
+                subscription: "main".to_owned(),
+                name: "DE-2".to_owned(),
+                latency_ms: Some(30),
+                pinned,
+                reason: None,
+            });
+        }
     }
 
     fn typed(app: &mut App, text: &str) {
@@ -776,7 +832,22 @@ mod tests {
             press(&mut app, KeyCode::Enter),
             Some(Effect::Pin("main/DE-2".to_owned()))
         );
+        set_pinned(&mut app, true);
         assert_eq!(press(&mut app, KeyCode::Char('a')), Some(Effect::Unpin));
+    }
+
+    #[test]
+    fn a_without_a_pin_says_the_node_is_automatic_and_asks_nothing() {
+        let mut app = app_with(sample());
+        assert_eq!(press(&mut app, KeyCode::Char('a')), None);
+        assert_eq!(
+            app.notice.as_ref().unwrap().text,
+            "Узел и так выбирается автоматически"
+        );
+        set_pinned(&mut app, false);
+        assert_eq!(press(&mut app, KeyCode::Char('a')), None);
+        let mut fresh = App::new(NOW);
+        assert_eq!(press(&mut fresh, KeyCode::Char('a')), Some(Effect::Unpin));
     }
 
     #[test]
@@ -807,6 +878,33 @@ mod tests {
         assert_eq!(
             press(&mut app, KeyCode::Char('U')),
             Some(Effect::Update(Some("backup".to_owned())))
+        );
+    }
+
+    #[test]
+    fn u_updates_the_subscription_chosen_by_tab_even_without_nodes() {
+        let main_only: Vec<Node> = sample()
+            .into_iter()
+            .filter(|node| node.subscription == "main")
+            .collect();
+        let mut app = app_with(main_only);
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.filter.subscription.as_deref(), Some("backup"));
+        assert_eq!(app.visible, Vec::<usize>::new());
+        assert_eq!(
+            press(&mut app, KeyCode::Char('U')),
+            Some(Effect::Update(Some("backup".to_owned())))
+        );
+    }
+
+    #[test]
+    fn u_without_a_choice_and_without_nodes_says_how_to_choose() {
+        let mut app = app_with(Vec::new());
+        assert_eq!(press(&mut app, KeyCode::Char('U')), None);
+        assert_eq!(
+            app.notice.as_ref().unwrap().text,
+            "Нет подписки для обновления: выберите её Tab или узел"
         );
     }
 
@@ -988,6 +1086,7 @@ mod tests {
             app.link,
             Link::Down {
                 reason: "демон не запущен".to_owned(),
+                hint: None,
                 retry_at: NOW + 2,
             }
         );
@@ -1010,6 +1109,42 @@ mod tests {
             retry_in: Duration::from_secs(1),
         });
         assert_eq!(app.log.len(), 2);
+    }
+
+    #[test]
+    fn a_two_line_error_keeps_the_hint_out_of_the_journal() {
+        let mut app = app_with(sample());
+        app.apply(Msg::Down {
+            reason: "raycat не запущен\nЗапустите службу: sudo systemctl start raycat".to_owned(),
+            retry_in: Duration::from_secs(2),
+        });
+        assert_eq!(
+            app.link,
+            Link::Down {
+                reason: "raycat не запущен".to_owned(),
+                hint: Some("Запустите службу: sudo systemctl start raycat".to_owned()),
+                retry_at: NOW + 2,
+            }
+        );
+        assert_eq!(
+            app.log.back().unwrap().text,
+            "демон недоступен: raycat не запущен"
+        );
+    }
+
+    #[test]
+    fn a_failed_action_shows_only_the_first_line() {
+        let mut app = app_with(sample());
+        let error = "raycat не запущен\nЗапустите службу: sudo systemctl start raycat";
+        app.apply(Msg::Updated(Err(error.to_owned())));
+        let text = "Не удалось обновить подписки: raycat не запущен";
+        assert_eq!(app.log.back().unwrap().text, text);
+        assert_eq!(app.notice.as_ref().unwrap().text, text);
+        app.apply(Msg::Pinned(Err(error.to_owned())));
+        assert_eq!(
+            app.notice.as_ref().unwrap().text,
+            "Не удалось изменить закрепление: raycat не запущен"
+        );
     }
 
     #[test]

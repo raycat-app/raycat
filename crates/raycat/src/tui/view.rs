@@ -17,6 +17,7 @@ const MIN_HEIGHT: usize = 8;
 const BOTTOM: usize = 2;
 const NODES_MIN: usize = 5;
 const BANNER_LINES: usize = 3;
+const BANNER_HINT_LINES: usize = 2;
 
 const HELP: [(&str, &str); 12] = [
     ("↑ ↓  j k", "выбрать узел"),
@@ -25,7 +26,10 @@ const HELP: [(&str, &str); 12] = [
     ("Enter", "закрепить выбранный узел"),
     ("a", "вернуть автоматический выбор узла"),
     ("u", "обновить все подписки"),
-    ("U", "обновить подписку выбранного узла"),
+    (
+        "U",
+        "обновить подписку (выбранную Tab или узла под курсором)",
+    ),
     ("/", "фильтр по тексту (Enter — применить, Esc — сбросить)"),
     ("Tab", "фильтр по подписке (Shift+Tab — в обратную сторону)"),
     ("Esc", "сбросить фильтры"),
@@ -44,7 +48,16 @@ fn draw_at(frame: &mut Frame<'_>, app: &mut App, palette: Palette, zone: &TimeZo
 
 fn compose(canvas: &mut Canvas<'_>, app: &mut App, zone: &TimeZone) {
     if canvas.width < MIN_WIDTH || canvas.height < MIN_HEIGHT {
-        let text = format!("Окно слишком маленькое: нужно не меньше {MIN_WIDTH}×{MIN_HEIGHT}");
+        let need = format!("{MIN_WIDTH}×{MIN_HEIGHT}");
+        let full = format!(
+            "Мало места: {}×{}, нужно {need}",
+            canvas.width, canvas.height
+        );
+        let text = if display_width(&full) <= canvas.width {
+            full
+        } else {
+            need
+        };
         canvas.line(0, 0, vec![Seg::new(text, Tone::Yellow, 0)]);
         return;
     }
@@ -67,12 +80,19 @@ fn compose(canvas: &mut Canvas<'_>, app: &mut App, zone: &TimeZone) {
     let log_cap = (body / 5).clamp(3, 12);
     let log_want = 1 + app.log.len().clamp(1, log_cap);
     let layout = plan(body, subs_want, log_want);
+    let mut notes = Vec::new();
+    if subs_want > 0 && layout.subs == 0 {
+        notes.push("(подписки скрыты)");
+    }
+    if layout.log == 0 {
+        notes.push("(журнал скрыт: мало строк)");
+    }
 
     if layout.subs > 0 {
         subscriptions(canvas, y, layout.subs, subs, app);
         y += layout.subs;
     }
-    nodes_section(canvas, y, layout.nodes, app);
+    nodes_section(canvas, y, layout.nodes, app, &notes);
     y += layout.nodes;
     if layout.log > 0 {
         log_section(canvas, y, layout.log, app, zone);
@@ -107,12 +127,24 @@ fn banner(canvas: &mut Canvas<'_>, app: &App, limit: usize) -> usize {
     let lines: Vec<Vec<Seg>> = match &app.link {
         Link::Up => Vec::new(),
         Link::Connecting => vec![vec![Seg::new("Подключение к демону…", Tone::Yellow, 0)]],
-        Link::Down { reason, retry_at } => {
+        Link::Down {
+            reason,
+            hint,
+            retry_at,
+        } => {
             let text = format!("демон недоступен: {reason}");
             let mut lines: Vec<Vec<Seg>> = wrap(&text, canvas.width, BANNER_LINES)
                 .into_iter()
                 .map(|line| vec![Seg::new(line, Tone::Red, 0)])
                 .collect();
+            if let Some(hint) = hint {
+                let hint_lines = wrap(hint, canvas.width, BANNER_HINT_LINES);
+                lines.extend(
+                    hint_lines
+                        .into_iter()
+                        .map(|line| vec![Seg::new(line, Tone::Plain, 0)]),
+                );
+            }
             let wait = retry_at.saturating_sub(app.now);
             let retry = if wait == 0 {
                 "повторное подключение…".to_owned()
@@ -439,7 +471,7 @@ fn draw_titles(canvas: &mut Canvas<'_>, y: usize, cols: &[Col]) {
     }
 }
 
-fn nodes_title(app: &App, rows: usize) -> Vec<Seg> {
+fn nodes_title(app: &App, rows: usize, notes: &[&str]) -> Vec<Seg> {
     let total = app.nodes.len();
     let shown = app.visible.len();
     let count = if shown < total {
@@ -464,13 +496,14 @@ fn nodes_title(app: &App, rows: usize) -> Vec<Seg> {
     if let Some(name) = &app.filter.subscription {
         segs.push(Seg::new(format!("подписка: {name}"), Tone::Yellow, 0));
     }
+    segs.extend(notes.iter().map(|note| Seg::new(*note, Tone::Yellow, 3)));
     segs
 }
 
-fn nodes_section(canvas: &mut Canvas<'_>, y0: usize, room: usize, app: &mut App) {
+fn nodes_section(canvas: &mut Canvas<'_>, y0: usize, room: usize, app: &mut App, notes: &[&str]) {
     let rows = room.saturating_sub(2);
     app.set_rows(rows);
-    canvas.line(y0, 0, nodes_title(app, rows));
+    canvas.line(y0, 0, nodes_title(app, rows, notes));
     if app.visible.is_empty() {
         let (text, tone) = if app.nodes.is_empty() {
             (
@@ -521,11 +554,12 @@ fn hint_segs(app: &App) -> Vec<Seg> {
     if app.input == InputMode::Filter {
         return vec![
             Seg::new(format!("/{}█", app.filter.text), Tone::Bold, 0),
-            Seg::new("Enter — применить, Esc — сбросить", Tone::Dim, 1),
+            Seg::new("Enter — применить, Esc — сбросить и выйти", Tone::Dim, 1),
         ];
     }
+    // Справка и выход отбрасываются последними: без них экран не объяснить.
     [
-        ("↑↓ выбор", 0),
+        ("↑↓ выбор", 1),
         ("Enter закрепить", 1),
         ("a авто", 2),
         ("u обновить", 3),
@@ -533,7 +567,7 @@ fn hint_segs(app: &App) -> Vec<Seg> {
         ("/ фильтр", 2),
         ("Tab подписка", 6),
         ("? справка", 0),
-        ("q выход", 1),
+        ("q выход", 0),
     ]
     .into_iter()
     .map(|(text, priority)| Seg::new(text, Tone::Dim, priority))
@@ -874,18 +908,66 @@ mod tests {
             assert!(display_width(line) <= 24, "{line:?}");
         }
         assert!(lines.iter().any(|line| line.contains("NL-1")));
-        assert!(lines.last().unwrap().starts_with("↑↓ выбор"));
+        assert_eq!(lines.last().unwrap(), "? справка  q выход");
     }
 
     #[test]
-    fn a_terminal_below_the_minimum_gets_a_hint_instead_of_a_broken_screen() {
+    fn a_terminal_below_the_minimum_says_its_size_and_the_needed_one() {
         let mut app = sample_app();
         let lines = screen(&mut app, 20, 5);
-        assert!(lines[0].starts_with("Окно слишком"), "{:?}", lines[0]);
-        assert!(lines[0].ends_with('…'));
+        assert_eq!(lines[0], "24×8");
         assert!(lines[1..].iter().all(String::is_empty));
         let lines = screen(&mut app, 80, 7);
-        assert!(lines[0].starts_with("Окно слишком маленькое"));
+        assert_eq!(lines[0], "Мало места: 80×7, нужно 24×8");
+    }
+
+    #[test]
+    fn the_exit_and_help_hints_survive_every_width() {
+        let mut app = sample_app();
+        for width in 24..=80_u16 {
+            let lines = screen(&mut app, width, 20);
+            let last = lines.last().unwrap();
+            assert!(
+                last.contains("? справка") && last.contains("q выход"),
+                "{width}: {last:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hidden_sections_are_named_in_the_nodes_title() {
+        let mut app = sample_app();
+        let lines = screen(&mut app, 80, 13);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Узлы  всего 3  (журнал скрыт: мало строк)"),
+            "{lines:?}"
+        );
+        let lines = screen(&mut app, 80, 12);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "Узлы  всего 3  (подписки скрыты)  (журнал скрыт: мало строк)"),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_two_line_error_shows_the_cause_in_red_and_the_hint_plain() {
+        let mut app = App::new(NOW);
+        app.apply(Msg::Down {
+            reason: "raycat не запущен\nЗапустите службу: sudo systemctl start raycat".to_owned(),
+            retry_in: Duration::from_secs(1),
+        });
+        let terminal = paint(&mut app, 80, 24, true);
+        let buffer = terminal.backend().buffer();
+        let lines = rows(buffer);
+        assert_eq!(lines[0], "демон недоступен: raycat не запущен");
+        assert_eq!(lines[1], "Запустите службу: sudo systemctl start raycat");
+        assert_eq!(lines[2], "повторное подключение через 1 с");
+        assert_eq!(buffer[(0, 0)].style().fg, Some(Color::LightRed));
+        assert_ne!(buffer[(0, 1)].style().fg, Some(Color::LightRed));
     }
 
     #[test]
@@ -944,6 +1026,12 @@ mod tests {
             lines.last().unwrap().starts_with("/de█"),
             "{:?}",
             lines.last()
+        );
+        assert!(
+            lines
+                .last()
+                .unwrap()
+                .ends_with("Enter — применить, Esc — сбросить и выйти")
         );
         assert!(
             lines
@@ -1070,6 +1158,7 @@ mod tests {
             assert!(text.contains(word), "{word}: {text}");
         }
         assert!(text.contains("▶ выбран   ★ закреплён вручную"));
+        assert!(text.contains("обновить подписку (выбранную Tab или узла под курсором)"));
         assert!(!text.contains("Подписки"));
         let narrow = screen(&mut app, 30, 12);
         for line in &narrow {
