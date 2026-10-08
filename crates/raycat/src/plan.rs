@@ -1,5 +1,7 @@
 //! Узлы подписок и настройки → конфиг xray.
 
+use std::net::IpAddr;
+
 use anyhow::{Context, Result};
 use raycat_config::{Config, Mode, ProxyAuth, Subscription};
 use raycat_netfilter::{DEFAULT_OWN_MARK, Lan, Rules};
@@ -108,6 +110,70 @@ fn xray_mode(config: &Config) -> raycat_xray::Mode {
     }
 }
 
+/// Свои правила по порядку, затем пресет «Россия напрямую» (он идёт после них).
+fn routing_rules(routing: &raycat_config::Routing) -> Vec<raycat_xray::Rule> {
+    let mut rules: Vec<raycat_xray::Rule> = routing.rules.iter().map(xray_rule).collect();
+    if routing.ru_direct {
+        rules.extend(ru_direct());
+    }
+    rules
+}
+
+fn xray_rule(rule: &raycat_config::Rule) -> raycat_xray::Rule {
+    raycat_xray::Rule {
+        domains: rule
+            .domains
+            .iter()
+            .map(|domain| raycat_xray::Domain {
+                name: domain.name.clone(),
+                subdomains: domain.subdomains,
+            })
+            .collect(),
+        subnets: rule
+            .ips
+            .iter()
+            .map(|cidr| raycat_xray::Subnet {
+                addr: cidr.addr(),
+                prefix: cidr.prefix(),
+            })
+            .collect(),
+        action: match rule.action {
+            raycat_config::Action::Direct => raycat_xray::Action::Direct,
+            raycat_config::Action::Proxy => raycat_xray::Action::Proxy,
+            raycat_config::Action::Block => raycat_xray::Action::Block,
+        },
+    }
+}
+
+/// Пресет «Россия напрямую»: домены зон РФ и российские подсети IPv4 мимо VPN.
+fn ru_direct() -> Vec<raycat_xray::Rule> {
+    let domains: Vec<raycat_xray::Domain> = raycat_routing::ru_zones()
+        .iter()
+        .map(|zone| raycat_xray::Domain {
+            name: (*zone).to_owned(),
+            subdomains: true,
+        })
+        .collect();
+    let subnets: Vec<raycat_xray::Subnet> = raycat_routing::ru_ipv4()
+        .map(|(addr, prefix)| raycat_xray::Subnet {
+            addr: IpAddr::V4(addr),
+            prefix,
+        })
+        .collect();
+    vec![
+        raycat_xray::Rule {
+            domains,
+            subnets: Vec::new(),
+            action: raycat_xray::Action::Direct,
+        },
+        raycat_xray::Rule {
+            domains: Vec::new(),
+            subnets,
+            action: raycat_xray::Action::Direct,
+        },
+    ]
+}
+
 /// Тег балансировщика в конфиге xray: в нём демон закрепляет выбранный узел.
 pub(crate) const BALANCER: &str = "auto";
 
@@ -148,6 +214,7 @@ pub(crate) fn compile_config(
     settings.probe.interval = config.selection.check_interval;
     settings.tcp_congestion = tcp_congestion.map(str::to_owned);
     settings.xhttp_connections = config.xray.xhttp_connections;
+    settings.rules = routing_rules(&config.routing);
     let compiled = compile(&subscriptions, &settings)?;
     let json = serde_json::to_vec(&compiled.config).context("не удалось записать конфиг xray")?;
     Ok(Plan {
@@ -406,5 +473,96 @@ mod tests {
     fn plain_nodes_are_not_quic() {
         let config = config("type = \"proxy\"", "");
         assert!(!plan(&config, &nodes()).unwrap().quic);
+    }
+
+    fn with_routing(routing: &str) -> Config {
+        let text = format!(
+            "[[subscription]]\nname = \"a\"\nurl = \"https://a.example.com/x/abcd\"\napp = \"happ\"\nplatform = \"windows\"\n[mode]\ntype = \"proxy\"\nlisten = \"127.0.0.1:7891\"\n{routing}"
+        );
+        Config::from_toml_str(&text, &Env::new()).unwrap()
+    }
+
+    fn routing_json(config: &Config) -> serde_json::Value {
+        let plan = plan(config, &nodes()).unwrap();
+        serde_json::from_slice(&plan.json).unwrap()
+    }
+
+    #[test]
+    fn own_rules_reach_the_compiler_in_order() {
+        let config = with_routing(
+            "[[routing.rule]]\ndomains = [\"example.ru\", \"*.bank.example\"]\naction = \"direct\"\n[[routing.rule]]\nips = [\"203.0.113.0/24\"]\naction = \"block\"\n",
+        );
+        let json = routing_json(&config);
+        let rules = json["routing"]["rules"].as_array().unwrap();
+
+        assert_eq!(rules.len(), 6);
+        assert_eq!(
+            rules[3],
+            serde_json::json!({"type": "field", "domain": ["full:example.ru", "domain:bank.example"], "outboundTag": "direct"})
+        );
+        assert_eq!(
+            rules[4],
+            serde_json::json!({"type": "field", "ip": ["203.0.113.0/24"], "outboundTag": "block"})
+        );
+        assert_eq!(rules[5]["balancerTag"], BALANCER);
+        assert_eq!(json["inbounds"][0]["sniffing"]["routeOnly"], true);
+    }
+
+    #[test]
+    fn proxy_rules_point_at_the_balancer() {
+        let config =
+            with_routing("[[routing.rule]]\nips = [\"203.0.113.0/24\"]\naction = \"proxy\"\n");
+        let json = routing_json(&config);
+
+        assert_eq!(
+            json["routing"]["rules"][3],
+            serde_json::json!({"type": "field", "ip": ["203.0.113.0/24"], "balancerTag": BALANCER})
+        );
+    }
+
+    #[test]
+    fn without_rules_nothing_changes_for_routing_or_sniffing() {
+        let config = config("type = \"proxy\"", "");
+        let json = routing_json(&config);
+
+        assert_eq!(json["routing"]["rules"].as_array().unwrap().len(), 4);
+        assert!(json["inbounds"][0]["sniffing"].get("routeOnly").is_none());
+    }
+
+    #[test]
+    fn ru_direct_adds_the_zones_and_the_subnets_after_own_rules() {
+        let config = with_routing(
+            "[routing]\nru_direct = true\n[[routing.rule]]\ndomains = [\"example.net\"]\naction = \"block\"\n",
+        );
+        let json = routing_json(&config);
+        let rules = json["routing"]["rules"].as_array().unwrap();
+
+        assert_eq!(rules.len(), 7);
+        assert_eq!(rules[3]["outboundTag"], "block");
+        let zones = rules[4]["domain"].as_array().unwrap();
+        assert_eq!(zones.len(), raycat_routing::ru_zones().len());
+        assert!(zones.contains(&serde_json::json!("domain:ru")));
+        assert_eq!(rules[4]["outboundTag"], "direct");
+        assert_eq!(
+            rules[5]["ip"].as_array().unwrap().len(),
+            raycat_routing::ru_ipv4().count()
+        );
+        assert_eq!(rules[5]["outboundTag"], "direct");
+    }
+
+    #[test]
+    fn ru_direct_zones_go_to_the_real_resolver() {
+        let config = with_routing("[routing]\nru_direct = true\n");
+        let json = routing_json(&config);
+        let server = &json["dns"]["servers"][0];
+
+        assert_eq!(server["address"], "1.1.1.1");
+        assert!(
+            server["domains"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("domain:ru"))
+        );
+        assert_eq!(json["dns"]["servers"][1], "fakedns");
     }
 }

@@ -23,6 +23,7 @@ networks:
 volumes:
   state:
   state2:
+  state3:
 
 # Служебные контейнеры из того же образа не шлюзы: HEALTHCHECK образа у них провалился бы.
 x-idle-health: &idle-health
@@ -184,4 +185,37 @@ services:
     depends_on:
       <<: *after-panel
       holder:
+        condition: service_started
+
+  # Раздельная маршрутизация: свой шлюз с правилами rules.toml в своём пространстве.
+  holder2:
+    profiles: [lifecycle]
+    image: raycat:ci
+    container_name: raycat-e2e-holder2
+    entrypoint: ["sleep", "infinity"]
+    healthcheck: *idle-health
+    cap_add: [NET_ADMIN]
+    dns: [1.1.1.1]
+    networks:
+      wan:
+        ipv4_address: 11.30.0.6
+
+  gw3:
+    profiles: [lifecycle]
+    image: raycat:ci
+    container_name: raycat-e2e-gw3
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    environment:
+      RAYCAT_CONFIG: /e2e/gateway/rules.toml
+    volumes:
+      - ..:/e2e:ro
+      - state3:/var/lib/raycat
+    network_mode: service:holder2
+    depends_on:
+      <<: *after-panel
+      holder2:
         condition: service_started

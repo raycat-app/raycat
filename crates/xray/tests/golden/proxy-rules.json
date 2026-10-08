@@ -1,0 +1,202 @@
+{
+  "log": {"loglevel": "warning", "access": "none"},
+  "api": {
+    "tag": "api",
+    "listen": "127.0.0.1:10085",
+    "services": ["HandlerService", "RoutingService", "ObservatoryService", "StatsService"]
+  },
+  "stats": {},
+  "policy": {"system": {"statsOutboundUplink": true, "statsOutboundDownlink": true}},
+  "dns": {
+    "tag": "dns-internal",
+    "queryStrategy": "UseIPv4",
+    "servers": [
+      {
+        "address": "1.1.1.1",
+        "domains": [
+          "full:reality.example.com",
+          "full:xhttp.example.com",
+          "full:hy2.example.com",
+          "full:example.ru",
+          "domain:bank.example"
+        ],
+        "skipFallback": true
+      },
+      "fakedns",
+      "1.1.1.1",
+      "8.8.8.8"
+    ]
+  },
+  "fakedns": [{"ipPool": "198.18.0.0/15", "poolSize": 65535}],
+  "observatory": {
+    "subjectSelector": ["node-001-main", "node-002-main", "node-003-main", "node-004-main"],
+    "probeUrl": "https://www.gstatic.com/generate_204",
+    "probeInterval": "30s",
+    "enableConcurrency": true
+  },
+  "routing": {
+    "balancers": [
+      {
+        "tag": "auto",
+        "selector": ["node-001-main", "node-002-main", "node-003-main", "node-004-main"],
+        "strategy": {"type": "leastPing"},
+        "fallbackTag": "node-001-main"
+      }
+    ],
+    "rules": [
+      {"type": "field", "inboundTag": ["api"], "outboundTag": "api"},
+      {"type": "field", "inboundTag": ["dns-internal"], "outboundTag": "direct"},
+      {
+        "type": "field",
+        "ip": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "fc00::/7", "fe80::/10", "127.0.0.0/8"],
+        "outboundTag": "direct"
+      },
+      {"type": "field", "domain": ["full:example.ru", "domain:bank.example"], "outboundTag": "direct"},
+      {"type": "field", "ip": ["203.0.113.0/24"], "outboundTag": "block"},
+      {"type": "field", "domain": ["domain:ads.example.net"], "balancerTag": "auto"},
+      {"type": "field", "ip": ["198.51.100.0/24"], "balancerTag": "auto"},
+      {"type": "field", "network": "tcp,udp", "balancerTag": "auto"}
+    ]
+  },
+  "inbounds": [
+    {
+      "tag": "proxy-in",
+      "protocol": "mixed",
+      "listen": "0.0.0.0",
+      "port": 1080,
+      "settings": {"auth": "noauth", "udp": true},
+      "sniffing": {"enabled": true, "destOverride": ["http", "tls", "quic", "fakedns"], "routeOnly": true}
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "node-001-main",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "reality.example.com",
+            "port": 443,
+            "users": [{"id": "00000000-0000-0000-0000-000000000000", "encryption": "none", "flow": "xtls-rprx-vision"}]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "www.example.com",
+          "fingerprint": "chrome",
+          "publicKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "shortId": "0000000000000000",
+          "spiderX": "/"
+        },
+        "sockopt": {"dialerProxy": "node-001-x-fragment", "domainStrategy": "UseIPv4"}
+      }
+    },
+    {
+      "tag": "node-001-x-fragment",
+      "protocol": "freedom",
+      "settings": {"fragment": {"packets": "tlshello", "length": "100-200", "interval": "10-20"}},
+      "streamSettings": {"sockopt": {"domainStrategy": "UseIPv4"}}
+    },
+    {
+      "tag": "node-002-main",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "xhttp.example.com",
+            "port": 443,
+            "users": [{"id": "00000000-0000-0000-0000-000000000000", "encryption": "none"}]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "tlsSettings": {"serverName": "xhttp.example.com", "fingerprint": "chrome", "alpn": ["h2"]},
+        "xhttpSettings": {"path": "/", "host": "xhttp.example.com", "mode": "auto"},
+        "sockopt": {"dialerProxy": "node-002-x-hop", "domainStrategy": "UseIPv4"}
+      }
+    },
+    {
+      "tag": "node-002-x-hop",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "203.0.113.10",
+            "port": 443,
+            "users": [{"id": "00000000-0000-0000-0000-000000000000", "encryption": "none", "flow": "xtls-rprx-vision"}]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "www.example.com",
+          "fingerprint": "chrome",
+          "publicKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "shortId": "0000000000000000",
+          "spiderX": "/"
+        },
+        "sockopt": {"domainStrategy": "UseIPv4"}
+      }
+    },
+    {
+      "tag": "node-003-main",
+      "protocol": "hysteria",
+      "settings": {"version": 2, "address": "hy2.example.com", "port": 443},
+      "streamSettings": {
+        "network": "hysteria",
+        "security": "tls",
+        "tlsSettings": {"serverName": "hy2.example.com", "alpn": ["h3"]},
+        "hysteriaSettings": {"version": 2, "auth": "00000000-0000-0000-0000-000000000000"},
+        "sockopt": {"domainStrategy": "UseIPv4"}
+      }
+    },
+    {
+      "tag": "node-004-main",
+      "protocol": "trojan",
+      "settings": {
+        "servers": [{"address": "203.0.113.20", "port": 443, "password": "00000000-0000-0000-0000-000000000000"}]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "tls",
+        "tlsSettings": {"serverName": "example.com", "fingerprint": "chrome"},
+        "sockopt": {"dialerProxy": "node-004-x-relay", "domainStrategy": "UseIPv4"}
+      }
+    },
+    {
+      "tag": "node-004-x-relay",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "203.0.113.21",
+            "port": 443,
+            "users": [{"id": "00000000-0000-0000-0000-000000000000", "encryption": "none", "flow": "xtls-rprx-vision"}]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "www.example.com",
+          "fingerprint": "chrome",
+          "publicKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "shortId": "0000000000000000",
+          "spiderX": "/"
+        },
+        "sockopt": {"domainStrategy": "UseIPv4"}
+      }
+    },
+    {"tag": "direct", "protocol": "freedom", "settings": {}},
+    {"tag": "block", "protocol": "blackhole", "settings": {}},
+    {"tag": "dns-out", "protocol": "dns", "settings": {}}
+  ]
+}

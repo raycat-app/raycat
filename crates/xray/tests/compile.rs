@@ -6,7 +6,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use raycat_xray::{
-    CompileError, Compiled, Credentials, Mode, Node, Settings, SkippedNode, Subscription, compile,
+    Action, CompileError, Compiled, Credentials, Domain, Mode, Node, Rule, Settings, SkippedNode,
+    Subnet, Subscription, compile,
 };
 use serde_json::{Value, json};
 
@@ -803,4 +804,143 @@ fn golden_proxy_with_password_config() {
 #[test]
 fn golden_gateway_config() {
     assert_golden("gateway.json", &build(gateway_mode()).config);
+}
+
+fn domain(name: &str, subdomains: bool) -> Domain {
+    Domain {
+        name: name.to_owned(),
+        subdomains,
+    }
+}
+
+fn subnet(a: u8, b: u8, c: u8, d: u8, prefix: u8) -> Subnet {
+    Subnet {
+        addr: IpAddr::V4(Ipv4Addr::new(a, b, c, d)),
+        prefix,
+    }
+}
+
+fn rule_settings(mode: Mode) -> Settings {
+    let mut settings = Settings::new(mode, 10085);
+    settings.rules = vec![
+        Rule {
+            domains: vec![domain("example.ru", false), domain("bank.example", true)],
+            subnets: Vec::new(),
+            action: Action::Direct,
+        },
+        Rule {
+            domains: Vec::new(),
+            subnets: vec![subnet(203, 0, 113, 0, 24)],
+            action: Action::Block,
+        },
+        Rule {
+            domains: vec![domain("ads.example.net", true)],
+            subnets: vec![subnet(198, 51, 100, 0, 24)],
+            action: Action::Proxy,
+        },
+    ];
+    settings
+}
+
+fn build_with_rules(mode: Mode) -> Value {
+    compile(&subscriptions(), &rule_settings(mode))
+        .unwrap()
+        .config
+}
+
+#[test]
+fn own_rules_keep_their_order_and_kind() {
+    let config = build_with_rules(gateway_mode());
+
+    assert_eq!(
+        config["routing"]["rules"],
+        json!([
+            {"type": "field", "inboundTag": ["api"], "outboundTag": "api"},
+            {"type": "field", "inboundTag": ["dns-internal"], "outboundTag": "direct"},
+            {"type": "field", "port": "53", "outboundTag": "dns-out"},
+            {"type": "field", "ip": [
+                "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
+                "fc00::/7", "fe80::/10", "127.0.0.0/8"
+            ], "outboundTag": "direct"},
+            {"type": "field", "domain": ["full:example.ru", "domain:bank.example"], "outboundTag": "direct"},
+            {"type": "field", "ip": ["203.0.113.0/24"], "outboundTag": "block"},
+            {"type": "field", "domain": ["domain:ads.example.net"], "balancerTag": "auto"},
+            {"type": "field", "ip": ["198.51.100.0/24"], "balancerTag": "auto"},
+            {"type": "field", "network": "tcp,udp", "balancerTag": "auto"}
+        ])
+    );
+}
+
+#[test]
+fn direct_domains_resolve_through_the_real_resolver_before_fakedns() {
+    let config = build_with_rules(gateway_mode());
+
+    assert_eq!(
+        config["dns"]["servers"],
+        json!([
+            {
+                "address": "1.1.1.1",
+                "domains": [
+                    "full:reality.example.com",
+                    "full:xhttp.example.com",
+                    "full:hy2.example.com",
+                    "full:example.ru",
+                    "domain:bank.example"
+                ],
+                "skipFallback": true
+            },
+            "fakedns",
+            "1.1.1.1",
+            "8.8.8.8"
+        ])
+    );
+}
+
+#[test]
+fn proxy_and_block_domains_do_not_touch_dns() {
+    let mut settings = Settings::new(proxy_mode(), 10085);
+    settings.rules = vec![Rule {
+        domains: vec![domain("ads.example.net", true)],
+        subnets: Vec::new(),
+        action: Action::Block,
+    }];
+    let with_block = compile(&subscriptions(), &settings).unwrap().config;
+
+    assert_eq!(
+        with_block["dns"],
+        build(proxy_mode()).config["dns"],
+        "блокировка не должна менять DNS"
+    );
+}
+
+#[test]
+fn route_only_follows_domain_rules() {
+    let plain = build(gateway_mode()).config;
+    assert!(plain["inbounds"][0]["sniffing"].get("routeOnly").is_none());
+
+    let mut settings = Settings::new(proxy_mode(), 10085);
+    settings.rules = vec![Rule {
+        domains: Vec::new(),
+        subnets: vec![subnet(203, 0, 113, 0, 24)],
+        action: Action::Direct,
+    }];
+    let by_ip = compile(&subscriptions(), &settings).unwrap().config;
+    assert!(by_ip["inbounds"][0]["sniffing"].get("routeOnly").is_none());
+
+    let by_domain = build_with_rules(proxy_mode());
+    assert_eq!(by_domain["inbounds"][0]["sniffing"]["routeOnly"], true);
+    assert_eq!(
+        by_domain["inbounds"][0]["sniffing"]["destOverride"],
+        json!(["http", "tls", "quic", "fakedns"])
+    );
+}
+
+#[test]
+fn golden_gateway_with_rules_config() {
+    assert_golden("gateway-rules.json", &build_with_rules(gateway_mode()));
+}
+
+#[test]
+fn golden_proxy_with_rules_config() {
+    assert_golden("proxy-rules.json", &build_with_rules(proxy_mode()));
 }

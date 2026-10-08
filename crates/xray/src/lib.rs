@@ -8,4 +8,6 @@ pub use compile::{
     CompileError, Compiled, NodeEntry, SkippedNode, Subscription, TagTable, compile,
 };
 pub use node::Node;
-pub use settings::{Credentials, DnsSettings, Mode, ProbeSettings, Settings};
+pub use settings::{
+    Action, Credentials, DnsSettings, Domain, Mode, ProbeSettings, Rule, Settings, Subnet,
+};
