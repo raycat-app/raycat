@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use crate::nodes::compile_node;
 use crate::tuning::{self, Tuning};
-use crate::{Action, Domain, DomainKind, Mode, Node, Rule, Settings, Subnet};
+use crate::{Action, Domain, DomainKind, Mode, Node, Rule, Settings, SpeedtestInbound, Subnet};
 
 const PRIVATE_NETWORKS: [&str; 7] = [
     "10.0.0.0/8",
@@ -27,6 +27,7 @@ const API_SERVICES: [&str; 4] = [
 ];
 
 const BALANCER_TAG: &str = "auto";
+const SPEEDTEST_TAG: &str = "speedtest-in";
 const FAKE_IP_POOL_SIZE: u32 = 65_535;
 
 /// Подписка: идентификатор и узлы. Порядок подписок в списке — их приоритет.
@@ -177,7 +178,7 @@ pub fn compile(
             }],
             "rules": rules(&settings.mode, &settings.rules),
         },
-        "inbounds": inbounds(&settings.mode, route_only(&settings.rules)),
+        "inbounds": inbound_list(settings),
         "outbounds": outbounds,
     });
 
@@ -284,6 +285,27 @@ fn route(field: &str, value: Value, action: Action) -> Value {
         Action::Proxy => rule["balancerTag"] = json!(BALANCER_TAG),
     }
     rule
+}
+
+fn inbound_list(settings: &Settings) -> Vec<Value> {
+    let mut list = inbounds(&settings.mode, route_only(&settings.rules));
+    list.extend(settings.speedtest.as_ref().map(speedtest_inbound));
+    list
+}
+
+/// Служебный вход теста скорости: только петля и логин с паролем. Трафик от него уходит по тому
+/// же правилу по умолчанию, что и весь остальной, то есть на выбранный узел.
+fn speedtest_inbound(inbound: &SpeedtestInbound) -> Value {
+    json!({
+        "tag": SPEEDTEST_TAG,
+        "protocol": "mixed",
+        "listen": "127.0.0.1",
+        "port": inbound.port,
+        "settings": {
+            "auth": "password",
+            "accounts": [{"user": inbound.credentials.user, "pass": inbound.credentials.password}],
+        },
+    })
 }
 
 fn inbounds(mode: &Mode, by_domain: bool) -> Vec<Value> {

@@ -13,6 +13,7 @@ mod plan;
 mod render;
 mod schedule;
 mod selection;
+mod speedtest;
 mod store;
 mod term;
 #[cfg(test)]
@@ -69,7 +70,9 @@ fn run(matches: &ArgMatches) -> Result<()> {
     let (name, sub) = matches.subcommand().context("не указана команда")?;
     let env = paths::environment();
     match name {
-        "status" | "nodes" | "use" | "update" | "events" => return ctl::run(name, sub, &env),
+        "status" | "nodes" | "use" | "update" | "speedtest" | "events" => {
+            return ctl::run(name, sub, &env);
+        }
         "health" => return ctl::health(&env),
         "tui" => return tui::run(&env),
         "init" => return init::run(sub, &env),

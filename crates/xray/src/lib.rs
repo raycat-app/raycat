@@ -10,5 +10,5 @@ pub use compile::{
 pub use node::Node;
 pub use settings::{
     Action, Credentials, DnsSettings, Domain, DomainKind, Mode, ProbeSettings, Rule, Settings,
-    Subnet,
+    SpeedtestInbound, Subnet,
 };

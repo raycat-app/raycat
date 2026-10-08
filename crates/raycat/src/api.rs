@@ -19,7 +19,11 @@ use axum::http::StatusCode;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use raycat_proto::{ErrorBody, Event, Nodes, PinRequest, Pinned, Status, UpdateRequest, Updates};
+use raycat_proto::{
+    ErrorBody, Event, Nodes, PinRequest, Pinned, SpeedtestProgress, SpeedtestRequest,
+    SpeedtestResult, Status, UpdateRequest, Updates,
+};
+use raycat_select::PinTarget;
 use raycat_xray_api::XrayApi;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -28,8 +32,12 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::BroadcastStream;
 
+use crate::speedtest;
+
 /// Сколько обработчик ждёт ответа демона на команду: обновление подписки может идти долго.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(150);
+/// Тест скорости: два замера по минуте и ожидание узла в xray.
+const SPEEDTEST_TIMEOUT: Duration = Duration::from_secs(300);
 const EVENT_BACKLOG: usize = 256;
 
 /// Почему демон отказал в команде.
@@ -50,6 +58,16 @@ pub(crate) enum Command {
         subscription: Option<String>,
         reply: oneshot::Sender<Result<Updates, Refusal>>,
     },
+    /// Тест скорости: демон закрепляет узел, качает и возвращает прежнее закрепление.
+    Speedtest {
+        request: SpeedtestRequest,
+        reply: oneshot::Sender<Result<SpeedtestResult, Refusal>>,
+    },
+    /// Снимает закрепление теста и возвращает `pin`; `ack` получает ответ, когда это сделано.
+    SpeedtestRestore {
+        pin: Option<PinTarget>,
+        ack: oneshot::Sender<()>,
+    },
 }
 
 /// Общее состояние демона для обработчиков API.
@@ -58,6 +76,10 @@ pub(crate) struct Shared {
     status: Mutex<Status>,
     nodes: Mutex<Nodes>,
     xray: Mutex<Option<XrayApi>>,
+    /// Тег узла, который xray закрепил в балансировщике: по нему тест ждёт применения узла.
+    xray_pin: Mutex<Option<String>>,
+    /// Ход теста скорости; `None`, когда теста нет.
+    speedtest: Mutex<Option<SpeedtestProgress>>,
     events: broadcast::Sender<Event>,
     commands: mpsc::UnboundedSender<Command>,
 }
@@ -78,6 +100,8 @@ impl Shared {
                 nodes: Vec::new(),
             }),
             xray: Mutex::new(None),
+            xray_pin: Mutex::new(None),
+            speedtest: Mutex::new(None),
             events,
             commands,
         });
@@ -95,6 +119,48 @@ impl Shared {
     /// Клиент API xray для запросов трафика; `None`, пока xray не работает.
     pub(crate) fn set_xray(&self, api: Option<XrayApi>) {
         *locked(&self.xray) = api;
+    }
+
+    pub(crate) fn set_xray_pin(&self, tag: Option<String>) {
+        *locked(&self.xray_pin) = tag;
+    }
+
+    pub(crate) fn xray_pin(&self) -> Option<String> {
+        locked(&self.xray_pin).clone()
+    }
+
+    /// Занимает место теста скорости; `false`, если тест уже идёт.
+    pub(crate) fn begin_speedtest(&self, runs: usize) -> bool {
+        let mut slot = locked(&self.speedtest);
+        if slot.is_some() {
+            return false;
+        }
+        *slot = Some(SpeedtestProgress {
+            run: 0,
+            runs,
+            percent: 0,
+        });
+        true
+    }
+
+    pub(crate) fn speedtest_step(&self, run: usize, percent: u8) {
+        if let Some(progress) = locked(&self.speedtest).as_mut() {
+            progress.run = run;
+            progress.percent = percent;
+        }
+    }
+
+    pub(crate) fn end_speedtest(&self) {
+        *locked(&self.speedtest) = None;
+    }
+
+    pub(crate) fn speedtest_progress(&self) -> Option<SpeedtestProgress> {
+        locked(&self.speedtest).clone()
+    }
+
+    /// Отправляет команду демону; `false`, если демон уже остановлен.
+    pub(crate) fn command(&self, command: Command) -> bool {
+        self.commands.send(command).is_ok()
     }
 
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<Event> {
@@ -149,6 +215,7 @@ pub(crate) fn router(shared: Arc<Shared>) -> Router {
         .route("/v1/nodes", get(nodes))
         .route("/v1/pin", post(pin).delete(unpin))
         .route("/v1/update", post(update))
+        .route("/v1/speedtest", post(run_speedtest).get(speedtest_status))
         .route("/v1/events", get(events))
         .fallback(not_found)
         .with_state(shared)
@@ -239,6 +306,47 @@ async fn update(State(shared): State<Arc<Shared>>, body: Bytes) -> Result<Json<U
         reply,
     })
     .await
+}
+
+async fn run_speedtest(
+    State(shared): State<Arc<Shared>>,
+    body: Bytes,
+) -> Result<Json<SpeedtestResult>, ApiError> {
+    let request: SpeedtestRequest = parse(&body)?;
+    speedtest::check(&request)
+        .map_err(|message| ApiError::new(StatusCode::BAD_REQUEST, message))?;
+    if !shared.begin_speedtest(speedtest::runs(request.streams).len()) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "тест скорости уже идёт",
+        ));
+    }
+    let (reply, answer) = oneshot::channel();
+    if !shared.command(Command::Speedtest { request, reply }) {
+        shared.end_speedtest();
+        return Err(ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "демон останавливается",
+        ));
+    }
+    match tokio::time::timeout(SPEEDTEST_TIMEOUT, answer).await {
+        Ok(Ok(Ok(result))) => Ok(Json(result)),
+        Ok(Ok(Err(refusal))) => Err(refusal.into()),
+        Ok(Err(_)) => Err(ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "демон не ответил на команду",
+        )),
+        Err(_) => Err(ApiError::new(
+            StatusCode::GATEWAY_TIMEOUT,
+            "тест скорости не уложился в срок",
+        )),
+    }
+}
+
+/// Ход теста для окна прогресса в CLI; `null`, когда теста нет.
+#[allow(clippy::unused_async)]
+async fn speedtest_status(State(shared): State<Arc<Shared>>) -> Json<Option<SpeedtestProgress>> {
+    Json(shared.speedtest_progress())
 }
 
 fn sse(event: &Event) -> SseEvent {
@@ -442,6 +550,7 @@ mod tests {
         let socket = temp.path().join("raycat.sock");
         let (shared, mut commands) = Shared::new(sample_status());
         shared.publish_nodes(sample_nodes());
+        let daemon_side = Arc::clone(&shared);
         tokio::spawn(async move {
             while let Some(command) = commands.recv().await {
                 match command {
@@ -474,6 +583,18 @@ mod tests {
                             }),
                         };
                         let _ = reply.send(answer);
+                    }
+                    Command::Speedtest { reply, .. } => {
+                        daemon_side.end_speedtest();
+                        let _ = reply.send(Ok(raycat_proto::SpeedtestResult {
+                            node: "main/NL-1".to_owned(),
+                            url: "https://speed.example.com/…down".to_owned(),
+                            runs: Vec::new(),
+                            hint: None,
+                        }));
+                    }
+                    Command::SpeedtestRestore { ack, .. } => {
+                        let _ = ack.send(());
                     }
                 }
             }
@@ -740,5 +861,67 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o700);
+    }
+
+    #[tokio::test]
+    async fn speedtest_is_checked_then_answered_by_the_daemon() {
+        let fixture = fixture();
+        let (code, body) = json(&fixture.socket, "POST", "/v1/speedtest", r#"{"size":500}"#).await;
+        assert_eq!(code, 400);
+        assert!(body["error"].as_str().unwrap().contains("не меньше 1 МБ"));
+
+        let (code, _) = json(
+            &fixture.socket,
+            "POST",
+            "/v1/speedtest",
+            r#"{"size":25000000,"url":"http://example.com/"}"#,
+        )
+        .await;
+        assert_eq!(code, 400);
+
+        let (code, _) = json(
+            &fixture.socket,
+            "POST",
+            "/v1/speedtest",
+            r#"{"size":25000000,"streams":9}"#,
+        )
+        .await;
+        assert_eq!(code, 400);
+
+        let (code, body) = json(
+            &fixture.socket,
+            "POST",
+            "/v1/speedtest",
+            r#"{"size":25000000,"streams":1}"#,
+        )
+        .await;
+        assert_eq!(code, 200);
+        assert_eq!(body["node"], "main/NL-1");
+        assert_eq!(body["runs"], serde_json::json!([]));
+
+        let (code, body) = json(&fixture.socket, "GET", "/v1/speedtest", "").await;
+        assert_eq!(code, 200);
+        assert!(body.is_null());
+    }
+
+    #[test]
+    fn only_one_speedtest_runs_at_a_time() {
+        let (shared, _commands) = Shared::new(sample_status());
+        assert!(shared.begin_speedtest(2));
+        assert!(!shared.begin_speedtest(1));
+        shared.speedtest_step(1, 40);
+        let progress = shared.speedtest_progress().unwrap();
+        assert_eq!((progress.run, progress.runs, progress.percent), (1, 2, 40));
+        shared.end_speedtest();
+        assert!(shared.speedtest_progress().is_none());
+        assert!(shared.begin_speedtest(1));
+    }
+
+    #[test]
+    fn the_xray_pin_is_remembered_for_the_speedtest() {
+        let (shared, _commands) = Shared::new(sample_status());
+        assert_eq!(shared.xray_pin(), None);
+        shared.set_xray_pin(Some("node-001-main".to_owned()));
+        assert_eq!(shared.xray_pin().as_deref(), Some("node-001-main"));
     }
 }

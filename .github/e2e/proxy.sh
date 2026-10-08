@@ -18,6 +18,7 @@ node_ip=11.11.11.10
 node_port=18388
 site_ip=11.11.11.20
 site_port=18080
+site_tls_port=18443
 panel_port=18090
 proxy=127.0.0.1:7890
 password=e2e-password
@@ -38,7 +39,7 @@ cleanup() {
   for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null; done
   wait 2>/dev/null
   if [ "$status" -ne 0 ]; then
-    for log in raycat node panel site; do
+    for log in raycat node panel site tls-site; do
       echo "::group::$log.log"
       cat "$work/$log.log" 2>/dev/null
       echo "::endgroup::"
@@ -157,6 +158,18 @@ echo raycat-e2e-ok >"$work/site/index.html"
 python3 -m http.server "$site_port" --bind "$site_ip" --directory "$work/site" >"$work/site.log" 2>&1 &
 pids+=($!)
 
+head -c 1000000 /dev/zero >"$work/site/speed.bin"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$work/ca.key" -out "$work/ca.crt" \
+  -days 1 -subj "/CN=raycat e2e CA" 2>/dev/null
+openssl req -newkey rsa:2048 -nodes -keyout "$work/site.key" -out "$work/site.csr" \
+  -subj "/CN=$site_ip" 2>/dev/null
+printf 'subjectAltName=IP:%s\nbasicConstraints=CA:FALSE\n' "$site_ip" >"$work/site.ext"
+openssl x509 -req -in "$work/site.csr" -CA "$work/ca.crt" -CAkey "$work/ca.key" \
+  -CAcreateserial -out "$work/site.crt" -days 1 -extfile "$work/site.ext" 2>/dev/null
+python3 "$root/.github/e2e/tls_site.py" --bind "$site_ip" --port "$site_tls_port" \
+  --directory "$work/site" --cert "$work/site.crt" --key "$work/site.key" >"$work/tls-site.log" 2>&1 &
+pids+=($!)
+
 userinfo=$(printf 'aes-128-gcm:%s' "$password" | base64 -w0 | tr -d '=')
 printf 'ss://%s@%s:%s#E2E\n' "$userinfo" "$node_ip" "$node_port" | base64 -w0 >"$work/panel-body"
 python3 "$root/.github/e2e/panel.py" --port "$panel_port" --body "$work/panel-body" \
@@ -185,6 +198,7 @@ path = "$xray"
 [log]
 level = "debug"
 EOF
+export SSL_CERT_FILE="$work/ca.crt"
 export RAYCAT_STATE_DIR="$work/state"
 export RAYCAT_SOCKET="$work/raycat.sock"
 : >"$work/raycat.log"
@@ -254,6 +268,24 @@ expect_site http
 "$raycat" use auto >"$work/use.log" || fail "use auto не принят"
 grep -q 'Закрепление снято' "$work/use.log" || fail "use auto не сообщил о снятии: $(cat "$work/use.log")"
 wait_for "закрепление снято" status_is '.node.pinned == false'
+
+echo "  тест скорости"
+wait_for "сайт с TLS" curl -fsS --cacert "$work/ca.crt" "https://$site_ip:$site_tls_port/speed.bin" -o /dev/null
+"$raycat" speedtest --url "https://$site_ip:$site_tls_port/speed.bin" --size 1MB --json >"$work/speed.json" \
+  || fail "тест скорости не выполнен"
+jq -e '(.runs | length) == 2 and all(.runs[]; .bytes == 1000000 and .mbps > 0) and .node == "e2e/E2E"' \
+  "$work/speed.json" >/dev/null || fail "тест скорости: результат $(cat "$work/speed.json")"
+wait_for "трафик теста прошёл через узел" grep -q "$site_ip:$site_tls_port" "$work/node-access.log"
+status_is '.node.pinned == false' || fail "тест скорости оставил закрепление"
+"$raycat" use e2e/E2E >/dev/null || fail "use перед тестом с узлом не принят"
+wait_for "закрепление перед тестом" status_is '.node.pinned == true'
+"$raycat" speedtest e2e/E2E --url "https://$site_ip:$site_tls_port/speed.bin" --size 1MB --streams 2 --json \
+  >"$work/speed.json" || fail "тест скорости с узлом не выполнен"
+jq -e '(.runs | length) == 1 and .runs[0].streams == 2 and .node == "e2e/E2E"' "$work/speed.json" >/dev/null \
+  || fail "тест скорости с узлом: результат $(cat "$work/speed.json")"
+status_is '.node.pinned == true and .node.id == "e2e/E2E"' || fail "тест скорости не вернул закрепление"
+"$raycat" use auto >/dev/null || fail "use auto после теста не принят"
+wait_for "закрепление снято после теста" status_is '.node.pinned == false'
 
 echo "  обновление и события"
 requests_before=$(grep -c '^GET /sub' "$work/panel-requests.log")

@@ -380,3 +380,152 @@ fn line_breaks_in_fields_never_reach_the_wire() {
         assert!(text.contains("недопустимый символ"), "{text}");
     }
 }
+
+#[test]
+fn streams_pieces_and_stops_when_asked() {
+    let chunked =
+        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n"
+            .to_vec();
+    let sized = b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789".to_vec();
+    let (port, server) = serve(vec![chunked, sized]);
+    let client = Client::default();
+    let target = url(port);
+    let sent = headers(&[("Host", "h")]);
+    let request = Request {
+        method: "GET",
+        target: "/",
+        headers: &sent,
+        body: &[],
+    };
+
+    let mut all = Vec::new();
+    let response = client
+        .stream(&target, &request, &mut |piece| {
+            all.extend_from_slice(piece);
+            true
+        })
+        .unwrap();
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, Vec::<u8>::new());
+    assert_eq!(all, b"hello world");
+
+    let mut seen = 0;
+    client
+        .stream(&target, &request, &mut |piece| {
+            seen += piece.len();
+            false
+        })
+        .unwrap();
+    assert!((1..=10).contains(&seen), "{seen}");
+    server.join().unwrap();
+}
+
+#[test]
+fn streams_through_a_proxy() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let proxy = thread::spawn(move || {
+        let mut sock = accept(&listener);
+        read_request(&mut sock);
+        sock.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            .unwrap();
+        let inner = read_request(&mut sock);
+        sock.write_all(OK).unwrap();
+        inner
+    });
+    let client = Client {
+        proxy: Some(url(port)),
+        ..Client::default()
+    };
+    let target = Url::parse("http://203.0.113.7:8080/x").unwrap();
+    let mut body = Vec::new();
+    client
+        .stream(
+            &target,
+            &Request {
+                method: "GET",
+                target: &target.target,
+                headers: &headers(&[("Host", target.host_header().as_str())]),
+                body: &[],
+            },
+            &mut |piece| {
+                body.extend_from_slice(piece);
+                true
+            },
+        )
+        .unwrap();
+    assert_eq!(body, b"ok");
+    assert_eq!(
+        proxy.join().unwrap(),
+        b"GET /x HTTP/1.1\r\nHost: 203.0.113.7:8080\r\n\r\n"
+    );
+}
+
+#[test]
+fn the_tunnel_needs_the_proxy_credentials() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let proxy = thread::spawn(move || {
+        let mut answers = Vec::new();
+        for _ in 0..2 {
+            let mut sock = accept(&listener);
+            let connect = String::from_utf8(read_request(&mut sock)).unwrap();
+            if connect.contains("Proxy-Authorization: Basic dXNlcjpwYXNz\r\n") {
+                sock.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                    .unwrap();
+                read_request(&mut sock);
+                sock.write_all(OK).unwrap();
+            } else {
+                sock.write_all(
+                    b"HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n",
+                )
+                .unwrap();
+            }
+            answers.push(connect);
+        }
+        answers
+    });
+    let target = Url::parse("http://203.0.113.7/").unwrap();
+    let sent = headers(&[("Host", "203.0.113.7")]);
+    let request = || Request {
+        method: "GET",
+        target: "/",
+        headers: &sent,
+        body: &[],
+    };
+    let anonymous = Client {
+        proxy: Some(url(port)),
+        ..Client::default()
+    };
+    let text = err_text(anonymous.send(&target, &request()));
+    assert!(text.contains("407"), "{text}");
+
+    let authorized = Client {
+        proxy: Some(url(port)),
+        proxy_authorization: Some("Basic dXNlcjpwYXNz".to_owned()),
+        ..Client::default()
+    };
+    assert_eq!(authorized.send(&target, &request()).unwrap().body, b"ok");
+    let answers = proxy.join().unwrap();
+    assert!(!answers[0].contains("Proxy-Authorization"));
+    assert!(answers[1].contains("Proxy-Authorization: Basic dXNlcjpwYXNz\r\n"));
+}
+
+#[test]
+fn compressed_bodies_are_refused_when_streaming() {
+    let (port, server) = serve(vec![
+        b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 2\r\n\r\nxx".to_vec(),
+    ]);
+    let text = err_text(Client::default().stream(
+        &url(port),
+        &Request {
+            method: "GET",
+            target: "/",
+            headers: &headers(&[("Host", "h")]),
+            body: &[],
+        },
+        &mut |_| true,
+    ));
+    assert!(text.contains("сжатое тело"), "{text}");
+    server.join().unwrap();
+}

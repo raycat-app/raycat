@@ -30,6 +30,8 @@ pub struct Client {
     pub total_timeout: Duration,
     /// Прокси `http://host:port`, через который идёт `CONNECT`.
     pub proxy: Option<Url>,
+    /// Значение заголовка `Proxy-Authorization` для `CONNECT`, например `Basic …`.
+    pub proxy_authorization: Option<String>,
     pub max_body: usize,
     /// `SO_MARK` для исходящих TCP-соединений и DNS-запросов, чтобы kill switch шлюза
     /// их пропускал. Нужен `CAP_NET_ADMIN`; без него метка не ставится.
@@ -43,6 +45,7 @@ impl Default for Client {
             io_timeout: Duration::from_secs(30),
             total_timeout: Duration::from_secs(90),
             proxy: None,
+            proxy_authorization: None,
             max_body: 32 * 1024 * 1024,
             mark: None,
         }
@@ -61,24 +64,30 @@ impl Client {
             deadline,
             io_timeout: self.io_timeout,
         };
-        let mut head = format!("{} {} HTTP/1.1\r\n", req.method, req.target);
-        for (name, value) in req.headers {
-            head.extend([name.as_str(), ": ", value.as_str(), "\r\n"]);
-        }
-        let has_length = req
-            .headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("content-length"));
-        if !req.body.is_empty() && !has_length {
-            let len = req.body.len().to_string();
-            head.extend(["Content-Length: ", len.as_str(), "\r\n"]);
-        }
-        head.push_str("\r\n");
-        let mut wire = head.into_bytes();
-        wire.extend_from_slice(req.body);
-        stream.write_all(&wire).context("отправка запроса")?;
-        stream.flush()?;
+        write_request(&mut stream, req)?;
         let mut response = response::read_response(&mut stream, req.method, self.max_body)?;
+        response.peer = peer;
+        Ok(response)
+    }
+
+    /// Как [`Client::send`], но тело не копится в памяти: `sink` получает куски по мере
+    /// чтения и возвращает `false`, чтобы прервать загрузку. В `Response::body` тела нет.
+    pub fn stream(
+        &self,
+        url: &Url,
+        req: &Request<'_>,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<Response> {
+        check_request(req)?;
+        let deadline = Instant::now() + self.total_timeout;
+        let (inner, peer) = self.connect(url, deadline)?;
+        let mut stream = Stream {
+            inner,
+            deadline,
+            io_timeout: self.io_timeout,
+        };
+        write_request(&mut stream, req)?;
+        let mut response = response::stream_response(&mut stream, req.method, sink)?;
         response.peer = peer;
         Ok(response)
     }
@@ -150,9 +159,16 @@ impl Client {
         } else {
             format!("{host}:{port}")
         };
+        let auth = match &self.proxy_authorization {
+            Some(value) if value.chars().any(char::is_control) => {
+                bail!("недопустимый символ в Proxy-Authorization");
+            }
+            Some(value) => format!("Proxy-Authorization: {value}\r\n"),
+            None => String::new(),
+        };
         write!(
             stream,
-            "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n"
+            "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n{auth}\r\n"
         )
         .context("отправка CONNECT")?;
         // Читаем побайтно: за концом ответа прокси нельзя потребить ни байта,
@@ -178,6 +194,27 @@ impl Client {
             Inner::Tls(_) => bail!("внутренняя ошибка: туннель к прокси построен поверх TLS"),
         }
     }
+}
+
+fn write_request(stream: &mut Stream, req: &Request<'_>) -> Result<()> {
+    let mut head = format!("{} {} HTTP/1.1\r\n", req.method, req.target);
+    for (name, value) in req.headers {
+        head.extend([name.as_str(), ": ", value.as_str(), "\r\n"]);
+    }
+    let has_length = req
+        .headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("content-length"));
+    if !req.body.is_empty() && !has_length {
+        let len = req.body.len().to_string();
+        head.extend(["Content-Length: ", len.as_str(), "\r\n"]);
+    }
+    head.push_str("\r\n");
+    let mut wire = head.into_bytes();
+    wire.extend_from_slice(req.body);
+    stream.write_all(&wire).context("отправка запроса")?;
+    stream.flush()?;
+    Ok(())
 }
 
 /// Запрос уходит на провод как есть, поэтому управляющие символы в полях, которые

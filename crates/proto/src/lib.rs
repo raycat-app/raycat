@@ -132,6 +132,55 @@ pub struct Pinned {
     pub node: Option<String>,
 }
 
+/// Запрос `POST /v1/speedtest`. Замеры идут через служебный вход xray на петле; на время
+/// теста демон закрепляет узел и потом возвращает прежнее закрепление.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpeedtestRequest {
+    /// `id` узла из `GET /v1/nodes`; без него тест идёт через текущий выбранный узел.
+    pub node: Option<String>,
+    /// Объём одного замера в байтах; делится между потоками.
+    pub size: u64,
+    /// Один замер с этим числом потоков; без него два замера: 1 поток и 4 потока.
+    pub streams: Option<u8>,
+    /// Адрес https для скачивания; без него тестовый сервер Cloudflare.
+    pub url: Option<String>,
+}
+
+/// Один замер: все его потоки вместе.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SpeedtestRun {
+    pub streams: u8,
+    /// Полезная нагрузка всех потоков.
+    pub bytes: u64,
+    /// От первого байта до последнего по всем потокам.
+    pub seconds: f64,
+    /// Мегабиты в секунду (10^6 бит/с).
+    pub mbps: f64,
+    /// Среднее по потокам время до первого байта тела, мс.
+    pub ttfb_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SpeedtestResult {
+    /// `id` узла, через который шёл тест.
+    pub node: String,
+    /// Адрес без строки запроса (см. `raycat_http::redact`).
+    pub url: String,
+    pub runs: Vec<SpeedtestRun>,
+    /// Подсказка, если четыре потока заметно быстрее одного.
+    pub hint: Option<String>,
+}
+
+/// Ход теста для `GET /v1/speedtest`; `null`, когда теста нет.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpeedtestProgress {
+    /// Номер текущего замера с 1; 0 — узел ещё применяется в xray.
+    pub run: usize,
+    pub runs: usize,
+    /// Доля скачанного в текущем замере, 0..=100.
+    pub percent: u8,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ErrorBody {
     pub error: String,
@@ -267,5 +316,33 @@ mod tests {
         assert_eq!(request, UpdateRequest::default());
         let named: UpdateRequest = serde_json::from_str(r#"{"subscription":"a"}"#).unwrap();
         assert_eq!(named.subscription.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn speedtest_request_needs_only_the_size() {
+        let request: SpeedtestRequest = serde_json::from_str(r#"{"size":25000000}"#).unwrap();
+        assert_eq!(
+            request,
+            SpeedtestRequest {
+                node: None,
+                size: 25_000_000,
+                streams: None,
+                url: None,
+            }
+        );
+        let progress = SpeedtestProgress {
+            run: 1,
+            runs: 2,
+            percent: 34,
+        };
+        let text = serde_json::to_string(&Some(progress.clone())).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Option<SpeedtestProgress>>(&text).unwrap(),
+            Some(progress)
+        );
+        assert_eq!(
+            serde_json::from_str::<Option<SpeedtestProgress>>("null").unwrap(),
+            None
+        );
     }
 }

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use raycat_xray::{
     Action, CompileError, Compiled, Credentials, Domain, DomainKind, Mode, Node, Rule, Settings,
-    SkippedNode, Subnet, Subscription, compile,
+    SkippedNode, SpeedtestInbound, Subnet, Subscription, compile,
 };
 use serde_json::{Value, json};
 
@@ -985,4 +985,55 @@ fn golden_gateway_with_provider_rules_config() {
         .unwrap()
         .config;
     assert_golden("gateway-provider.json", &config);
+}
+
+#[test]
+fn speedtest_inbound_exists_only_when_asked() {
+    let inbound_tags = |config: &Value| -> Vec<String> {
+        config["inbounds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|inbound| inbound["tag"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let plain = build(proxy_mode()).config;
+    assert!(!inbound_tags(&plain).contains(&"speedtest-in".to_owned()));
+
+    let mut settings = Settings::new(gateway_mode(), 10085);
+    settings.speedtest = Some(SpeedtestInbound {
+        port: 10086,
+        credentials: Credentials {
+            user: "speedtest".to_owned(),
+            password: "secret-pass".to_owned(),
+        },
+    });
+    let config = compile(&subscriptions(), &settings).unwrap().config;
+    assert!(inbound_tags(&config).contains(&"speedtest-in".to_owned()));
+    let inbound = config["inbounds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|inbound| inbound["tag"] == "speedtest-in")
+        .unwrap();
+    assert_eq!(
+        inbound,
+        &json!({
+            "tag": "speedtest-in",
+            "protocol": "mixed",
+            "listen": "127.0.0.1",
+            "port": 10086,
+            "settings": {
+                "auth": "password",
+                "accounts": [{"user": "speedtest", "pass": "secret-pass"}]
+            }
+        })
+    );
+    let balancer_rule = config["routing"]["rules"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
+    assert_eq!(balancer_rule["balancerTag"], "auto");
+    assert!(balancer_rule.get("inboundTag").is_none());
 }

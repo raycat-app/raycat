@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use crate::daemon::free_port;
 use crate::plan;
+use crate::speedtest;
 use crate::store::Store;
 use crate::tuning;
 use crate::updater::{self, Source};
@@ -95,7 +96,13 @@ pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
         .map(|((subscription, nodes), routing)| (subscription, nodes.as_slice(), routing.as_ref()))
         .collect();
     let congestion = tuning::congestion(&config.xray.tcp_congestion);
-    let plan = plan::compile_config(config, &inputs, free_port()?, congestion.algorithm())?;
+    let plan = plan::compile_config(
+        config,
+        &inputs,
+        free_port()?,
+        speedtest::new_inbound(free_port()?)?,
+        congestion.algorithm(),
+    )?;
     say!(
         "Конфиг xray собран: узлов {}, пропущено (xray не поддерживает): {}",
         plan.nodes,

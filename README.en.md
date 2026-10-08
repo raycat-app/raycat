@@ -204,7 +204,7 @@ proxy themselves.
 
 ## Commands
 
-Client commands (`status`, `health`, `nodes`, `use`, `update`, `events`, `tui`) talk to the
+Client commands (`status`, `health`, `nodes`, `use`, `update`, `speedtest`, `events`, `tui`) talk to the
 running service through a socket and do not read the settings file. Help: `raycat --help` and
 `raycat help <command>`.
 
@@ -221,6 +221,7 @@ running service through a socket and do not read the settings file. Help: `rayca
 | `raycat use <node>` | Pin a node: its name, a part of its name (case-insensitive) or `subscription/name`. |
 | `raycat use auto` | Remove the pin and return to automatic selection. |
 | `raycat update [subscription]` | Update subscriptions now (all or one) and show the result. |
+| `raycat speedtest [node] [--size 25MB] [--streams N] [--url URL] [--json]` | Speed test through the VPN: runs with 1 and 4 streams (or N) through the current node or through the node given as an argument. The node is pinned for the test and the previous pin is restored afterwards. |
 | `raycat events [--json]` | Follow the daemon's events until Ctrl+C. |
 | `raycat tui` | Full-screen interface (see below). |
 | `raycat completions bash\|zsh\|fish` | Shell completion script. |
@@ -790,6 +791,11 @@ xhttp_connections = 4       # 1 to 16; not set means the provider's setting
 - CPUs without hardware AES (Raspberry Pi 3/4 and others: there is no `aes` flag in `/proc/cpuinfo`) get
   an xray built for fast AES-GCM. The installer picks it automatically, see `--noaes` in
   [installation](#installing-on-a-server).
+- `raycat speedtest` measures the speed through the VPN along the same path as all the traffic. It
+  first runs one stream, then four (or `--streams N`). The test file comes from `speed.cloudflare.com`;
+  `--url` sets your own address (https only). If four streams are clearly faster than one, the provider
+  most likely limits a single connection: try `xhttp_connections`. A node given as an argument is pinned
+  for the test, and the previous pin is restored afterwards, even if the test fails.
 
 ## FAQ and troubleshooting
 

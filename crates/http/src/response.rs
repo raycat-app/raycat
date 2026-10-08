@@ -117,19 +117,7 @@ pub(crate) fn read_response(
     max_body: usize,
 ) -> Result<Response> {
     let mut reader = BufReader::new(stream);
-    let mut interim = 0;
-    let head = loop {
-        let head = read_head(&mut reader)?;
-        // 1xx, кроме 101, предшествуют настоящему ответу (RFC 9110, п. 15.2).
-        if (100..200).contains(&head.status) && head.status != 101 {
-            interim += 1;
-            if interim > MAX_INTERIM_RESPONSES {
-                bail!("слишком много промежуточных ответов (1xx)");
-            }
-            continue;
-        }
-        break head;
-    };
+    let head = final_head(&mut reader)?;
     let header = |name: &str| {
         head.headers
             .iter()
@@ -137,11 +125,7 @@ pub(crate) fn read_response(
             .map(|(_, v)| v.as_str())
     };
 
-    let no_body = method.eq_ignore_ascii_case("HEAD")
-        || head.status == 101
-        || head.status == 204
-        || head.status == 304;
-    let body = if no_body {
+    let body = if !has_body(method, head.status) {
         Vec::new()
     } else if header("transfer-encoding")
         .is_some_and(|v| v.to_ascii_lowercase().contains("chunked"))
@@ -228,6 +212,138 @@ fn read_to_close(reader: &mut impl Read, max_body: usize) -> Result<Vec<u8>> {
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(body),
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
             Err(e) => return Err(e).context("чтение тела ответа"),
+        }
+    }
+}
+
+/// Заголовки настоящего ответа: промежуточные 1xx, кроме 101, пропускаются (RFC 9110, п. 15.2).
+fn final_head(reader: &mut impl BufRead) -> Result<Head> {
+    let mut interim = 0;
+    loop {
+        let head = read_head(reader)?;
+        if !((100..200).contains(&head.status) && head.status != 101) {
+            return Ok(head);
+        }
+        interim += 1;
+        if interim > MAX_INTERIM_RESPONSES {
+            bail!("слишком много промежуточных ответов (1xx)");
+        }
+    }
+}
+
+/// Есть ли у ответа тело: у ответов на HEAD, 101, 204 и 304 его нет.
+fn has_body(method: &str, status: u16) -> bool {
+    !(method.eq_ignore_ascii_case("HEAD") || status == 101 || status == 204 || status == 304)
+}
+
+const COPY_BYTES: usize = 16 * 1024;
+
+fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.as_str())
+}
+
+/// Ответ без накопления тела: `sink` получает куски по мере чтения и возвращает `false`,
+/// чтобы остановить загрузку. В `Response::body` тела нет.
+pub(crate) fn stream_response(
+    stream: &mut impl Read,
+    method: &str,
+    sink: &mut dyn FnMut(&[u8]) -> bool,
+) -> Result<Response> {
+    let mut reader = BufReader::new(stream);
+    let head = final_head(&mut reader)?;
+    if has_body(method, head.status) {
+        let encoding = header_value(&head.headers, "content-encoding")
+            .map(|value| value.trim().to_ascii_lowercase());
+        if let Some(encoding) = encoding
+            && !matches!(encoding.as_str(), "" | "identity")
+        {
+            bail!(
+                "сервер прислал сжатое тело ({}): тест скорости читает только несжатое",
+                sanitize(&encoding)
+            );
+        }
+        let chunked = header_value(&head.headers, "transfer-encoding")
+            .is_some_and(|value| value.to_ascii_lowercase().contains("chunked"));
+        if chunked {
+            stream_chunked(&mut reader, sink)?;
+        } else if let Some(len) = header_value(&head.headers, "content-length") {
+            let len: u64 = len
+                .parse()
+                .map_err(|_| anyhow!("неверный Content-Length"))?;
+            pump(&mut reader, len, sink)?;
+        } else {
+            pump_to_close(&mut reader, sink)?;
+        }
+    }
+    Ok(Response {
+        status: head.status,
+        reason: head.reason,
+        headers: head.headers,
+        body: Vec::new(),
+        peer: None,
+    })
+}
+
+/// Передаёт `left` байт тела в `sink`; `false` — `sink` попросил остановиться.
+fn pump(
+    reader: &mut impl Read,
+    mut left: u64,
+    sink: &mut dyn FnMut(&[u8]) -> bool,
+) -> Result<bool> {
+    let mut buf = [0u8; COPY_BYTES];
+    while left > 0 {
+        let want = usize::try_from(left).map_or(COPY_BYTES, |n| n.min(COPY_BYTES));
+        let read = reader
+            .read(&mut buf[..want])
+            .context("чтение тела ответа")?;
+        if read == 0 {
+            bail!("соединение закрыто посреди тела ответа");
+        }
+        left -= u64::try_from(read).unwrap_or_default();
+        if !sink(&buf[..read]) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn stream_chunked(reader: &mut impl BufRead, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<()> {
+    loop {
+        let line = read_line(reader, MAX_LINE_BYTES)?;
+        if line.is_empty() {
+            bail!("соединение закрыто посреди chunked-тела");
+        }
+        let line = trim_line(&line);
+        let size = line.split(';').next().unwrap_or_default().trim();
+        if size.is_empty() || size.len() > 16 || !size.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!("неверный размер чанка");
+        }
+        let size = u64::from_str_radix(size, 16)?;
+        // Трейлеры после последнего чанка не нужны: соединение закрывается сразу.
+        if size == 0 || !pump(reader, size, sink)? {
+            return Ok(());
+        }
+        read_line(reader, MAX_LINE_BYTES)?;
+    }
+}
+
+fn pump_to_close(reader: &mut impl Read, sink: &mut dyn FnMut(&[u8]) -> bool) -> Result<()> {
+    let mut buf = [0u8; COPY_BYTES];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => return Ok(()),
+            // Многие серверы закрывают TLS без `close_notify`, тело при этом полное.
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e).context("чтение тела ответа"),
+            Ok(n) => {
+                if !sink(&buf[..n]) {
+                    return Ok(());
+                }
+            }
         }
     }
 }

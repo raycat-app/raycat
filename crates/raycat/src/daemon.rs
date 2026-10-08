@@ -3,6 +3,7 @@
 //! `spawn_blocking`.
 
 mod control;
+mod measure;
 mod report;
 
 use std::fs;
@@ -15,9 +16,9 @@ use anyhow::{Context, Result};
 use raycat_config::{Config, Mode, ProxyAuth, Subscription};
 use raycat_netfilter::Rules;
 use raycat_proto::{Event, Mode as ApiMode, Status, UpdateResult, Updates, XrayState, XrayStatus};
-use raycat_select::Selector;
+use raycat_select::{PinTarget, Selector};
 use raycat_subscription::{Routing, Usage, redact_in};
-use raycat_xray::Node;
+use raycat_xray::{Node, SpeedtestInbound};
 use raycat_xray_api::XrayApi;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -32,6 +33,7 @@ use crate::paths;
 use crate::plan;
 use crate::schedule::{HEALTHY_UPTIME, RESTART_FIRST, next_restart_delay};
 use crate::selection;
+use crate::speedtest;
 use crate::store::{Store, StoredPin};
 use crate::tuning;
 use crate::updater::{self, Outcome, Refresh, Source};
@@ -103,6 +105,7 @@ async fn serve(config: Config, store: Store, socket: PathBuf) -> Result<()> {
         store,
         &machine_id,
         free_port()?,
+        speedtest::new_inbound(free_port()?)?,
         Arc::clone(&shared),
     )?;
     let listener = api::bind(&socket)?;
@@ -235,6 +238,10 @@ struct Daemon {
     config: Config,
     store: Store,
     api_port: u16,
+    /// Служебный вход xray для теста скорости: порт и учётные данные только в памяти.
+    speedtest: SpeedtestInbound,
+    /// Тест скорости идёт: закрепление узла меняется только им и не записывается на диск.
+    speedtest_active: bool,
     subs: Vec<Sub>,
     process: Process,
     /// Конфиг, который записан для xray, и число узлов в нём.
@@ -279,15 +286,12 @@ impl Daemon {
         store: Store,
         machine_id: &str,
         api_port: u16,
+        speedtest: SpeedtestInbound,
         shared: Arc<Shared>,
     ) -> Result<Self> {
         let now = Instant::now();
         let gateway = plan::gateway_rules(&config)?;
-        let pin = match store.load_pin() {
-            StoredPin::Node(id) => selection::parse_pin(&id),
-            StoredPin::Off => None,
-            StoredPin::Absent => selection::config_pin(&config),
-        };
+        let pin = stored_pin(&store, &config);
         let selector = Selector::new(selection::settings(&config, pin), Vec::new());
         let subs = config
             .subscriptions
@@ -321,6 +325,8 @@ impl Daemon {
             config,
             store,
             api_port,
+            speedtest,
+            speedtest_active: false,
             subs,
             process,
             applied: None,
@@ -402,6 +408,7 @@ impl Daemon {
             &self.config,
             &inputs,
             self.api_port,
+            self.speedtest.clone(),
             self.tcp_congestion.as_deref(),
         ) {
             Ok(plan) => plan,
@@ -688,6 +695,15 @@ impl Daemon {
     }
 }
 
+/// Закрепление из сохранённого файла; без него — из настроек.
+fn stored_pin(store: &Store, config: &Config) -> Option<PinTarget> {
+    match store.load_pin() {
+        StoredPin::Node(id) => selection::parse_pin(&id),
+        StoredPin::Off => None,
+        StoredPin::Absent => selection::config_pin(config),
+    }
+}
+
 /// Текст о профиле провайдера, если он появился или изменился с прошлого раза; иначе `None`.
 fn provider_news(
     last: &mut Option<u64>,
@@ -741,6 +757,7 @@ mod tests {
             store,
             "0d0af05ee8fd4dc29275718f2ce4dff1",
             10_085,
+            speedtest::test_inbound(),
             shared,
         )
         .unwrap()

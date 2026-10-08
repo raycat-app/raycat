@@ -32,6 +32,14 @@ impl fmt::Debug for Credentials {
     }
 }
 
+/// Служебный вход теста скорости: порт на `127.0.0.1` и логин с паролем, которые знает
+/// только демон.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpeedtestInbound {
+    pub port: u16,
+    pub credentials: Credentials,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DnsSettings {
     /// Настоящие резолверы; первый отвечает за адреса самих серверов узлов.
@@ -75,6 +83,8 @@ pub struct Settings {
     pub probe: ProbeSettings,
     /// Порт API xray; слушается только `127.0.0.1`.
     pub api_port: u16,
+    /// Служебный вход `speedtest-in` для теста скорости. `None` — входа нет.
+    pub speedtest: Option<SpeedtestInbound>,
     /// Алгоритм управления перегрузкой для TCP-соединений к узлам. Компилятор не
     /// проверяет, поддерживает ли его хост: это решает вызывающий.
     pub tcp_congestion: Option<String>,
@@ -134,6 +144,7 @@ impl Settings {
             dns: DnsSettings::default(),
             probe: ProbeSettings::default(),
             api_port,
+            speedtest: None,
             tcp_congestion: None,
             xhttp_connections: None,
             rules: Vec::new(),

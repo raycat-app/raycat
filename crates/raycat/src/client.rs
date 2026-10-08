@@ -6,7 +6,10 @@ use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use raycat_proto::{ErrorBody, Event, Nodes, PinRequest, Pinned, Status, UpdateRequest, Updates};
+use raycat_proto::{
+    ErrorBody, Event, Nodes, PinRequest, Pinned, SpeedtestProgress, SpeedtestRequest,
+    SpeedtestResult, Status, UpdateRequest, Updates,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
@@ -17,6 +20,8 @@ use crate::util::sanitize;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 /// Демон ждёт обновление подписки до 150 с.
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(180);
+/// Тест скорости: два замера по минуте и ожидание узла.
+const SPEEDTEST_TIMEOUT: Duration = Duration::from_secs(300);
 /// Демон шлёт keep-alive раз в 15 с: тишина дольше минуты означает зависший демон.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_BODY: usize = 16 * 1024 * 1024;
@@ -131,6 +136,22 @@ impl Client {
             self.timeout.max(UPDATE_TIMEOUT),
         )
         .await
+    }
+
+    /// Запускает тест скорости и ждёт результата; ход теста — в `speedtest_progress`.
+    pub(crate) async fn speedtest(
+        &self,
+        request: &SpeedtestRequest,
+    ) -> Result<SpeedtestResult, ClientError> {
+        let body = json_body(request)?;
+        self.call("POST", "/v1/speedtest", Some(&body), SPEEDTEST_TIMEOUT)
+            .await
+    }
+
+    pub(crate) async fn speedtest_progress(
+        &self,
+    ) -> Result<Option<SpeedtestProgress>, ClientError> {
+        self.call("GET", "/v1/speedtest", None, self.timeout).await
     }
 
     /// Открывает поток событий; первым приходит `Event::Hello`.
