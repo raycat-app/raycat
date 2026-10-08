@@ -148,7 +148,10 @@ fn shown_headers(headers: &[(String, String)], hwid: &str) -> Vec<(String, Strin
 }
 
 fn has_hwid(value: &str, hwid: &str) -> bool {
-    !hwid.is_empty() && value.to_ascii_lowercase().contains(&hwid.to_ascii_lowercase())
+    !hwid.is_empty()
+        && value
+            .to_ascii_lowercase()
+            .contains(&hwid.to_ascii_lowercase())
 }
 
 /// Модель Windows — имя хоста и процессор через `_`: скрывается только имя хоста.
