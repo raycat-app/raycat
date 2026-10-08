@@ -238,7 +238,7 @@ fn defaults() {
     );
     assert!(!config.routing.provider);
     assert!(!config.routing.ru_direct);
-    assert!(config.routing.rules.is_empty());
+    assert_eq!(config.routing.rules, Vec::<raycat_config::Rule>::new());
     assert_eq!(config.xray.path, PathBuf::from("/usr/libexec/raycat/xray"));
     assert_eq!(config.xray.memory_limit, 96 << 20);
     assert_eq!(config.xray.tcp_congestion, TcpCongestion::Auto);
@@ -1665,7 +1665,7 @@ action = "block"
 
     let second = &routing.rules[1];
     assert_eq!(second.action, Action::Block);
-    assert!(second.ips.is_empty());
+    assert_eq!(second.ips, Vec::<raycat_netfilter::Cidr>::new());
     assert_eq!(second.domains.len(), 1);
     assert_eq!(config.warnings, Vec::<String>::new());
 }
