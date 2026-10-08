@@ -673,8 +673,8 @@ mod tests {
             "ошибка: лишний аргумент «лишний»\nСправка: raycat health --help"
         );
         assert_eq!(
-            parse_error(&["raycat", "statu"]),
-            "ошибка: неизвестная команда «statu»\n  может быть, «status»?\nСправка: raycat --help"
+            parse_error(&["raycat", "nodez"]),
+            "ошибка: неизвестная команда «nodez»\n  может быть, «nodes»?\nСправка: raycat --help"
         );
 
         let json = parse_error(&["raycat", "health", "--json"]);
