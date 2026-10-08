@@ -15,6 +15,7 @@ axum.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 clap_mangen.workspace = true
+jiff.workspace = true
 libc.workspace = true
 ratatui.workspace = true
 raycat-config.workspace = true

@@ -15,7 +15,9 @@ use crate::plan;
 use crate::store::Store;
 use crate::tuning;
 use crate::updater::{self, Source};
-use crate::util::{format_bytes, format_date, format_duration, format_time, now_unix, sanitize};
+use crate::util::{
+    format_bytes, format_date, format_duration, local_zone, moment, now_unix, sanitize,
+};
 use crate::xray;
 
 const MAX_LISTED_NODES: usize = 50;
@@ -50,7 +52,7 @@ pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
         if let Some(found) = source.cached(store) {
             say!(
                 "Подписка «{name}»: кэш от {}, узлов: {}",
-                format_time(found.fetched_at),
+                moment(found.fetched_at),
                 found.nodes.len()
             );
             cached.push(found.nodes);
@@ -155,7 +157,10 @@ fn print_provider(info: &ProviderInfo, secret: &str) {
             format_bytes(usage.used())
         );
         if usage.expire != 0 {
-            say!("  срок подписки: до {}", format_date(usage.expire));
+            say!(
+                "  срок подписки: до {}",
+                format_date(usage.expire, local_zone())
+            );
         }
     }
     if let Some(interval) = info.update_interval {

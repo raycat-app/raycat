@@ -15,7 +15,7 @@ use crate::client::Client;
 use crate::paths;
 use crate::render;
 use crate::term::{Term, Tone};
-use crate::util::{now_unix, sanitize};
+use crate::util::{local_zone, now_unix, sanitize};
 
 const MAX_LISTED: usize = 10;
 /// Меньше `timeout` в HEALTHCHECK образа: ответ о неготовности должен прийти раньше,
@@ -161,7 +161,7 @@ async fn status(client: &Client, term: Term, json: bool) -> Result<()> {
     if json {
         out(&to_json(&status)?);
     } else {
-        out(&render::status(term, &status, now_unix()));
+        out(&render::status(term, &status, now_unix(), local_zone()));
     }
     Ok(())
 }
@@ -258,7 +258,8 @@ async fn events(client: &Client, term: Term, json: bool) -> Result<()> {
                 if json {
                     out(&serde_json::to_string(&event).context("не удалось собрать JSON")?);
                 } else {
-                    out(&render::event_line(term, now_unix(), &event));
+                    let now = now_unix();
+                    out(&render::event_line(term, now, now, local_zone(), &event));
                 }
             }
         }

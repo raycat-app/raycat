@@ -102,10 +102,7 @@ mod tests {
         let reason = "ж".repeat(500);
         let line = rejected("s1", &reason, Duration::from_secs(43_200));
         assert!(line.contains(&format!("{}…)", "ж".repeat(199))), "{line}");
-        assert!(
-            line.ends_with("следующая попытка через 12 ч 0 мин"),
-            "{line}"
-        );
+        assert!(line.ends_with("следующая попытка через 12 ч"), "{line}");
         let line = failed("s1", &reason, Duration::from_secs(30));
         assert!(line.chars().count() < 300, "{line}");
         assert!(line.contains("не удалось обновить"));
@@ -116,7 +113,7 @@ mod tests {
         let line = rejected("s1", "HTTP 404", Duration::from_secs(600));
         assert_eq!(
             line,
-            "подписка «s1»: ответ не применён (HTTP 404), остаются прежние узлы; следующая попытка через 10 мин 0 с"
+            "подписка «s1»: ответ не применён (HTTP 404), остаются прежние узлы; следующая попытка через 10 мин"
         );
     }
 
@@ -125,7 +122,7 @@ mod tests {
         let line = recovered("s1", "узлов: 4", Duration::from_secs(43_200));
         assert_eq!(
             line,
-            "подписка «s1» снова работает: узлов: 4; следующее обновление через 12 ч 0 мин"
+            "подписка «s1» снова работает: узлов: 4; следующее обновление через 12 ч"
         );
         assert!(updated("s1", "узлов: 4", Duration::from_secs(60)).contains("обновлена"));
     }

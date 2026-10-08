@@ -4,13 +4,14 @@
 
 use std::time::Duration;
 
+use jiff::tz::TimeZone;
 use raycat_proto::{
     CurrentNode, Event, Mode, Node, NodeStatus, Nodes, Status, SubscriptionStatus, Updates,
     XrayState, XrayStatus,
 };
 
 use crate::term::{Align, Cell, Column, Term, Tone, pad, table};
-use crate::util::{format_bytes, format_date, format_duration, format_time, sanitize};
+use crate::util::{format_bytes, format_date, format_duration, format_moment, sanitize};
 
 const LABEL_WIDTH: usize = 13;
 const DAY: u64 = 86_400;
@@ -25,11 +26,7 @@ fn field(term: Term, indent: usize, label: &str, value: &str) -> String {
 }
 
 pub(crate) fn span(secs: u64) -> String {
-    if secs >= 2 * DAY {
-        format!("{} д", secs / DAY)
-    } else {
-        format_duration(Duration::from_secs(secs))
-    }
+    format_duration(Duration::from_secs(secs))
 }
 
 pub(crate) fn ago(now: u64, then: u64) -> String {
@@ -76,11 +73,11 @@ fn traffic(term: Term, used: u64, total: Option<u64>) -> String {
     term.paint(tone, &text)
 }
 
-pub(crate) fn expiry_text(expire: u64, now: u64) -> (String, Tone) {
+pub(crate) fn expiry_text(expire: u64, now: u64, zone: &TimeZone) -> (String, Tone) {
     if expire == 0 {
         return ("бессрочно".to_owned(), Tone::Plain);
     }
-    let date = format_date(expire);
+    let date = format_date(expire, zone);
     if expire <= now {
         return (format!("истёк {date}"), Tone::Red);
     }
@@ -93,8 +90,8 @@ pub(crate) fn expiry_text(expire: u64, now: u64) -> (String, Tone) {
     (format!("до {date}, осталось {}", span(left)), tone)
 }
 
-fn expiry(term: Term, expire: u64, now: u64) -> String {
-    let (text, tone) = expiry_text(expire, now);
+fn expiry(term: Term, expire: u64, now: u64, zone: &TimeZone) -> String {
+    let (text, tone) = expiry_text(expire, now, zone);
     term.paint(tone, &text)
 }
 
@@ -183,7 +180,12 @@ fn node_lines(term: Term, node: Option<&CurrentNode>) -> Vec<String> {
     lines
 }
 
-fn subscription_lines(term: Term, sub: &SubscriptionStatus, now: u64) -> Vec<String> {
+fn subscription_lines(
+    term: Term,
+    sub: &SubscriptionStatus,
+    now: u64,
+    zone: &TimeZone,
+) -> Vec<String> {
     let provider = sub
         .title
         .as_deref()
@@ -203,7 +205,7 @@ fn subscription_lines(term: Term, sub: &SubscriptionStatus, now: u64) -> Vec<Str
         ));
     }
     if let Some(expire) = sub.expire {
-        lines.push(field(term, 4, "срок:", &expiry(term, expire, now)));
+        lines.push(field(term, 4, "срок:", &expiry(term, expire, now, zone)));
     }
     let updated = match sub.updated_at {
         Some(then) => format!(
@@ -235,7 +237,7 @@ fn subscription_lines(term: Term, sub: &SubscriptionStatus, now: u64) -> Vec<Str
 }
 
 /// `raycat status`.
-pub(crate) fn status(term: Term, status: &Status, now: u64) -> String {
+pub(crate) fn status(term: Term, status: &Status, now: u64, zone: &TimeZone) -> String {
     let mut lines = header_lines(term, status);
     lines.push(String::new());
     lines.extend(node_lines(term, status.node.as_ref()));
@@ -248,7 +250,7 @@ pub(crate) fn status(term: Term, status: &Status, now: u64) -> String {
         if index > 0 {
             lines.push(String::new());
         }
-        lines.extend(subscription_lines(term, sub, now));
+        lines.extend(subscription_lines(term, sub, now, zone));
     }
     lines.join("\n")
 }
@@ -479,11 +481,17 @@ pub(crate) fn event_text(event: &Event) -> (Tone, String) {
 }
 
 /// Строка `raycat events`: время получения и описание.
-pub(crate) fn event_line(term: Term, time: u64, event: &Event) -> String {
+pub(crate) fn event_line(
+    term: Term,
+    time: u64,
+    now: u64,
+    zone: &TimeZone,
+    event: &Event,
+) -> String {
     let (tone, text) = event_text(event);
     format!(
         "{}  {}",
-        term.paint(Tone::Dim, &format_time(time)),
+        term.paint(Tone::Dim, &format_moment(time, now, zone)),
         term.paint(tone, &text)
     )
 }
@@ -571,7 +579,7 @@ mod tests {
 
     #[test]
     fn status_tells_the_whole_story() {
-        let text = status(plain(), &sample_status(), NOW);
+        let text = status(plain(), &sample_status(), NOW, &TimeZone::UTC);
         let expected = [
             "raycat 0.1.0",
             "  режим:       шлюз",
@@ -590,8 +598,8 @@ mod tests {
             "  main  «Мой VPN»",
             "    узлов:       12",
             "    трафик:      3.0 МиБ из 100.0 ГиБ (0%)",
-            "    срок:        до 2026-11-07, осталось 40 д",
-            "    обновлена:   2 ч 0 мин назад, следующее обновление через 3 ч 0 мин",
+            "    срок:        до 07.11.2026, осталось 40 дн",
+            "    обновлена:   2 ч назад, следующее обновление через 3 ч",
         ]
         .join("\n");
         assert_eq!(text, expected);
@@ -609,7 +617,7 @@ mod tests {
             pid: None,
             restarts: 2,
         };
-        let text = status(plain(), &data, NOW);
+        let text = status(plain(), &data, NOW, &TimeZone::UTC);
         assert!(text.contains("режим:       прокси"));
         assert!(!text.contains("kill switch"));
         assert!(text.contains("xray:        не запущен"));
@@ -632,7 +640,7 @@ mod tests {
         sub.total_bytes = Some(0);
         sub.updated_at = None;
         data.subscriptions = vec![sub];
-        let text = status(plain(), &data, NOW);
+        let text = status(plain(), &data, NOW, &TimeZone::UTC);
         assert!(text.contains("работает (pid 4127), перезапусков: 2"));
         assert!(text.contains("закреплён вручную (вернуть автоматику: raycat use auto)"));
         assert!(text.contains("ошибка:      панель ответила 403"));
@@ -645,11 +653,12 @@ mod tests {
     #[test]
     fn expiry_and_traffic_warn_before_they_hurt() {
         let on = Term::new(true, None);
-        assert!(expiry(on, NOW + 2 * 3_600, NOW).contains("\x1b[93m"));
-        assert!(expiry(on, NOW + 2 * 3_600, NOW).contains("осталось 2 ч 0 мин"));
-        assert!(expiry(on, NOW + 30 * DAY, NOW).starts_with("до "));
-        assert!(expiry(on, NOW - DAY, NOW).contains("\x1b[91mистёк"));
-        assert_eq!(expiry(plain(), 0, NOW), "бессрочно");
+        let utc = &TimeZone::UTC;
+        assert!(expiry(on, NOW + 2 * 3_600, NOW, utc).contains("\x1b[93m"));
+        assert!(expiry(on, NOW + 2 * 3_600, NOW, utc).contains("осталось 2 ч"));
+        assert!(expiry(on, NOW + 30 * DAY, NOW, utc).starts_with("до "));
+        assert!(expiry(on, NOW - DAY, NOW, utc).contains("\x1b[91mистёк"));
+        assert_eq!(expiry(plain(), 0, NOW, utc), "бессрочно");
         assert!(traffic(on, 95, Some(100)).contains("\x1b[93m"));
         assert!(traffic(on, 100, Some(100)).contains("\x1b[91m"));
         assert!(!traffic(on, 10, Some(100)).contains('\x1b'));
@@ -660,15 +669,17 @@ mod tests {
     fn relative_times_read_naturally() {
         assert_eq!(ago(NOW, NOW - 3), "только что");
         assert_eq!(ago(NOW, NOW - 330), "5 мин 30 с назад");
-        assert_eq!(ago(NOW, NOW - 5 * DAY), "5 д назад");
-        assert_eq!(ahead(NOW, NOW + 7_200), "через 2 ч 0 мин");
+        assert_eq!(ago(NOW, NOW - 5 * DAY), "5 дн назад");
+        assert_eq!(ago(NOW, NOW - 5 * DAY - 3 * 3_600), "5 дн 3 ч назад");
+        assert_eq!(ahead(NOW, NOW + 7_200), "через 2 ч");
         assert_eq!(ahead(NOW, NOW - 1), "скоро");
     }
 
     #[test]
     fn status_has_no_escape_codes_without_color() {
-        assert!(!status(plain(), &sample_status(), NOW).contains('\x1b'));
-        assert!(status(Term::new(true, None), &sample_status(), NOW).contains('\x1b'));
+        let utc = &TimeZone::UTC;
+        assert!(!status(plain(), &sample_status(), NOW, utc).contains('\x1b'));
+        assert!(status(Term::new(true, None), &sample_status(), NOW, utc).contains('\x1b'));
     }
 
     #[test]
@@ -679,7 +690,7 @@ mod tests {
         if let Some(node) = &mut data.node {
             node.name = "NL\x1b[31m".to_owned();
         }
-        let text = status(plain(), &data, NOW);
+        let text = status(plain(), &data, NOW, &TimeZone::UTC);
         assert!(!text.contains('\x1b'));
         assert!(!text.contains('\x07'));
     }
@@ -793,12 +804,12 @@ mod tests {
     #[test]
     fn every_event_has_a_line_with_the_time() {
         let at = NOW;
-        let line = |event: &Event| event_line(plain(), at, event);
+        let line = |event: &Event| event_line(plain(), at, at, &TimeZone::UTC, event);
         assert_eq!(
             line(&Event::Hello {
                 version: "0.1.0".to_owned()
             }),
-            "2026-09-28T12:00:00Z  подключено к демону, версия 0.1.0"
+            "12:00:00  подключено к демону, версия 0.1.0"
         );
         assert_eq!(
             line(&Event::NodeChanged {
@@ -806,7 +817,7 @@ mod tests {
                 to: None,
                 reason: "сбой".to_owned()
             }),
-            "2026-09-28T12:00:00Z  узел: main/NL-1 → —: сбой"
+            "12:00:00  узел: main/NL-1 → —: сбой"
         );
         assert!(line(&Event::Pin { node: None }).ends_with("закрепление снято"));
         assert!(
@@ -851,6 +862,8 @@ mod tests {
         let failed = event_line(
             on,
             NOW,
+            NOW,
+            &TimeZone::UTC,
             &Event::SubscriptionFailed {
                 subscription: "a".to_owned(),
                 error: "x".to_owned(),
@@ -860,6 +873,8 @@ mod tests {
         let error = event_line(
             on,
             NOW,
+            NOW,
+            &TimeZone::UTC,
             &Event::Warning {
                 level: "error".to_owned(),
                 message: "x".to_owned(),
@@ -873,6 +888,8 @@ mod tests {
         let line = event_line(
             plain(),
             NOW,
+            NOW,
+            &TimeZone::UTC,
             &Event::Warning {
                 level: "warn".to_owned(),
                 message: "a\x1b[2Jb".to_owned(),

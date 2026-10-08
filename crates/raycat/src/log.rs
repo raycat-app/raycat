@@ -1,4 +1,4 @@
-//! Лог только в stderr: `2026-09-30T12:00:00Z INFO сообщение`. Хранение и ротацию
+//! Лог только в stderr: `2026-10-08 16:43:05 INFO сообщение`. Хранение и ротацию
 //! берут на себя journald и Docker. Одинаковые сообщения подряд схлопываются.
 
 use std::fmt;
@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use raycat_config::LogLevel;
 
-use crate::util::{format_time, now_unix, sanitize};
+use crate::util::{format_stamp, local_zone, now_unix, sanitize};
 
 const REPEAT_WINDOW: Duration = Duration::from_secs(60);
 
@@ -196,11 +196,15 @@ fn emit(lines: &[Line]) {
     if lines.is_empty() {
         return;
     }
-    let time = format_time(now_unix());
+    let time = format_stamp(now_unix(), local_zone());
     let mut stderr = io::stderr().lock();
     for line in lines {
-        let _ = writeln!(stderr, "{time} {} {}", line.level.label(), line.text);
+        let _ = writeln!(stderr, "{}", log_line(&time, line));
     }
+}
+
+fn log_line(time: &str, line: &Line) -> String {
+    format!("{time} {} {}", line.level.label(), line.text)
 }
 
 // Макросы определены под другими именами: `warn` совпадает со встроенным атрибутом,
@@ -360,6 +364,18 @@ mod tests {
         assert!(latch.clear());
         assert!(!latch.clear());
         assert_eq!(latch.level("сбой"), Level::Warn);
+    }
+
+    #[test]
+    fn every_line_starts_with_the_full_stamp() {
+        let line = Line {
+            level: Level::Warn,
+            text: "сбой".to_owned(),
+        };
+        assert_eq!(
+            log_line("2026-10-08 16:43:05", &line),
+            "2026-10-08 16:43:05 WARN сбой"
+        );
     }
 
     #[test]
