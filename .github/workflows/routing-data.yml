@@ -1,0 +1,235 @@
+name: Подсети РФ для маршрутизации
+
+# Раз в неделю скачивает статистику RIPE NCC, пересобирает crates/routing/data/ru-ipv4.txt
+# инструментом update-ru-ipv4 и открывает PR бота с меткой «маршрутизация». Обязательные
+# проверки бот запускает сам, как в client-update.yml, и публикует статусы «Итог» и
+# «Заголовок PR». Если число подсетей изменилось больше чем на 20 %, PR не сливается сам:
+# такой скачок почти всегда означает ошибку источника. Ручной запуск с dry_run только
+# собирает файл в артефакт ru-ipv4 и не создаёт ветку.
+
+on:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Только собрать файл в артефакт ru-ipv4, без ветки и PR
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: routing-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Подсети и PR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      pr: ${{ steps.pr.outputs.number }}
+      sha: ${{ steps.commit.outputs.sha }}
+      branch: ${{ steps.commit.outputs.branch }}
+      jump: ${{ steps.build.outputs.jump }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      LC_ALL: C.UTF-8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Статистика RIPE NCC
+        env:
+          SOURCE: https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/delegated" "$SOURCE"
+          [ -s "$RUNNER_TEMP/delegated" ] || { echo "::error::пустой файл статистики"; exit 1; }
+          grep -F 'ripencc|*|ipv4|*|' "$RUNNER_TEMP/delegated" | grep -qF '|summary' || { echo "::error::в статистике нет строки summary для ipv4"; exit 1; }
+      - name: Подсети и изменения
+        id: build
+        run: |
+          file=crates/routing/data/ru-ipv4.txt
+          old=$(grep -vc '^#' "$file" || true)
+          cargo run --locked --quiet -p raycat-routing --features tool --bin update-ru-ipv4 -- "$RUNNER_TEMP/delegated" "$file"
+          new=$(grep -vc '^#' "$file" || true)
+          date=$(sed -n 's/^# Снимок: //p' "$file")
+          [[ "$date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "::error::дата снимка не прочитана"; exit 1; }
+          changed=false
+          if [ -n "$(git status --porcelain -- crates/routing/data)" ]; then
+            changed=true
+          fi
+          jump=false
+          if [ "$old" -eq 0 ] || [ $((new * 100)) -gt $((old * 120)) ] || [ $((new * 100)) -lt $((old * 80)) ]; then
+            jump=true
+          fi
+          {
+            echo "changed=$changed"
+            echo "jump=$jump"
+            echo "date=$date"
+            echo "old=$old"
+            echo "new=$new"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Подсети РФ"
+            echo
+            echo "- снимок: $date"
+            echo "- подсетей было: $old, стало: $new"
+            echo "- изменилось: $changed, скачок больше 20 %: $jump"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Артефакт (dry_run)
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ru-ipv4
+          path: crates/routing/data/ru-ipv4.txt
+          if-no-files-found: error
+          retention-days: 14
+      - name: Коммит и ветка бота
+        id: commit
+        if: ${{ steps.build.outputs.changed == 'true' && !inputs.dry_run }}
+        env:
+          DATE: ${{ steps.build.outputs.date }}
+          OLD: ${{ steps.build.outputs.old }}
+          NEW: ${{ steps.build.outputs.new }}
+          JUMP: ${{ steps.build.outputs.jump }}
+        run: |
+          [[ "$DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "::error::дата снимка не прочитана"; exit 1; }
+          branch="bot/routing-data-$DATE"
+          title="chore: подсети РФ для маршрутизации $DATE"
+          {
+            echo "Список подсетей РФ обновлён по статистике RIPE NCC."
+            echo
+            echo "- снимок: $DATE"
+            echo "- подсетей: $OLD -> $NEW"
+            echo "- прогон: $RUN_URL"
+            if [ "$JUMP" = true ]; then
+              echo
+              echo "Число подсетей изменилось больше чем на 20 %. Слияние не выполнено автоматически: проверьте источник и сольите PR вручную."
+            fi
+          } > "$RUNNER_TEMP/body.md"
+          { echo "$title"; echo; cat "$RUNNER_TEMP/body.md"; } > "$RUNNER_TEMP/message.txt"
+          git config user.name sleepyhead-dev
+          git config user.email 184401951+sleepyhead-dev@users.noreply.github.com
+          git switch -c "$branch"
+          git add crates/routing/data
+          git commit -q -F "$RUNNER_TEMP/message.txt"
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push --force origin "$branch"
+          {
+            echo "sha=$(git rev-parse HEAD)"
+            echo "branch=$branch"
+            echo "title=$title"
+          } >> "$GITHUB_OUTPUT"
+      - name: Pull request
+        id: pr
+        if: ${{ steps.build.outputs.changed == 'true' && !inputs.dry_run }}
+        env:
+          BRANCH: ${{ steps.commit.outputs.branch }}
+          TITLE: ${{ steps.commit.outputs.title }}
+        run: |
+          number=$(gh pr list -R "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh pr edit "$number" -R "$REPO" --title "$TITLE" --body-file "$RUNNER_TEMP/body.md"
+          else
+            base=$(gh api "repos/$REPO" --jq .default_branch)
+            if ! output=$(gh pr create -R "$REPO" --base "$base" --head "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/body.md" --label маршрутизация 2>&1); then
+              printf '%s\n' "$output"
+              echo "::error::PR не создан, ветка $BRANCH отправлена"
+              exit 1
+            fi
+            number=$(printf '%s\n' "$output" | tail -n 1)
+            number=${number##*/}
+          fi
+          [[ "$number" =~ ^[0-9]+$ ]] || { echo "::error::номер PR не определён"; exit 1; }
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+      - name: Комментарий о скачке
+        if: ${{ steps.pr.outputs.number != '' && steps.build.outputs.jump == 'true' }}
+        env:
+          PR: ${{ steps.pr.outputs.number }}
+          OLD: ${{ steps.build.outputs.old }}
+          NEW: ${{ steps.build.outputs.new }}
+        run: |
+          gh pr comment "$PR" -R "$REPO" --body "Число подсетей изменилось с $OLD на $NEW, то есть больше чем на 20 %. Резкий скачок обычно означает ошибку источника, поэтому PR не сливается автоматически. Проверьте статистику RIPE NCC и сольите PR вручную, если изменение верное."
+
+  verify:
+    name: Проверки и слияние
+    needs: update
+    if: ${{ needs.update.outputs.pr != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ needs.update.outputs.pr }}
+      SHA: ${{ needs.update.outputs.sha }}
+      BRANCH: ${{ needs.update.outputs.branch }}
+    steps:
+      - name: Запуск обязательных проверок
+        run: |
+          gh workflow run ci.yml -R "$REPO" --ref "$BRANCH"
+          gh workflow run pr-title.yml -R "$REPO" --ref "$BRANCH" -f "pr=$PR"
+      - name: Ожидание проверок
+        run: |
+          find_run() {
+            local id
+            for _ in $(seq 1 30); do
+              id=$(gh run list -R "$REPO" --workflow "$1" --branch "$BRANCH" --event workflow_dispatch --limit 20 --json databaseId,headSha |
+                jq -r --arg sha "$SHA" '[.[] | select(.headSha == $sha)][0].databaseId // empty')
+              if [ -n "$id" ]; then
+                echo "$id"
+                return 0
+              fi
+              sleep 10
+            done
+            return 1
+          }
+          # Проверки ручных запусков к PR не привязываются, а ruleset ждёт проверки с
+          # именами «Итог» и «Заголовок PR»: результат прогона бот публикует статусом
+          # коммита с тем же именем.
+          publish() {
+            local url
+            url=$(gh run view "$2" -R "$REPO" --json url --jq .url)
+            gh api -X POST "repos/$REPO/statuses/$SHA" -f state="$3" -f context="$1" \
+              -f description="Результат ручного запуска workflow" -f target_url="$url" --jq .state
+          }
+          title_run=$(find_run pr-title.yml)
+          ci_run=$(find_run ci.yml)
+          echo "заголовок PR: прогон $title_run, CI: прогон $ci_run"
+          failed=0
+          title_state=success
+          ci_state=success
+          gh run watch "$title_run" -R "$REPO" --exit-status --interval 20 > /dev/null || title_state=failure
+          gh run watch "$ci_run" -R "$REPO" --exit-status --interval 30 > /dev/null || ci_state=failure
+          publish "Заголовок PR" "$title_run" "$title_state"
+          publish "Итог" "$ci_run" "$ci_state"
+          [ "$title_state" = success ] && [ "$ci_state" = success ] || failed=1
+          exit "$failed"
+      - name: Ruleset засчитывает проверки
+        run: |
+          for _ in $(seq 1 20); do
+            if gh pr checks "$PR" -R "$REPO" --required; then
+              exit 0
+            fi
+            sleep 15
+          done
+          exit 1
+      - name: Слияние
+        if: ${{ needs.update.outputs.jump != 'true' }}
+        run: |
+          title=$(gh pr view "$PR" -R "$REPO" --json title --jq .title)
+          body=$(gh pr view "$PR" -R "$REPO" --json body --jq .body)
+          gh pr merge "$PR" -R "$REPO" --squash --match-head-commit "$SHA" --subject "$title (#$PR)" --body "$body"
+      - name: Слияние отключено скачком
+        if: ${{ needs.update.outputs.jump == 'true' }}
+        run: echo "::notice::проверки зелёные, но число подсетей изменилось больше чем на 20 %, PR $PR остаётся открытым"

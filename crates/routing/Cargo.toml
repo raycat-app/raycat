@@ -1,0 +1,25 @@
+[package]
+name = "raycat-routing"
+description = "Раздельная маршрутизация: доменные зоны и подсети РФ для пресета «Россия напрямую»"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow = { workspace = true, optional = true }
+
+[features]
+# Инструмент обновления подсетей (`update-ru-ipv4`): в бинарник raycat не попадает.
+tool = ["dep:anyhow"]
+
+[[bin]]
+name = "update-ru-ipv4"
+path = "src/bin/update-ru-ipv4.rs"
+required-features = ["tool"]
+
+[lints]
+workspace = true
