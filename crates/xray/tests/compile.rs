@@ -541,8 +541,8 @@ fn proxy_with_a_password_asks_for_it_on_the_mixed_inbound() {
 fn password_stays_out_of_debug_output() {
     let text = format!("{:?}", proxy_with_password());
 
-    assert!(!text.contains("golden-password"), "{text}");
-    assert!(text.contains("golden-user"), "{text}");
+    assert!(!text.contains("golden-password"));
+    assert!(text.contains("golden-user"));
 }
 
 #[test]
