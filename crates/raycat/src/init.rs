@@ -141,14 +141,13 @@ impl Flags {
 }
 
 fn combine_mode(mode: Option<&str>, lan: bool) -> Result<Option<ModeChoice>> {
-    match (mode, lan) {
-        (None, false) => Ok(None),
-        (None, true) => Ok(Some(ModeChoice::GatewayLan)),
-        (Some("proxy"), false) => Ok(Some(ModeChoice::Proxy)),
+    Ok(match (mode, lan) {
         (Some("proxy"), true) => bail!("--lan работает только с --mode gateway"),
-        (Some(_), false) => Ok(Some(ModeChoice::Gateway)),
-        (Some(_), true) => Ok(Some(ModeChoice::GatewayLan)),
-    }
+        (Some("proxy"), false) => Some(ModeChoice::Proxy),
+        (_, true) => Some(ModeChoice::GatewayLan),
+        (Some(_), false) => Some(ModeChoice::Gateway),
+        (None, false) => None,
+    })
 }
 
 fn read_link_file(path: &Path) -> Result<String> {
@@ -346,7 +345,7 @@ impl<R: BufRead, W: Write> Dialog<R, W> {
             } else {
                 ""
             };
-            line.push_str(&format!(" [{}] {option}{mark}", index + 1));
+            line = format!("{line} [{}] {option}{mark}", index + 1);
         }
         writeln!(self.output, "{line}")?;
         if let Some(hint) = hint {
@@ -403,7 +402,7 @@ fn read_attributes() -> io::Result<libc::termios> {
     // SAFETY: termios состоит из целых чисел, нулевые значения допустимы, tcgetattr её заполнит.
     let mut attributes: libc::termios = unsafe { std::mem::zeroed() };
     // SAFETY: tcgetattr пишет только в переданную структуру для стандартного входа.
-    if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut attributes) } == 0 {
+    if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &raw mut attributes) } == 0 {
         Ok(attributes)
     } else {
         Err(io::Error::last_os_error())
@@ -481,7 +480,7 @@ fn toml_string(value: &str) -> String {
         match c {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
-            c if c.is_control() => out.push_str(&format!("\\u{:04X}", u32::from(c))),
+            c if c.is_control() => out = format!("{out}\\u{:04X}", u32::from(c)),
             c => out.push(c),
         }
     }
@@ -516,18 +515,14 @@ fn save(path: &Path, text: &str, env: &Env) -> Result<Option<PathBuf>> {
     };
     write_private(path, text.as_bytes())?;
     if let Err(error) = Config::load(Some(path), env, paths::is_root()) {
-        match &backup {
-            Some(backup) => {
-                fs::rename(backup, path).with_context(|| {
-                    format!("не удалось вернуть прежний файл {}", path.display())
-                })?;
-                bail!("новые настройки не прошли проверку, прежний файл возвращён: {error}");
-            }
-            None => {
-                fs::remove_file(path)?;
-                bail!("новые настройки не прошли проверку, файл не создан: {error}");
-            }
+        if let Some(backup) = &backup {
+            fs::rename(backup, path).with_context(|| {
+                format!("не удалось вернуть прежний файл {}", path.display())
+            })?;
+            bail!("новые настройки не прошли проверку, прежний файл возвращён: {error}");
         }
+        fs::remove_file(path)?;
+        bail!("новые настройки не прошли проверку, файл не создан: {error}");
     }
     Ok(backup)
 }

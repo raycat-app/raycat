@@ -122,75 +122,77 @@ fn base_command() -> Command {
             )
             .arg(config_option()),
         )
-        .subcommand(
-            subcommand(
-                "init",
-                "Мастер настроек: спрашивает ссылку подписки, приложение, платформу и режим и пишет файл настроек",
-                "raycat init [ПАРАМЕТРЫ]",
-            )
-            .after_help(
-                "Примеры:\n  sudo raycat init\n  sudo raycat init --force\n  raycat init --config ./config.toml --subscription https://example.com/sub/… --mode gateway",
-            )
-            .arg(config_option())
-            .arg(
-                Arg::new("force")
-                    .long("force")
-                    .action(ArgAction::SetTrue)
-                    .help("Перезаписать существующий файл; старый сохранится как ФАЙЛ.bak")
-                    .help_heading(OPTIONS),
-            )
-            .arg(
-                Arg::new("subscription")
-                    .long("subscription")
-                    .value_name("ССЫЛКА")
-                    .conflicts_with("subscription-file")
-                    .help("Ссылка подписки; без неё мастер спросит")
-                    .help_heading(OPTIONS),
-            )
-            .arg(
-                Arg::new("subscription-file")
-                    .long("subscription-file")
-                    .value_name("ПУТЬ")
-                    .value_parser(value_parser!(PathBuf))
-                    .conflicts_with("subscription")
-                    .help("Файл с одной ссылкой подписки (до 4 КиБ)")
-                    .help_heading(OPTIONS),
-            )
-            .arg(
-                Arg::new("app")
-                    .long("app")
-                    .value_name("ПРИЛОЖЕНИЕ")
-                    .value_parser(["happ", "incy"])
-                    .hide_possible_values(true)
-                    .help("happ (по умолчанию) или incy: какое приложение указано у провайдера")
-                    .help_heading(OPTIONS),
-            )
-            .arg(
-                Arg::new("platform")
-                    .long("platform")
-                    .value_name("ПЛАТФОРМА")
-                    .value_parser(["windows", "android"])
-                    .hide_possible_values(true)
-                    .help("windows (по умолчанию) или android; для incy только android")
-                    .help_heading(OPTIONS),
-            )
-            .arg(
-                Arg::new("mode")
-                    .long("mode")
-                    .value_name("РЕЖИМ")
-                    .value_parser(["proxy", "gateway"])
-                    .hide_possible_values(true)
-                    .help("proxy (по умолчанию) или gateway: шлюз для всего сервера")
-                    .help_heading(OPTIONS),
-            )
-            .arg(
-                Arg::new("lan")
-                    .long("lan")
-                    .action(ArgAction::SetTrue)
-                    .help("Шлюз для сервера и устройств локальной сети (то же, что --mode gateway с локальной сетью)")
-                    .help_heading(OPTIONS),
-            ),
-        )
+        .subcommand(init_command())
+}
+
+fn init_command() -> Command {
+    subcommand(
+        "init",
+        "Мастер настроек: спрашивает ссылку подписки, приложение, платформу и режим и пишет файл настроек",
+        "raycat init [ПАРАМЕТРЫ]",
+    )
+    .after_help(
+        "Примеры:\n  sudo raycat init\n  sudo raycat init --force\n  raycat init --config ./config.toml --subscription https://example.com/sub/… --mode gateway",
+    )
+    .arg(config_option())
+    .arg(
+        Arg::new("force")
+            .long("force")
+            .action(ArgAction::SetTrue)
+            .help("Перезаписать существующий файл; старый сохранится как ФАЙЛ.bak")
+            .help_heading(OPTIONS),
+    )
+    .arg(
+        Arg::new("subscription")
+            .long("subscription")
+            .value_name("ССЫЛКА")
+            .conflicts_with("subscription-file")
+            .help("Ссылка подписки; без неё мастер спросит")
+            .help_heading(OPTIONS),
+    )
+    .arg(
+        Arg::new("subscription-file")
+            .long("subscription-file")
+            .value_name("ПУТЬ")
+            .value_parser(value_parser!(PathBuf))
+            .conflicts_with("subscription")
+            .help("Файл с одной ссылкой подписки (до 4 КиБ)")
+            .help_heading(OPTIONS),
+    )
+    .arg(
+        Arg::new("app")
+            .long("app")
+            .value_name("ПРИЛОЖЕНИЕ")
+            .value_parser(["happ", "incy"])
+            .hide_possible_values(true)
+            .help("happ (по умолчанию) или incy: какое приложение указано у провайдера")
+            .help_heading(OPTIONS),
+    )
+    .arg(
+        Arg::new("platform")
+            .long("platform")
+            .value_name("ПЛАТФОРМА")
+            .value_parser(["windows", "android"])
+            .hide_possible_values(true)
+            .help("windows (по умолчанию) или android; для incy только android")
+            .help_heading(OPTIONS),
+    )
+    .arg(
+        Arg::new("mode")
+            .long("mode")
+            .value_name("РЕЖИМ")
+            .value_parser(["proxy", "gateway"])
+            .hide_possible_values(true)
+            .help("proxy (по умолчанию) или gateway: шлюз для всего сервера")
+            .help_heading(OPTIONS),
+    )
+    .arg(
+        Arg::new("lan")
+            .long("lan")
+            .action(ArgAction::SetTrue)
+            .help("Шлюз для сервера и устройств локальной сети (то же, что --mode gateway с локальной сетью)")
+            .help_heading(OPTIONS),
+    )
 }
 
 pub(crate) fn command() -> Command {
