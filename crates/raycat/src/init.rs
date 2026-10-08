@@ -516,9 +516,8 @@ fn save(path: &Path, text: &str, env: &Env) -> Result<Option<PathBuf>> {
     write_private(path, text.as_bytes())?;
     if let Err(error) = Config::load(Some(path), env, paths::is_root()) {
         if let Some(backup) = &backup {
-            fs::rename(backup, path).with_context(|| {
-                format!("не удалось вернуть прежний файл {}", path.display())
-            })?;
+            fs::rename(backup, path)
+                .with_context(|| format!("не удалось вернуть прежний файл {}", path.display()))?;
             bail!("новые настройки не прошли проверку, прежний файл возвращён: {error}");
         }
         fs::remove_file(path)?;
