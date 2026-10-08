@@ -399,9 +399,7 @@ fn read_text_file(path: &str, limit: u64, limit_text: &str) -> Result<String, St
     let fail = |error: io::Error| format!("не удалось прочитать {path}: {error}");
     let file = File::open(path).map_err(fail)?;
     let mut bytes = Vec::new();
-    file.take(limit + 1)
-        .read_to_end(&mut bytes)
-        .map_err(fail)?;
+    file.take(limit + 1).read_to_end(&mut bytes).map_err(fail)?;
     if !u64::try_from(bytes.len()).is_ok_and(|len| len <= limit) {
         return Err(format!("файл {path} больше {limit_text}"));
     }

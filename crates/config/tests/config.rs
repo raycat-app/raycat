@@ -1367,7 +1367,10 @@ fn credentials(config: &Config) -> (String, String) {
 
 #[test]
 fn proxy_password_is_read_from_the_key() {
-    let config = parse(&proxy_on("0.0.0.0:1080", &format!("auth = \"alice:{PASSWORD}\"")));
+    let config = parse(&proxy_on(
+        "0.0.0.0:1080",
+        &format!("auth = \"alice:{PASSWORD}\""),
+    ));
     assert_eq!(
         credentials(&config),
         ("alice".to_owned(), PASSWORD.to_owned())
@@ -1382,10 +1385,7 @@ fn proxy_password_is_read_from_the_key() {
 #[test]
 fn proxy_password_file_is_read_and_trimmed() {
     let path = temp_file("proxy-auth-file", "  alice:file-pass-1\r\n\n".as_bytes());
-    let text = proxy_on(
-        "0.0.0.0:1080",
-        &format!("auth_file = '{}'", path.display()),
-    );
+    let text = proxy_on("0.0.0.0:1080", &format!("auth_file = '{}'", path.display()));
     assert_eq!(
         credentials(&parse(&text)),
         ("alice".to_owned(), "file-pass-1".to_owned())
@@ -1396,8 +1396,8 @@ fn proxy_password_file_is_read_and_trimmed() {
 #[test]
 fn proxy_password_from_environment() {
     let file = proxy_on("0.0.0.0:1080", "");
-    let config = Config::from_toml_str(&file, &env(&[("RAYCAT_PROXY_AUTH", "bob:env-pass-2")]))
-        .unwrap();
+    let config =
+        Config::from_toml_str(&file, &env(&[("RAYCAT_PROXY_AUTH", "bob:env-pass-2")])).unwrap();
     assert_eq!(
         credentials(&config),
         ("bob".to_owned(), "env-pass-2".to_owned())
@@ -1466,7 +1466,9 @@ fn public_proxy_needs_a_password() {
     }
     assert_eq!(
         problems(&proxy_on("0.0.0.0:1080", "")),
-        ["mode.auth: прокси слушает 0.0.0.0:1080 без пароля — любой в сети сможет пользоваться вашим VPN. Задайте mode.auth = \"логин:пароль\" (или auth_file), либо mode.auth = \"off\", если сеть полностью доверенная"]
+        [
+            "mode.auth: прокси слушает 0.0.0.0:1080 без пароля — любой в сети сможет пользоваться вашим VPN. Задайте mode.auth = \"логин:пароль\" (или auth_file), либо mode.auth = \"off\", если сеть полностью доверенная"
+        ]
     );
 }
 

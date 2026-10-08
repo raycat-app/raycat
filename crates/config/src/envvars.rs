@@ -132,7 +132,10 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
 fn apply_proxy_auth(raw: &mut Raw, env: &Env, p: &mut Problems) {
     let (auth, auth_file) = (value(env, PROXY_AUTH), value(env, PROXY_AUTH_FILE));
     if auth.is_some() && auth_file.is_some() {
-        p.add(PROXY_AUTH_FILE, "нельзя задавать вместе с RAYCAT_PROXY_AUTH");
+        p.add(
+            PROXY_AUTH_FILE,
+            "нельзя задавать вместе с RAYCAT_PROXY_AUTH",
+        );
     }
     if let Some(auth) = auth {
         raw.mode.auth = Some(auth.to_owned());

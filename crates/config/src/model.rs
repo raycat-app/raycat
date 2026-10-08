@@ -160,7 +160,10 @@ pub enum ProxyAuth {
     NotSet,
     /// `auth = "off"`: без пароля и на нелокальном адресе.
     Off,
-    Password { user: String, password: Secret },
+    Password {
+        user: String,
+        password: Secret,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
