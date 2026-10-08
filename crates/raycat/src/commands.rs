@@ -98,13 +98,15 @@ pub(crate) fn fetch(config: &Config, store: &Store, name: &str) -> Result<()> {
         .with_context(|| unknown_subscription(config, name))?;
     let source = Source::new(config, subscription, &store.machine_id()?)?;
     let start = Url::parse(subscription.url.expose()).context("некорректная ссылка подписки")?;
+    let hwid = source.emulation().device_info().hwid;
     say!("Подписка «{name}»: {}", subscription.masked_url());
     let mut send = |url: &Url| -> Result<Response> {
         let headers = source.headers(url);
         say!("Запрос GET {}", redact(url));
-        for (key, value) in &headers {
+        for (key, value) in shown_headers(&headers, &hwid) {
             say!("  {key}: {value}");
         }
+        say!("  (идентификаторы устройства скрыты; полностью — raycat identity)");
         source.send_with(url, &headers)
     };
     let (response, served) = updater::follow(&start, &mut send)?;
@@ -126,6 +128,51 @@ pub(crate) fn fetch(config: &Config, store: &Store, name: &str) -> Result<()> {
     }
     say!("Проблем нет: ответ можно применять");
     Ok(())
+}
+
+/// Заголовки для вывода: `X-HWID`, значения с HWID и имя хоста в модели скрыты.
+fn shown_headers(headers: &[(String, String)], hwid: &str) -> Vec<(String, String)> {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            let shown = if name.eq_ignore_ascii_case("x-hwid") || has_hwid(value, hwid) {
+                hide_value(value)
+            } else if name.eq_ignore_ascii_case("x-device-model") {
+                hide_model(value)
+            } else {
+                value.clone()
+            };
+            (name.clone(), shown)
+        })
+        .collect()
+}
+
+fn has_hwid(value: &str, hwid: &str) -> bool {
+    !hwid.is_empty()
+        && value
+            .to_ascii_lowercase()
+            .contains(&hwid.to_ascii_lowercase())
+}
+
+/// Модель Windows — имя хоста и процессор через `_`: скрывается только имя хоста.
+fn hide_model(model: &str) -> String {
+    for cpu in ["_x86_64", "_arm64"] {
+        if let Some(host) = model.strip_suffix(cpu) {
+            return format!("{}{cpu}", hide_value(host));
+        }
+    }
+    model.to_owned()
+}
+
+/// Первые и последние четыре символа; короткое значение (до 10 символов) скрыто целиком.
+fn hide_value(value: &str) -> String {
+    let len = value.chars().count();
+    if len <= 10 {
+        return "…".to_owned();
+    }
+    let head: String = value.chars().take(4).collect();
+    let tail: String = value.chars().skip(len - 4).collect();
+    format!("{head}…{tail}")
 }
 
 fn unknown_subscription(config: &Config, name: &str) -> String {
@@ -233,4 +280,69 @@ pub(crate) fn identity(config: &Config, store: &Store) -> Result<()> {
         say!("  устройство выведено из: {}", source.origin().describe());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HWID: &str = "a1b2c3d4e5f6a7b8";
+
+    #[test]
+    fn hidden_values_keep_only_the_edges() {
+        assert_eq!(hide_value(HWID), "a1b2…a7b8");
+        assert_eq!(hide_value("0123456789"), "…");
+        assert_eq!(hide_value("01234567890"), "0123…7890");
+        assert_eq!(hide_value("ЖЖЖЖЖЖЖЖЖЖЖЖ"), "ЖЖЖЖ…ЖЖЖЖ");
+        assert_eq!(hide_value(""), "…");
+    }
+
+    #[test]
+    fn model_hides_only_the_computer_name() {
+        assert_eq!(hide_model("EXAMPLE-HOST_x86_64"), "EXAM…HOST_x86_64");
+        assert_eq!(hide_model("EXAMPLE-PC_arm64"), "…_arm64");
+        assert_eq!(hide_model("SM-S921B"), "SM-S921B");
+        assert_eq!(hide_model("Pixel 8"), "Pixel 8");
+    }
+
+    #[test]
+    fn shown_headers_hide_device_identifiers() {
+        let headers: Vec<(String, String)> = [
+            ("User-Agent", "Happ/4.3.0/Windows/2609151455"),
+            ("X-Device-Model", "EXAMPLE-HOST_x86_64"),
+            ("X-Hwid", HWID),
+            ("X-HWID", "zq7w-plain-value-0000"),
+            ("X-Custom", "A1B2C3D4E5F6A7B8"),
+            ("X-Ref", "id-a1b2c3d4e5f6a7b8-end"),
+            ("Accept-Language", "ru-RU,en,*"),
+            ("Host", "sub.example.com"),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect();
+        let pairs = shown_headers(&headers, HWID);
+        let shown: Vec<(&str, &str)> = pairs
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("User-Agent", "Happ/4.3.0/Windows/2609151455"),
+                ("X-Device-Model", "EXAM…HOST_x86_64"),
+                ("X-Hwid", "a1b2…a7b8"),
+                ("X-HWID", "zq7w…0000"),
+                ("X-Custom", "A1B2…A7B8"),
+                ("X-Ref", "id-a…-end"),
+                ("Accept-Language", "ru-RU,en,*"),
+                ("Host", "sub.example.com"),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_hwid_hides_no_value() {
+        let headers = [("Accept".to_owned(), "text/html".to_owned())];
+        assert_eq!(shown_headers(&headers, "")[0].1, "text/html");
+    }
 }
