@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use raycat_config::{Config, Mode, Subscription};
+use raycat_config::{Config, Mode, ProxyAuth, Subscription};
 use raycat_netfilter::Rules;
 use raycat_proto::{Event, Mode as ApiMode, Status, UpdateResult, Updates, XrayState, XrayStatus};
 use raycat_select::Selector;
@@ -89,12 +89,12 @@ fn initial_status(config: &Config) -> Status {
 }
 
 async fn serve(config: Config, store: Store, socket: PathBuf) -> Result<()> {
-    match config.mode {
-        Mode::Proxy { listen } if !listen.ip().is_loopback() => warn!(
-            "прокси слушает {listen} без пароля: им сможет пользоваться любой, кто до него дотянется"
-        ),
-        Mode::Proxy { .. } => {}
-        Mode::Gateway { .. } => gateway::preflight()?,
+    match (config.mode, &config.proxy_auth) {
+        (Mode::Proxy { listen }, ProxyAuth::Off) if !listen.ip().is_loopback() => {
+            warn!("прокси {listen} открыт без пароля (mode.auth = \"off\")");
+        }
+        (Mode::Proxy { .. }, _) => {}
+        (Mode::Gateway { .. }, _) => gateway::preflight()?,
     }
     let machine_id = store.machine_id()?;
     let (shared, mut commands) = Shared::new(initial_status(&config));

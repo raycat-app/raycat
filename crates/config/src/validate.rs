@@ -12,8 +12,8 @@ use crate::envvars;
 use crate::error::{Error, Problems};
 use crate::link::{self, Scheme};
 use crate::model::{
-    App, Config, Device, Dns, Lan, LogLevel, Logging, Mode, Pin, Platform, Routing, Secret,
-    Selection, Subscription, TcpCongestion, Xray,
+    App, Config, Device, Dns, Lan, LogLevel, Logging, Mode, Pin, Platform, ProxyAuth, Routing,
+    Secret, Selection, Subscription, TcpCongestion, Xray,
 };
 use crate::pattern::Pattern;
 use crate::raw::{Raw, RawDevice, RawDns, RawLog, RawSelection, RawSubscription, RawXray};
@@ -27,6 +27,9 @@ const MAX_PATTERN_CHARS: usize = 256;
 const MAX_RESOLVERS: usize = 8;
 const MAX_PATH_BYTES: usize = 4_096;
 const MAX_URL_FILE_BYTES: u64 = 4 << 10;
+const MAX_AUTH_FILE_BYTES: u64 = 1 << 10;
+const MAX_CREDENTIAL_CHARS: usize = 128;
+const MIN_PASSWORD_CHARS: usize = 8;
 
 const UPDATE_INTERVAL_RANGE: RangeInclusive<Duration> =
     Duration::from_secs(10 * 60)..=Duration::from_secs(30 * 86_400);
@@ -56,6 +59,7 @@ pub(crate) const MODE_HINT: &str = "допустимо: proxy или gateway";
 pub(crate) const LISTEN_HINT: &str = "ожидается адрес вида 127.0.0.1:7890 или [::1]:7890";
 pub(crate) const LEVEL_HINT: &str = "допустимо: error, warn, info или debug";
 pub(crate) const BOOL_HINT: &str = "ожидается true или false (также 1/0, yes/no, on/off)";
+const AUTH_HINT: &str = "ожидается «логин:пароль» или off";
 const CONGESTION_HINT: &str = "допустимо: auto, off или имя алгоритма ядра (bbr, cubic): латиница, цифры, «-» и «_», до 15 символов";
 const IP_HINT: &str = "ожидается IP-адрес, например 1.1.1.1";
 const DURATION_HINT: &str = "ожидается длительность вроде 500ms, 30s, 5m, 6h или 1d";
@@ -142,6 +146,7 @@ pub(crate) fn build(raw: &Raw, mut problems: Problems) -> Result<Config, Error> 
     let selection = selection(&raw.selection, &names, p);
     let mode = mode(raw, p);
     let lan = lan(raw, &mode, p);
+    let proxy_auth = proxy_auth(raw, &mode, p);
     let warnings = warnings(raw, &mode);
     let dns = dns(&raw.dns, p);
     let routing = Routing {
@@ -156,6 +161,7 @@ pub(crate) fn build(raw: &Raw, mut problems: Problems) -> Result<Config, Error> 
             selection,
             mode,
             lan,
+            proxy_auth,
             dns,
             routing,
             xray,
@@ -378,7 +384,7 @@ fn link_field(
 }
 
 fn url_file(field: &str, path: &str, allow_http: bool, p: &mut Problems) -> Option<Secret> {
-    match read_url_file(path) {
+    match read_text_file(path, MAX_URL_FILE_BYTES, "4 КиБ") {
         Ok(value) => link_field(field, &value, allow_http, &format!("файл {path}: "), p),
         Err(message) => {
             p.add(field, message);
@@ -387,16 +393,15 @@ fn url_file(field: &str, path: &str, allow_http: bool, p: &mut Problems) -> Opti
     }
 }
 
-/// Файл с ссылкой (например, Docker secret): пробелы и перевод строки по краям не значимы.
-fn read_url_file(path: &str) -> Result<String, String> {
+/// Файл с секретом (ссылка, логин и пароль, например Docker secret): пробелы и перевод
+/// строки по краям не значимы.
+fn read_text_file(path: &str, limit: u64, limit_text: &str) -> Result<String, String> {
     let fail = |error: io::Error| format!("не удалось прочитать {path}: {error}");
     let file = File::open(path).map_err(fail)?;
     let mut bytes = Vec::new();
-    file.take(MAX_URL_FILE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(fail)?;
-    if !u64::try_from(bytes.len()).is_ok_and(|len| len <= MAX_URL_FILE_BYTES) {
-        return Err(format!("файл {path} больше 4 КиБ"));
+    file.take(limit + 1).read_to_end(&mut bytes).map_err(fail)?;
+    if !u64::try_from(bytes.len()).is_ok_and(|len| len <= limit) {
+        return Err(format!("файл {path} больше {limit_text}"));
     }
     let text = String::from_utf8(bytes)
         .map_err(|_| format!("не удалось прочитать {path}: файл не в кодировке UTF-8"))?;
@@ -617,6 +622,89 @@ fn lan(raw: &Raw, mode: &Mode, p: &mut Problems) -> Lan {
     Lan { interface, subnets }
 }
 
+/// Пароль нужен, если прокси слушает не петлевой адрес. `auth = "off"` снимает это требование.
+fn proxy_auth(raw: &Raw, mode: &Mode, p: &mut Problems) -> ProxyAuth {
+    let Mode::Proxy { listen } = *mode else {
+        return ProxyAuth::NotSet;
+    };
+    let given = match (raw.mode.auth.as_deref(), raw.mode.auth_file.as_deref()) {
+        (None, None) => {
+            if !listen.ip().is_loopback() {
+                p.add(
+                    "mode.auth",
+                    format!(
+                        "прокси слушает {listen} без пароля — любой в сети сможет пользоваться вашим VPN. Задайте mode.auth = \"логин:пароль\" (или auth_file), либо mode.auth = \"off\", если сеть полностью доверенная"
+                    ),
+                );
+            }
+            return ProxyAuth::NotSet;
+        }
+        (Some(_), Some(_)) => {
+            p.add("mode.auth_file", "нельзя задавать вместе с mode.auth");
+            return ProxyAuth::NotSet;
+        }
+        (Some(value), None) => {
+            let field = origin(raw, "mode.auth", envvars::PROXY_AUTH);
+            auth_text(&field, "", value, p)
+        }
+        (None, Some(path)) => {
+            let field = origin(raw, "mode.auth_file", envvars::PROXY_AUTH_FILE);
+            auth_file(&field, path, p)
+        }
+    };
+    given.unwrap_or(ProxyAuth::NotSet)
+}
+
+fn auth_file(field: &str, path: &str, p: &mut Problems) -> Option<ProxyAuth> {
+    match read_text_file(path, MAX_AUTH_FILE_BYTES, "1 КиБ") {
+        Ok(value) => auth_text(field, &format!("файл {path}: "), &value, p),
+        Err(message) => {
+            p.add(field, message);
+            None
+        }
+    }
+}
+
+/// Значение `auth` или содержимое `auth_file`: `off` или `логин:пароль`. Сообщения не
+/// называют значение, в нём пароль.
+fn auth_text(field: &str, prefix: &str, value: &str, p: &mut Problems) -> Option<ProxyAuth> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("off") {
+        return Some(ProxyAuth::Off);
+    }
+    let Some((user, password)) = value.split_once(':') else {
+        p.add(field, format!("{prefix}{AUTH_HINT}"));
+        return None;
+    };
+    if let Some(problem) = credential_problem(user, password) {
+        p.add(field, format!("{prefix}{problem}"));
+        return None;
+    }
+    Some(ProxyAuth::Password {
+        user: user.to_owned(),
+        password: Secret::new(password.to_owned()),
+    })
+}
+
+fn credential_problem(user: &str, password: &str) -> Option<String> {
+    let too_long = |text: &str| text.chars().count() > MAX_CREDENTIAL_CHARS;
+    if user.is_empty() {
+        Some("логин не может быть пустым".to_owned())
+    } else if password.is_empty() {
+        Some("пароль не может быть пустым".to_owned())
+    } else if too_long(user) {
+        Some(format!("логин длиннее {MAX_CREDENTIAL_CHARS} символов"))
+    } else if too_long(password) {
+        Some(format!("пароль длиннее {MAX_CREDENTIAL_CHARS} символов"))
+    } else if password.chars().count() < MIN_PASSWORD_CHARS {
+        Some(format!("пароль короче {MIN_PASSWORD_CHARS} символов"))
+    } else if user.chars().chain(password.chars()).any(char::is_control) {
+        Some("логин и пароль не должны содержать управляющих символов".to_owned())
+    } else {
+        None
+    }
+}
+
 /// Ключи, которые заданы, но к выбранному режиму не относятся: они не применяются.
 fn warnings(raw: &Raw, mode: &Mode) -> Vec<String> {
     let mut list = Vec::new();
@@ -640,6 +728,18 @@ fn warnings(raw: &Raw, mode: &Mode) -> Vec<String> {
                 list.push(format!(
                     "{} действует только в режиме proxy",
                     origin(raw, "mode.listen", envvars::LISTEN)
+                ));
+            }
+            if raw.mode.auth.is_some() {
+                list.push(format!(
+                    "{} действует только в режиме proxy",
+                    origin(raw, "mode.auth", envvars::PROXY_AUTH)
+                ));
+            }
+            if raw.mode.auth_file.is_some() {
+                list.push(format!(
+                    "{} действует только в режиме proxy",
+                    origin(raw, "mode.auth_file", envvars::PROXY_AUTH_FILE)
                 ));
             }
         }

@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use raycat_xray::{
-    CompileError, Compiled, Mode, Node, Settings, SkippedNode, Subscription, compile,
+    CompileError, Compiled, Credentials, Mode, Node, Settings, SkippedNode, Subscription, compile,
 };
 use serde_json::{Value, json};
 
@@ -144,6 +144,17 @@ fn subscriptions() -> Vec<Subscription> {
 fn proxy_mode() -> Mode {
     Mode::Proxy {
         listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 1080),
+        auth: None,
+    }
+}
+
+fn proxy_with_password() -> Mode {
+    Mode::Proxy {
+        listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 1080),
+        auth: Some(Credentials {
+            user: "golden-user".to_owned(),
+            password: "golden-password".to_owned(),
+        }),
     }
 }
 
@@ -503,12 +514,35 @@ fn proxy_inbound_serves_http_and_socks_on_one_port() {
 fn proxy_on_a_concrete_address_tells_it_to_udp_clients() {
     let mode = Mode::Proxy {
         listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 3128),
+        auth: None,
     };
     let config = build(mode).config;
 
     assert_eq!(config["inbounds"][0]["listen"], "192.0.2.1");
     assert_eq!(config["inbounds"][0]["port"], 3128);
     assert_eq!(config["inbounds"][0]["settings"]["ip"], "192.0.2.1");
+}
+
+#[test]
+fn proxy_with_a_password_asks_for_it_on_the_mixed_inbound() {
+    let config = build(proxy_with_password()).config;
+
+    assert_eq!(
+        config["inbounds"][0]["settings"],
+        json!({
+            "auth": "password",
+            "accounts": [{"user": "golden-user", "pass": "golden-password"}],
+            "udp": true
+        })
+    );
+}
+
+#[test]
+fn password_stays_out_of_debug_output() {
+    let text = format!("{:?}", proxy_with_password());
+
+    assert!(!text.contains("golden-password"));
+    assert!(text.contains("golden-user"));
 }
 
 #[test]
@@ -759,6 +793,11 @@ fn assert_golden(name: &str, actual: &Value) {
 #[test]
 fn golden_proxy_config() {
     assert_golden("proxy.json", &build(proxy_mode()).config);
+}
+
+#[test]
+fn golden_proxy_with_password_config() {
+    assert_golden("proxy-auth.json", &build(proxy_with_password()).config);
 }
 
 #[test]

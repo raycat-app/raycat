@@ -242,8 +242,15 @@ fn inbounds(mode: &Mode) -> Vec<Value> {
             "streamSettings": {"sockopt": {"tproxy": "tproxy"}},
             "sniffing": sniffing,
         })],
-        Mode::Proxy { listen } => {
-            let mut settings = json!({"auth": "noauth", "udp": true});
+        Mode::Proxy { listen, auth } => {
+            let mut settings = match auth {
+                Some(credentials) => json!({
+                    "auth": "password",
+                    "accounts": [{"user": credentials.user, "pass": credentials.password}],
+                    "udp": true,
+                }),
+                None => json!({"auth": "noauth", "udp": true}),
+            };
             // Адрес для UDP ASSOCIATE: по неопределённому адресу клиенту не подключиться.
             if !listen.ip().is_unspecified() {
                 settings["ip"] = json!(listen.ip().to_string());

@@ -67,6 +67,8 @@ pub(crate) struct RawMode {
     pub(crate) lan: Option<bool>,
     pub(crate) lan_interface: Option<String>,
     pub(crate) lan_subnets: Option<Vec<String>>,
+    pub(crate) auth: Option<String>,
+    pub(crate) auth_file: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
