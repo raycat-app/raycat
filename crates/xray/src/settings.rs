@@ -80,6 +80,39 @@ pub struct Settings {
     pub tcp_congestion: Option<String>,
     /// Число параллельных соединений XHTTP для узлов, где провайдер не задал `xmux`.
     pub xhttp_connections: Option<u8>,
+    /// Правила раздельной маршрутизации по порядку, первое подошедшее побеждает. Пусто —
+    /// весь трафик идёт через узел.
+    pub rules: Vec<Rule>,
+}
+
+/// Действие правила: напрямую, через выбранный узел или отбросить соединение.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    Direct,
+    Proxy,
+    Block,
+}
+
+/// Домены и подсети с одним действием: совпадение с любым из них.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rule {
+    pub domains: Vec<Domain>,
+    pub subnets: Vec<Subnet>,
+    pub action: Action,
+}
+
+/// `subdomains` — домен и все его поддомены, иначе только точное имя. Имя в нижнем регистре.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Domain {
+    pub name: String,
+    pub subdomains: bool,
+}
+
+/// Подсеть: адрес сети и длина префикса.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Subnet {
+    pub addr: IpAddr,
+    pub prefix: u8,
 }
 
 impl Settings {
@@ -92,6 +125,7 @@ impl Settings {
             api_port,
             tcp_congestion: None,
             xhttp_connections: None,
+            rules: Vec::new(),
         }
     }
 }

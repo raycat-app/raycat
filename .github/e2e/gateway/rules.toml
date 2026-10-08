@@ -1,0 +1,23 @@
+[[subscription]]
+name = "e2e"
+url = "http://11.30.0.5:8080/sub/e2etoken1234"
+allow_http = true
+app = "happ"
+platform = "windows"
+
+[mode]
+type = "gateway"
+kill_switch = true
+
+[routing]
+
+[[routing.rule]]
+ips = ["11.30.0.50/32"]
+action = "direct"
+
+[[routing.rule]]
+domains = ["site.e2e.test"]
+action = "block"
+
+[log]
+level = "debug"

@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use crate::nodes::compile_node;
 use crate::tuning::{self, Tuning};
-use crate::{Mode, Node, Settings};
+use crate::{Action, Domain, Mode, Node, Rule, Settings, Subnet};
 
 const PRIVATE_NETWORKS: [&str; 7] = [
     "10.0.0.0/8",
@@ -154,12 +154,13 @@ pub fn compile(
     outbounds.extend(service_outbounds(mark));
 
     let api_listen = format!("127.0.0.1:{}", settings.api_port);
+    let direct = direct_domains(&settings.rules);
     let config = json!({
         "log": {"loglevel": "warning", "access": "none"},
         "api": {"tag": "api", "listen": api_listen, "services": API_SERVICES},
         "stats": {},
         "policy": {"system": {"statsOutboundUplink": true, "statsOutboundDownlink": true}},
-        "dns": dns(&settings.dns.resolvers, *primary_resolver, &hosts),
+        "dns": dns(&settings.dns.resolvers, *primary_resolver, &hosts, &direct),
         "fakedns": [{"ipPool": settings.dns.fake_ip_pool, "poolSize": FAKE_IP_POOL_SIZE}],
         "observatory": {
             "subjectSelector": mains,
@@ -174,9 +175,9 @@ pub fn compile(
                 "strategy": {"type": "leastPing"},
                 "fallbackTag": fallback,
             }],
-            "rules": rules(&settings.mode),
+            "rules": rules(&settings.mode, &settings.rules),
         },
-        "inbounds": inbounds(&settings.mode),
+        "inbounds": inbounds(&settings.mode, route_only(&settings.rules)),
         "outbounds": outbounds,
     });
 
@@ -200,12 +201,13 @@ fn service_outbounds(mark: Option<u32>) -> [Value; 3] {
     ]
 }
 
-fn dns(resolvers: &[IpAddr], primary: IpAddr, hosts: &[String]) -> Value {
+fn dns(resolvers: &[IpAddr], primary: IpAddr, hosts: &[String], direct: &[String]) -> Value {
     let mut servers = Vec::new();
     // Без этой записи fakedns подменяет адреса самих серверов, и узлы с доменом
-    // не подключаются.
-    if !hosts.is_empty() {
-        let domains: Vec<String> = hosts.iter().map(|host| format!("full:{host}")).collect();
+    // не подключаются. Прямые домены тоже нужны настоящие адреса: их соединения идут мимо узлов.
+    let mut domains: Vec<String> = hosts.iter().map(|host| format!("full:{host}")).collect();
+    domains.extend_from_slice(direct);
+    if !domains.is_empty() {
         servers.push(json!({
             "address": primary.to_string(),
             "domains": domains,
@@ -217,7 +219,30 @@ fn dns(resolvers: &[IpAddr], primary: IpAddr, hosts: &[String]) -> Value {
     json!({"tag": "dns-internal", "queryStrategy": "UseIPv4", "servers": servers})
 }
 
-fn rules(mode: &Mode) -> Vec<Value> {
+/// Домены правил с действием `direct`: их DNS-запросы идут к настоящему резолверу.
+fn direct_domains(rules: &[Rule]) -> Vec<String> {
+    rules
+        .iter()
+        .filter(|rule| rule.action == Action::Direct)
+        .flat_map(|rule| rule.domains.iter().map(domain_text))
+        .collect()
+}
+
+/// Доменные правила требуют, чтобы xray видел домен в соединении.
+fn route_only(rules: &[Rule]) -> bool {
+    rules.iter().any(|rule| !rule.domains.is_empty())
+}
+
+fn domain_text(domain: &Domain) -> String {
+    let kind = if domain.subdomains { "domain" } else { "full" };
+    format!("{kind}:{}", domain.name)
+}
+
+fn subnet_text(subnet: &Subnet) -> String {
+    format!("{}/{}", subnet.addr, subnet.prefix)
+}
+
+fn rules(mode: &Mode, custom: &[Rule]) -> Vec<Value> {
     let mut rules = vec![
         json!({"type": "field", "inboundTag": ["api"], "outboundTag": "api"}),
         json!({"type": "field", "inboundTag": ["dns-internal"], "outboundTag": "direct"}),
@@ -227,12 +252,44 @@ fn rules(mode: &Mode) -> Vec<Value> {
     }
     // geoip:private не используем: geo-файлов в поставке нет.
     rules.push(json!({"type": "field", "ip": PRIVATE_NETWORKS, "outboundTag": "direct"}));
+    rules.extend(custom.iter().flat_map(custom_rules));
     rules.push(json!({"type": "field", "network": "tcp,udp", "balancerTag": BALANCER_TAG}));
     rules
 }
 
-fn inbounds(mode: &Mode) -> Vec<Value> {
-    let sniffing = json!({"enabled": true, "destOverride": ["http", "tls", "quic", "fakedns"]});
+/// Доменные и IP-условия — два правила xray, чтобы совпадение любым из них сохранилось.
+fn custom_rules(rule: &Rule) -> Vec<Value> {
+    let mut rules = Vec::new();
+    if !rule.domains.is_empty() {
+        let domains: Vec<String> = rule.domains.iter().map(domain_text).collect();
+        rules.push(route("domain", json!(domains), rule.action));
+    }
+    if !rule.subnets.is_empty() {
+        let subnets: Vec<String> = rule.subnets.iter().map(subnet_text).collect();
+        rules.push(route("ip", json!(subnets), rule.action));
+    }
+    rules
+}
+
+fn route(field: &str, value: Value, action: Action) -> Value {
+    let mut rule = json!({"type": "field"});
+    rule[field] = value;
+    match action {
+        Action::Direct => rule["outboundTag"] = json!("direct"),
+        Action::Block => rule["outboundTag"] = json!("block"),
+        Action::Proxy => rule["balancerTag"] = json!(BALANCER_TAG),
+    }
+    rule
+}
+
+fn inbounds(mode: &Mode, by_domain: bool) -> Vec<Value> {
+    let mut sniffing =
+        json!({"enabled": true, "destOverride": ["http", "tls", "quic", "fakedns"]});
+    // Адрес соединения остаётся настоящим: fake-IP xray подменяет сам, поэтому
+    // routeOnly безопасен рядом с fakedns.
+    if by_domain {
+        sniffing["routeOnly"] = json!(true);
+    }
     match mode {
         Mode::Gateway { tproxy_port, .. } => vec![json!({
             "tag": "tproxy-in",

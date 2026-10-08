@@ -24,6 +24,8 @@ gateway=raycat-e2e-gateway
 app=raycat-e2e-app
 holder=raycat-e2e-holder
 gw2=raycat-e2e-gw2
+gw3=raycat-e2e-gw3
+holder2=raycat-e2e-holder2
 site=http://site.e2e.test/
 canary=http://11.30.0.50/
 nodes_inet=(11.40.0.11 11.40.0.12)
@@ -39,7 +41,7 @@ cleanup() {
   set +e
   if [ "$status" -ne 0 ]; then
     docker ps -a --format 'table {{.Names}}\t{{.Status}}' >&2
-    for name in "$gateway" "$gw2"; do
+    for name in "$gateway" "$gw2" "$gw3"; do
       echo "::group::журнал $name"
       docker logs "$name" 2>&1 | tail -80
       echo "::endgroup::"
@@ -302,5 +304,19 @@ sleep 1
 docker exec "$holder" nft list table inet raycat >/dev/null || fail "после аварийного выхода правила исчезли"
 rule_present docker exec "$holder" || fail "после аварийного выхода исчезло правило маршрутизации"
 echo "  после аварийного выхода правила остались (kill switch)"
+
+echo "== раздельная маршрутизация: адрес из direct идёт мимо узла, заблокированный домен не открывается"
+"${compose[@]}" --profile lifecycle up --detach holder2 gw3 >/dev/null
+wait_for "xray в gw3" 60 docker exec "$gw3" pidof xray
+wait_for "raycat health в gw3" 60 docker exec "$gw3" raycat health
+holder_answer=$(docker exec "$holder2" nslookup site.e2e.test) || fail "nslookup в пространстве шлюза с правилами не ответил"
+grep -q 'Address: 198\.1[89]\.' <<<"$holder_answer" || fail "DNS в пространстве шлюза с правилами ответил не fake-IP: $holder_answer"
+direct_seen=$(docker exec "$holder2" wget -q -T 5 -O - "$canary") || fail "$canary не отвечает через шлюз с правилами"
+[ "$direct_seen" = 11.30.0.6 ] || fail "$canary ответил адресом $direct_seen, ожидался адрес шлюза 11.30.0.6 (правило direct)"
+echo "  $canary: пришли с адреса шлюза $direct_seen, не с узла"
+if docker exec "$holder2" wget -q -T 4 -O - "$site" >/dev/null 2>&1; then
+  fail "заблокированный правилом block сайт открылся"
+fi
+echo "  $site: отклонён правилом block"
 
 echo "e2e шлюза: успех"

@@ -386,15 +386,20 @@ resolvers = ["1.1.1.1", "9.9.9.9"]
 <details>
 <summary><code>[routing]</code> — routing</summary>
 
-For each connection the order is: your rules from top to bottom, then the `ru_direct` preset, then
-the provider's routing (if enabled), and everything else goes through the VPN. The first matching
-rule applies.
+For each connection the order is: your rules from top to bottom, then the `ru_direct` preset, and
+everything else goes through the VPN. The first matching rule applies. The provider's routing
+(`provider`) is not applied yet: the key is accepted but does not affect traffic.
 
 | Key | Default | Allowed | What it does |
 | --- | --- | --- | --- |
 | `provider` | `false` | `true`, `false` | Apply the routing that the provider sends in the subscription response |
 | `ru_direct` | `false` | `true`, `false` | The "Russia direct" preset: domains of the Russian zones (`ru`, `su`, `рф` and others) and Russian IPv4 subnets bypass the VPN. The list is built into raycat; the date of the subnet snapshot is shown by `raycat check` |
 | `rule` | `[]` | up to 256 rules, `[[routing.rule]]` tables | Your own rules |
+
+The preset's subnets apply only to connections by IP address. A domain outside the Russian zones
+that points to a Russian address goes through the VPN. Direct domains (the preset and `direct`
+rules) are resolved by the real DNS rather than fake-IP, so their queries go out directly, bypassing
+the VPN.
 
 Keys of one `[[routing.rule]]`:
 
