@@ -706,7 +706,11 @@ mod tests {
     async fn a_protocol_error_says_the_reply_is_unclear_first() {
         let fake = fake(|_| vec![b"SSH-2.0-OpenSSH\r\n\r\n".to_vec()]);
         let text = fake.client().status().await.unwrap_err().to_string();
-        assert_eq!(text.lines().next(), Some("raycat ответил непонятно"), "{text}");
+        assert_eq!(
+            text.lines().next(),
+            Some("raycat ответил непонятно"),
+            "{text}"
+        );
         assert!(text.ends_with("(это не ответ HTTP)"), "{text}");
     }
 

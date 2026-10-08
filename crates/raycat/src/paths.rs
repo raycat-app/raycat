@@ -241,7 +241,7 @@ mod tests {
         );
     }
 
-    fn present(list: &'static [&'static str]) -> impl Fn(&Path) -> bool {
+    fn present(list: &'static [&'static str]) -> impl Fn(&Path) -> bool + Copy {
         move |path| list.iter().any(|item| path == Path::new(*item))
     }
 

@@ -238,7 +238,10 @@ fn not_updated(failed: usize, total: usize) -> String {
         "подписка" => "обновилась",
         _ => "обновились",
     };
-    format!("не {verb} {failed} {} из {total}", subscriptions_word(failed))
+    format!(
+        "не {verb} {failed} {} из {total}",
+        subscriptions_word(failed)
+    )
 }
 
 async fn events(client: &Client, term: Term, json: bool) -> Result<()> {
@@ -474,7 +477,10 @@ mod health_tests {
     async fn a_stopped_xray_is_not_ready() {
         let fake = fake(status_json(false, Some(NODE)));
         let error = ready(&Client::new(fake.socket.clone())).await.unwrap_err();
-        assert_eq!(error.to_string(), "xray не запущен; подробности: raycat status");
+        assert_eq!(
+            error.to_string(),
+            "xray не запущен; подробности: raycat status"
+        );
     }
 
     #[tokio::test]
@@ -482,7 +488,10 @@ mod health_tests {
         let fake = fake(status_json(true, None));
         let error = ready(&Client::new(fake.socket.clone())).await.unwrap_err();
         assert!(error.to_string().starts_with("узел не выбран"), "{error}");
-        assert!(error.to_string().ends_with("подробности: raycat status"), "{error}");
+        assert!(
+            error.to_string().ends_with("подробности: raycat status"),
+            "{error}"
+        );
     }
 
     #[tokio::test]
@@ -515,6 +524,9 @@ mod health_tests {
         });
         let client = Client::with_timeout(socket, Duration::from_millis(100));
         let error = ready(&client).await.unwrap_err();
-        assert!(error.to_string().starts_with("raycat не ответил вовремя\n"), "{error}");
+        assert!(
+            error.to_string().starts_with("raycat не ответил вовремя\n"),
+            "{error}"
+        );
     }
 }
