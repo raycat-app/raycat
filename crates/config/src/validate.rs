@@ -277,7 +277,10 @@ fn subscription(
         (Some(url), None) => link_field(&at("url"), url, allow_http, "", p),
         (None, Some(path)) => url_file(&at("url_file"), path, allow_http, p),
         _ => {
-            p.add(format!("subscription[{index}]"), "укажите url или url_file (только одно)");
+            p.add(
+                format!("subscription[{index}]"),
+                "укажите url или url_file (только одно)",
+            );
             None
         }
     };

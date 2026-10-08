@@ -54,7 +54,10 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
         get(PLATFORM),
     );
     if url.is_some() && url_file.is_some() {
-        p.add(SUBSCRIPTION_FILE, "нельзя задавать вместе с RAYCAT_SUBSCRIPTION");
+        p.add(
+            SUBSCRIPTION_FILE,
+            "нельзя задавать вместе с RAYCAT_SUBSCRIPTION",
+        );
     }
     if url.is_some() || url_file.is_some() || app.is_some() || platform.is_some() {
         if raw.subscription.is_empty() {

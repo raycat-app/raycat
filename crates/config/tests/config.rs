@@ -1284,8 +1284,7 @@ fn url_and_url_file_are_mutually_exclusive() {
 
 #[test]
 fn url_or_url_file_is_required() {
-    let list =
-        problems("[[subscription]]\nname = \"a\"\napp = \"happ\"\nplatform = \"windows\"\n");
+    let list = problems("[[subscription]]\nname = \"a\"\napp = \"happ\"\nplatform = \"windows\"\n");
     assert_eq!(
         list,
         ["subscription[0]: укажите url или url_file (только одно)"]
@@ -1294,7 +1293,10 @@ fn url_or_url_file_is_required() {
 
 #[test]
 fn subscription_file_environment_creates_the_first_subscription() {
-    let path = temp_file("url-file-env", b"https://sub.example.com/api/sub/FileTok0006\n");
+    let path = temp_file(
+        "url-file-env",
+        b"https://sub.example.com/api/sub/FileTok0006\n",
+    );
     let vars = env(&[
         ("RAYCAT_SUBSCRIPTION_FILE", path.to_str().unwrap()),
         ("RAYCAT_APP", "happ"),
@@ -1312,7 +1314,10 @@ fn subscription_file_environment_creates_the_first_subscription() {
 
 #[test]
 fn subscription_variables_replace_the_file_link() {
-    let path = temp_file("url-file-override", b"https://sub.example.com/api/sub/FileTok0007\n");
+    let path = temp_file(
+        "url-file-override",
+        b"https://sub.example.com/api/sub/FileTok0007\n",
+    );
     let vars = env(&[("RAYCAT_SUBSCRIPTION_FILE", path.to_str().unwrap())]);
     let config = Config::from_toml_str(OK_SUB, &vars).unwrap();
     assert_eq!(
@@ -1320,7 +1325,10 @@ fn subscription_variables_replace_the_file_link() {
         "https://sub.example.com/api/sub/FileTok0007"
     );
 
-    let vars = env(&[("RAYCAT_SUBSCRIPTION", "https://sub.example.com/x/EnvTok0008")]);
+    let vars = env(&[(
+        "RAYCAT_SUBSCRIPTION",
+        "https://sub.example.com/x/EnvTok0008",
+    )]);
     let config = Config::from_toml_str(&url_file_config(&path), &vars).unwrap();
     assert_eq!(
         config.subscriptions[0].url.expose(),
