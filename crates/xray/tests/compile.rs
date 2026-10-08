@@ -6,8 +6,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use raycat_xray::{
-    Action, CompileError, Compiled, Credentials, Domain, Mode, Node, Rule, Settings, SkippedNode,
-    Subnet, Subscription, compile,
+    Action, CompileError, Compiled, Credentials, Domain, DomainKind, Mode, Node, Rule, Settings,
+    SkippedNode, Subnet, Subscription, compile,
 };
 use serde_json::{Value, json};
 
@@ -809,7 +809,11 @@ fn golden_gateway_config() {
 fn domain(name: &str, subdomains: bool) -> Domain {
     Domain {
         name: name.to_owned(),
-        subdomains,
+        kind: if subdomains {
+            DomainKind::Subdomains
+        } else {
+            DomainKind::Full
+        },
     }
 }
 
@@ -943,4 +947,42 @@ fn golden_gateway_with_rules_config() {
 #[test]
 fn golden_proxy_with_rules_config() {
     assert_golden("proxy-rules.json", &build_with_rules(proxy_mode()));
+}
+
+/// Правила, как их даёт профиль провайдера: блокировка, напрямую, через VPN; ключевое
+/// слово идёт в DNS вместе с прямыми доменами.
+fn provider_settings(mode: Mode) -> Settings {
+    let mut settings = Settings::new(mode, 10085);
+    settings.rules = vec![
+        Rule {
+            domains: vec![domain("tracker.example.net", false)],
+            subnets: vec![subnet(203, 0, 113, 0, 24)],
+            action: Action::Block,
+        },
+        Rule {
+            domains: vec![
+                domain("bank.example.ru", true),
+                Domain {
+                    name: "example-shop".to_owned(),
+                    kind: DomainKind::Keyword,
+                },
+            ],
+            subnets: vec![subnet(192, 0, 2, 0, 24)],
+            action: Action::Direct,
+        },
+        Rule {
+            domains: vec![domain("video.example.net", true)],
+            subnets: vec![subnet(198, 51, 100, 0, 24)],
+            action: Action::Proxy,
+        },
+    ];
+    settings
+}
+
+#[test]
+fn golden_gateway_with_provider_rules_config() {
+    let config = compile(&subscriptions(), &provider_settings(gateway_mode()))
+        .unwrap()
+        .config;
+    assert_golden("gateway-provider.json", &config);
 }

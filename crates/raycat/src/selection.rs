@@ -132,8 +132,8 @@ mod tests {
     fn table(config: &Config) -> TagTable {
         let nodes = analyze(200, &[], LINKS).nodes;
         let inputs = [
-            (&config.subscriptions[0], nodes.as_slice()),
-            (&config.subscriptions[1], &nodes[..1]),
+            (&config.subscriptions[0], nodes.as_slice(), None),
+            (&config.subscriptions[1], &nodes[..1], None),
         ];
         compile_config(config, &inputs, 10_085, None).unwrap().tags
     }

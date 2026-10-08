@@ -386,13 +386,13 @@ resolvers = ["1.1.1.1", "9.9.9.9"]
 <details>
 <summary><code>[routing]</code> — routing</summary>
 
-For each connection the order is: your rules from top to bottom, then the `ru_direct` preset, and
-everything else goes through the VPN. The first matching rule applies. The provider's routing
-(`provider`) is not applied yet: the key is accepted but does not affect traffic.
+For each connection the order is: your rules from top to bottom, then the `ru_direct` preset, then the
+provider's rules (`provider`), and everything else goes through the VPN. The first matching rule
+applies.
 
 | Key | Default | Allowed | What it does |
 | --- | --- | --- | --- |
-| `provider` | `false` | `true`, `false` | Apply the routing that the provider sends in the subscription response |
+| `provider` | `false` | `true`, `false` | Apply the routing that the provider sends in the subscription response (see below) |
 | `ru_direct` | `false` | `true`, `false` | The "Russia direct" preset: domains of the Russian zones (`ru`, `su`, `рф` and others) and Russian IPv4 subnets bypass the VPN. The list is built into raycat; the date of the subnet snapshot is shown by `raycat check` |
 | `rule` | `[]` | up to 256 rules, `[[routing.rule]]` tables | Your own rules |
 
@@ -400,6 +400,32 @@ The preset's subnets apply only to connections by IP address. A domain outside t
 that points to a Russian address goes through the VPN. Direct domains (the preset and `direct`
 rules) are resolved by the real DNS rather than fake-IP, so their queries go out directly, bypassing
 the VPN.
+
+The provider's routing (`provider = true`) is the rules that the provider sends in the subscription
+response: in the `routing` header or as a `happ://routing/…` line in the body. The profile of the
+first subscription in the settings that has one is applied. The rules come after `ru_direct`, in
+this order: block, direct, through the VPN.
+
+Translated:
+- domain entries: `domain:`, `full:`, a bare domain (as `domain:`) and `keyword:`;
+- IP addresses and subnets, IPv4 and IPv6;
+- `geosite:category-ru` and `geosite:ru`: the Russian zones, as in the `ru_direct` preset;
+- `geoip:ru`: Russian IPv4 subnets from the data built into raycat;
+- `geoip:private` in the direct list: private networks already go directly.
+
+Skipped; the daemon log shows the count and examples:
+- `geosite:` and `geoip:` other than `ru` and `private`, and `ext:` files: raycat does not load geodata
+  files;
+- `regexp:`: xray checks regular expressions at start, and one bad entry would break the whole config;
+- `geoip:private` in the block and proxy lists: private networks always go directly;
+- entries that do not look like a domain or a subnet, including Cyrillic domains: write them in
+  punycode (`xn--…`).
+
+A profile with `global_proxy` and `happ://routing/off` gives no rules. raycat does not use the
+provider's DNS servers or `dns_hosts`: DNS goes through raycat's own path. Direct domains of the
+provider are resolved by the real DNS, as the preset's domains are. The log gets one line when the
+profile appears or changes; `raycat check` shows `провайдер: «имя», правил N, пропущено M` in the
+routing line.
 
 Keys of one `[[routing.rule]]`:
 

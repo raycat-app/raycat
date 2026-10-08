@@ -101,11 +101,22 @@ pub struct Rule {
     pub action: Action,
 }
 
-/// `subdomains` — домен и все его поддомены, иначе только точное имя. Имя в нижнем регистре.
+/// Как сопоставляется имя домена с адресом соединения и запросом DNS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DomainKind {
+    /// Только это имя.
+    Full,
+    /// Это имя и все его поддомены.
+    Subdomains,
+    /// Имя входит подстрокой в домен.
+    Keyword,
+}
+
+/// Имя в нижнем регистре и способ его сравнения.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Domain {
     pub name: String,
-    pub subdomains: bool,
+    pub kind: DomainKind,
 }
 
 /// Подсеть: адрес сети и длина префикса.
