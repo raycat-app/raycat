@@ -747,7 +747,7 @@ gh attestation verify oci://ghcr.io/raycat-app/raycat:latest --repo raycat-app/r
 
 ## Участие
 
-Предложения и исправления приветствуются: см. [CONTRIBUTING.md](CONTRIBUTING.md).
+Предложения и исправления приветствуются: см. [CONTRIBUTING.md](CONTRIBUTING.md). 
 Об уязвимостях сообщайте приватно: [SECURITY.md](SECURITY.md).
 
 ## Лицензия
