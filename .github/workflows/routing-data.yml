@@ -8,14 +8,8 @@ name: Подсети РФ для маршрутизации
 # собирает файл в артефакт ru-ipv4 и не создаёт ветку.
 
 on:
-  schedule:
-    - cron: "23 5 * * 1"
-  workflow_dispatch:
-    inputs:
-      dry_run:
-        description: Только собрать файл в артефакт ru-ipv4, без ветки и PR
-        type: boolean
-        default: false
+  push:
+    branches: [feat/ru-routing-data]
 
 permissions: {}
 
@@ -84,7 +78,7 @@ jobs:
             echo "- изменилось: $changed, скачок больше 20 %: $jump"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Артефакт (dry_run)
-        if: ${{ inputs.dry_run }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ru-ipv4
@@ -93,7 +87,7 @@ jobs:
           retention-days: 14
       - name: Коммит и ветка бота
         id: commit
-        if: ${{ steps.build.outputs.changed == 'true' && !inputs.dry_run }}
+        if: ${{ false }}
         env:
           DATE: ${{ steps.build.outputs.date }}
           OLD: ${{ steps.build.outputs.old }}
@@ -128,7 +122,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       - name: Pull request
         id: pr
-        if: ${{ steps.build.outputs.changed == 'true' && !inputs.dry_run }}
+        if: ${{ false }}
         env:
           BRANCH: ${{ steps.commit.outputs.branch }}
           TITLE: ${{ steps.commit.outputs.title }}
