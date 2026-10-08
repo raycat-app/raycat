@@ -154,7 +154,10 @@ fn print_provider(info: &ProviderInfo, secret: &str) {
             format_bytes(usage.used())
         );
         if usage.expire != 0 {
-            say!("  срок подписки: до {}", format_date(usage.expire, local_zone()));
+            say!(
+                "  срок подписки: до {}",
+                format_date(usage.expire, local_zone())
+            );
         }
     }
     if let Some(interval) = info.update_interval {

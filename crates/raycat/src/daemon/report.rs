@@ -102,10 +102,7 @@ mod tests {
         let reason = "ж".repeat(500);
         let line = rejected("s1", &reason, Duration::from_secs(43_200));
         assert!(line.contains(&format!("{}…)", "ж".repeat(199))), "{line}");
-        assert!(
-            line.ends_with("следующая попытка через 12 ч"),
-            "{line}"
-        );
+        assert!(line.ends_with("следующая попытка через 12 ч"), "{line}");
         let line = failed("s1", &reason, Duration::from_secs(30));
         assert!(line.chars().count() < 300, "{line}");
         assert!(line.contains("не удалось обновить"));
