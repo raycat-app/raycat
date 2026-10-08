@@ -5,6 +5,7 @@ mod commands;
 mod ctl;
 mod daemon;
 mod gateway;
+mod init;
 mod log;
 mod manual;
 mod paths;
@@ -71,6 +72,7 @@ fn run(matches: &ArgMatches) -> Result<()> {
         "status" | "nodes" | "use" | "update" | "events" => return ctl::run(name, sub, &env),
         "health" => return ctl::health(&env),
         "tui" => return tui::run(&env),
+        "init" => return init::run(sub, &env),
         "completions" => return manual::completions(sub),
         "man" => return manual::man(),
         "help" => return cli::show_help(sub),

@@ -434,7 +434,7 @@ print_plan() {
     if [ -z "$start" ]; then
       say "                запуск не выполняется (--no-start)"
     elif [ ! -e "$CONFIG" ]; then
-      say "                без запуска: сначала впишите ссылку подписки в $CONFIG"
+      say "                без запуска: сначала укажите ссылку подписки: sudo raycat init --force"
     elif [ ! -e "$UNIT" ]; then
       say "                запустить (systemctl start raycat)"
     else
@@ -484,8 +484,8 @@ setup_service() {
   if [ -z "$start" ]; then
     say "Служба включена, но не запущена и не перезапущена (--no-start)."
   elif [ -n "$fresh_config" ]; then
-    say "Служба включена, но пока не запущена: впишите ссылку подписки в $CONFIG"
-    say "и выполните: sudo systemctl start raycat"
+    say "Служба включена, но пока не запущена. После указания ссылки подписки выполните:"
+    say "  sudo systemctl start raycat"
   elif [ "$was_installed" = 0 ]; then
     systemctl start raycat || true
     report_start
@@ -558,7 +558,7 @@ do_install() {
     write_example_config >"$tmp/config.toml"
     install -m 0600 "$tmp/config.toml" "$CONFIG"
     fresh_config=1
-    say "Создан пример настроек $CONFIG: впишите в него ссылку подписки."
+    say "Создан пример настроек $CONFIG. Укажите ссылку подписки: sudo raycat init --force"
   fi
 
   if have_systemd; then
