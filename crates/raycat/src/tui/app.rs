@@ -3,7 +3,7 @@
 //! возвращаются как [`Effect`] и выполняются снаружи.
 
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use raycat_proto::{Event, Node, NodeStatus, Nodes, Pinned, Status, Updates};
@@ -49,6 +49,8 @@ pub(super) enum Effect {
 pub(super) struct Snapshot {
     pub(super) status: Status,
     pub(super) nodes: Nodes,
+    /// Когда снимок получен: по разнице таких моментов меряется скорость.
+    pub(super) at: Instant,
 }
 
 pub(super) enum Msg {
@@ -94,6 +96,71 @@ impl Filter {
     }
 }
 
+/// Скорость выбранного узла в битах в секунду: приём и отдача.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Speed {
+    pub(super) down: u64,
+    pub(super) up: u64,
+}
+
+/// Счётчики выбранного узла на прошлом снимке и скорость по ним.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Meter {
+    node: String,
+    at: Instant,
+    uplink: u64,
+    downlink: u64,
+    speed: Option<Speed>,
+}
+
+impl Meter {
+    fn start(node: String, at: Instant, uplink: u64, downlink: u64) -> Self {
+        Self {
+            node,
+            at,
+            uplink,
+            downlink,
+            speed: None,
+        }
+    }
+
+    /// Следующий снимок того же узла. Скорость за прошедший интервал усредняется
+    /// с предыдущей пополам.
+    fn advance(self, at: Instant, uplink: u64, downlink: u64) -> Self {
+        let Some(elapsed) = at.checked_duration_since(self.at) else {
+            return self;
+        };
+        let millis = elapsed.as_millis();
+        if millis == 0 {
+            return self;
+        }
+        let rate = Speed {
+            down: bits_per_second(downlink.saturating_sub(self.downlink), millis),
+            up: bits_per_second(uplink.saturating_sub(self.uplink), millis),
+        };
+        let speed = match self.speed {
+            None => rate,
+            Some(old) => Speed {
+                down: u64::midpoint(rate.down, old.down),
+                up: u64::midpoint(rate.up, old.up),
+            },
+        };
+        Self {
+            node: self.node,
+            at,
+            uplink,
+            downlink,
+            speed: Some(speed),
+        }
+    }
+}
+
+/// Бит в секунду: `bytes` байт за `millis` миллисекунд.
+fn bits_per_second(bytes: u64, millis: u128) -> u64 {
+    let bits = u128::from(bytes) * 8_000 / millis;
+    u64::try_from(bits).unwrap_or(u64::MAX)
+}
+
 pub(super) struct App {
     pub(super) now: u64,
     pub(super) link: Link,
@@ -113,6 +180,7 @@ pub(super) struct App {
     pub(super) notice: Option<Notice>,
     pub(super) update: Option<UpdateRun>,
     pub(super) quit: bool,
+    meter: Option<Meter>,
     cursor_id: Option<String>,
     rows: usize,
 }
@@ -147,9 +215,15 @@ impl App {
             notice: None,
             update: None,
             quit: false,
+            meter: None,
             cursor_id: None,
             rows: DEFAULT_ROWS,
         }
+    }
+
+    /// Скорость выбранного узла; `None`, пока нет двух снимков с его счётчиками.
+    pub(super) fn speed(&self) -> Option<Speed> {
+        self.meter.as_ref().and_then(|meter| meter.speed)
     }
 
     pub(super) fn set_now(&mut self, now: u64) {
@@ -294,10 +368,31 @@ impl App {
         self.status = Some(snapshot.status);
         self.status_at = self.now;
         self.nodes = snapshot.nodes.nodes;
+        self.measure(snapshot.at);
         self.refilter();
     }
 
+    /// Смена узла и уменьшение счётчика (перезапуск xray) начинают измерение заново.
+    fn measure(&mut self, at: Instant) {
+        let reading = self
+            .nodes
+            .iter()
+            .find(|node| node.selected)
+            .and_then(|node| Some((node.id.clone(), node.uplink_bytes?, node.downlink_bytes?)));
+        self.meter = match (reading, self.meter.take()) {
+            (None, _) => None,
+            (Some((node, uplink, downlink)), Some(meter))
+                if meter.node == node && uplink >= meter.uplink && downlink >= meter.downlink =>
+            {
+                Some(meter.advance(at, uplink, downlink))
+            }
+            (Some((node, uplink, downlink)), _) => Some(Meter::start(node, at, uplink, downlink)),
+        };
+    }
+
     fn on_down(&mut self, reason: &str, retry_in: Duration) {
+        // После обрыва интервал до следующего снимка не говорит о скорости.
+        self.meter = None;
         let (cause, hint) = split_lines(reason);
         let cause = clip(cause);
         if !matches!(self.link, Link::Down { .. }) {
@@ -616,13 +711,27 @@ mod tests {
     }
 
     fn snapshot(nodes: Vec<Node>) -> Msg {
+        snapshot_at(nodes, Instant::now())
+    }
+
+    fn snapshot_at(nodes: Vec<Node>, at: Instant) -> Msg {
         Msg::Snapshot(Box::new(Snapshot {
             status: status(&["main", "backup"]),
             nodes: Nodes {
                 selected: None,
                 nodes,
             },
+            at,
         }))
+    }
+
+    /// Один узел, он выбран, со счётчиками трафика.
+    fn metered(name: &str, uplink: u64, downlink: u64) -> Vec<Node> {
+        let mut current = node("main", name, NodeStatus::Alive);
+        current.selected = true;
+        current.uplink_bytes = Some(uplink);
+        current.downlink_bytes = Some(downlink);
+        vec![current]
     }
 
     fn sample() -> Vec<Node> {
@@ -1155,6 +1264,93 @@ mod tests {
         app.apply(snapshot(sample()));
         assert_eq!(app.link, Link::Up);
         assert_eq!(app.status_at, NOW + 5);
+    }
+
+    #[test]
+    fn speed_needs_two_snapshots_and_counts_bits_per_second() {
+        let t0 = Instant::now();
+        let mut app = App::new(NOW);
+        app.apply(snapshot_at(metered("NL-1", 1_000, 2_000), t0));
+        assert_eq!(app.speed(), None);
+        app.apply(snapshot_at(
+            metered("NL-1", 26_000, 252_000),
+            t0 + Duration::from_secs(2),
+        ));
+        assert_eq!(
+            app.speed(),
+            Some(Speed {
+                down: 1_000_000,
+                up: 100_000,
+            })
+        );
+    }
+
+    #[test]
+    fn speed_is_averaged_with_the_previous_one() {
+        let t0 = Instant::now();
+        let mut app = App::new(NOW);
+        app.apply(snapshot_at(metered("NL-1", 1_000, 2_000), t0));
+        app.apply(snapshot_at(
+            metered("NL-1", 26_000, 252_000),
+            t0 + Duration::from_secs(2),
+        ));
+        app.apply(snapshot_at(
+            metered("NL-1", 26_000, 252_000),
+            t0 + Duration::from_secs(4),
+        ));
+        assert_eq!(
+            app.speed(),
+            Some(Speed {
+                down: 500_000,
+                up: 50_000,
+            })
+        );
+    }
+
+    #[test]
+    fn a_new_node_or_a_smaller_counter_starts_the_speed_over() {
+        let t0 = Instant::now();
+        let mut app = App::new(NOW);
+        app.apply(snapshot_at(metered("NL-1", 1_000, 2_000), t0));
+        app.apply(snapshot_at(
+            metered("NL-1", 26_000, 252_000),
+            t0 + Duration::from_secs(2),
+        ));
+        assert!(app.speed().is_some());
+        app.apply(snapshot_at(
+            metered("DE-2", 26_500, 252_500),
+            t0 + Duration::from_secs(3),
+        ));
+        assert_eq!(app.speed(), None);
+        app.apply(snapshot_at(
+            metered("DE-2", 27_000, 253_000),
+            t0 + Duration::from_secs(5),
+        ));
+        assert!(app.speed().is_some());
+        app.apply(snapshot_at(
+            metered("DE-2", 500, 1_000),
+            t0 + Duration::from_secs(6),
+        ));
+        assert_eq!(app.speed(), None);
+    }
+
+    #[test]
+    fn snapshots_at_the_same_moment_and_a_lost_daemon_leave_no_speed() {
+        let t0 = Instant::now();
+        let mut app = App::new(NOW);
+        app.apply(snapshot_at(metered("NL-1", 1_000, 2_000), t0));
+        app.apply(snapshot_at(metered("NL-1", 26_000, 252_000), t0));
+        assert_eq!(app.speed(), None);
+        app.apply(snapshot_at(
+            metered("NL-1", 26_000, 252_000),
+            t0 + Duration::from_secs(2),
+        ));
+        assert!(app.speed().is_some());
+        app.apply(Msg::Down {
+            reason: "обрыв связи".to_owned(),
+            retry_in: Duration::from_secs(1),
+        });
+        assert_eq!(app.speed(), None);
     }
 
     #[test]

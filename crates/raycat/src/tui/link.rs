@@ -204,7 +204,8 @@ async fn send_snapshot(client: &Client, inbox: &mpsc::Sender<Msg>) -> Option<Out
     let (status, nodes) = tokio::join!(client.status(), client.nodes());
     match (status, nodes) {
         (Ok(status), Ok(nodes)) => {
-            let msg = Msg::Snapshot(Box::new(Snapshot { status, nodes }));
+            let at = std::time::Instant::now();
+            let msg = Msg::Snapshot(Box::new(Snapshot { status, nodes, at }));
             inbox.send(msg).await.is_err().then_some(Outcome::UiGone)
         }
         (Err(error), _) | (_, Err(error)) => Some(lost(error.to_string())),

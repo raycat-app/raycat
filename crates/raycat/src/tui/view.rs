@@ -10,7 +10,7 @@ use super::app::{App, InputMode, Link};
 use super::canvas::{Canvas, GAP, Palette, Seg, fit, highlight, wrap};
 use crate::render;
 use crate::term::{Tone, display_width, pad, truncate};
-use crate::util::{format_moment, is_utc, local_zone};
+use crate::util::{format_bytes, format_moment, is_utc, local_zone};
 
 const MIN_WIDTH: usize = 44;
 const MIN_HEIGHT: usize = 12;
@@ -23,6 +23,7 @@ const NODES_MIN: usize = 5;
 const BANNER_LINES: usize = 3;
 const BANNER_HINT_LINES: usize = 2;
 const STATUS_WIDTH: usize = 13;
+const BAR_CELLS: usize = 10;
 
 const HELP: [(&str, &str); 12] = [
     ("↑ ↓  j k", "выбрать узел"),
@@ -252,8 +253,15 @@ fn header_node(canvas: &mut Canvas<'_>, app: &App, y: usize) {
             delay_tone(node.latency_ms),
             0,
         ),
-        Seg::new(choice, Tone::Dim, 0),
     ];
+    if let Some(speed) = app.speed() {
+        segs.push(Seg::new(
+            render::speed_line(speed.down, speed.up),
+            Tone::Plain,
+            1,
+        ));
+    }
+    segs.push(Seg::new(choice, Tone::Dim, 0));
     if let Some(reason) = &node.reason {
         segs.push(Seg::new(reason.clone(), Tone::Dim, 0));
     }
@@ -269,6 +277,35 @@ fn delay_tone(latency: Option<u64>) -> Tone {
     }
 }
 
+/// Полоска из десяти ячеек: заполненная часть отвечает проценту.
+fn bar(percent: u128) -> String {
+    let filled = usize::try_from(percent / 10).map_or(BAR_CELLS, |cells| cells.min(BAR_CELLS));
+    format!("{}{}", "▰".repeat(filled), "▱".repeat(BAR_CELLS - filled))
+}
+
+/// Трафик подписки: полоска, процент и объёмы. Без лимита остаётся только объём.
+fn traffic_seg(used: u64, total: Option<u64>) -> Seg {
+    let Some(total) = total.filter(|total| *total > 0) else {
+        let (text, tone) = render::traffic_text(used, total);
+        return Seg::new(text, tone, 1);
+    };
+    let percent = u128::from(used) * 100 / u128::from(total);
+    let tone = if percent >= 95 {
+        Tone::Red
+    } else if percent >= 80 {
+        Tone::Yellow
+    } else {
+        Tone::Green
+    };
+    let text = format!(
+        "{} {percent}% {}/{}",
+        bar(percent),
+        format_bytes(used),
+        format_bytes(total)
+    );
+    Seg::new(text, tone, 1)
+}
+
 fn subscription_segs(sub: &SubscriptionStatus, now: u64, zone: &TimeZone) -> Vec<Seg> {
     let mut segs = vec![Seg::new(sub.name.clone(), Tone::Bold, 0)];
     if let Some(title) = sub.title.as_deref().filter(|title| !title.is_empty()) {
@@ -276,8 +313,7 @@ fn subscription_segs(sub: &SubscriptionStatus, now: u64, zone: &TimeZone) -> Vec
     }
     segs.push(Seg::new(format!("узлов: {}", sub.nodes), Tone::Plain, 2));
     if let Some(used) = sub.used_bytes {
-        let (text, tone) = render::traffic_text(used, sub.total_bytes);
-        segs.push(Seg::new(text, tone, 1));
+        segs.push(traffic_seg(used, sub.total_bytes));
     }
     if let Some(expire) = sub.expire {
         let (text, tone) = render::expiry_text(expire, now, zone);
@@ -352,8 +388,9 @@ enum Kind {
     Status,
     Latency,
     Failures,
-    Error,
+    Speed,
     Traffic,
+    Error,
 }
 
 struct Spec {
@@ -371,8 +408,10 @@ struct Col {
     right: bool,
 }
 
-/// Колонки в порядке важности: на узком экране последние пропадают первыми.
-fn specs(nodes: &[&Node]) -> Vec<Spec> {
+/// Колонки в порядке важности: на узком экране последние пропадают первыми. Ошибка
+/// уходит раньше трафика, трафик раньше скорости. Скорость есть только когда её
+/// измерили, и она пустая у всех узлов, кроме выбранного.
+fn specs(nodes: &[&Node], speed: &str) -> Vec<Spec> {
     let (mut sub, mut name, mut error, mut traffic) = (0_usize, 0_usize, 0_usize, 0_usize);
     for node in nodes {
         sub = sub.max(display_width(&node.subscription));
@@ -383,6 +422,11 @@ fn specs(nodes: &[&Node]) -> Vec<Spec> {
     let name = name.clamp(4, 48);
     let error = error.min(80);
     let traffic = traffic.max(6);
+    let speed_width = if speed.is_empty() {
+        0
+    } else {
+        display_width(speed).max(display_width("Скорость"))
+    };
     let spec = |kind, title, min, natural, right| Spec {
         kind,
         title,
@@ -397,17 +441,18 @@ fn specs(nodes: &[&Node]) -> Vec<Spec> {
         spec(Kind::Latency, "Задержка", 8, 8, true),
         spec(Kind::Sub, "Подписка", 8, sub.clamp(8, 20), false),
         spec(Kind::Failures, "Сбои", 7, 7, true),
-        spec(Kind::Error, "Ошибка", error.min(12), error, false),
+        spec(Kind::Speed, "Скорость", speed_width, speed_width, false),
         spec(Kind::Traffic, "Трафик", traffic, traffic, false),
+        spec(Kind::Error, "Ошибка", error.min(12), error, false),
     ]
 }
 
 /// Берёт колонки, пока помещаются минимальные ширины, и раздаёт остаток тем,
 /// что могут расти: имени, подписке и ошибке.
-fn columns(nodes: &[&Node], width: usize) -> Vec<Col> {
+fn columns(nodes: &[&Node], speed: &str, width: usize) -> Vec<Col> {
     let mut chosen: Vec<(Spec, usize)> = Vec::new();
     let mut used = 0;
-    for spec in specs(nodes) {
+    for spec in specs(nodes, speed) {
         if spec.natural == 0 {
             continue;
         }
@@ -440,7 +485,7 @@ fn columns(nodes: &[&Node], width: usize) -> Vec<Col> {
     cols
 }
 
-fn cell(kind: Kind, node: &Node) -> (String, Tone) {
+fn cell(kind: Kind, node: &Node, speed: &str) -> (String, Tone) {
     match kind {
         Kind::Marker => {
             let (mark, tone) = render::node_marker(node);
@@ -471,19 +516,28 @@ fn cell(kind: Kind, node: &Node) -> (String, Tone) {
             };
             (node.failures.to_string(), tone)
         }
+        Kind::Speed if node.selected => (speed.to_owned(), Tone::Plain),
+        Kind::Speed => (String::new(), Tone::Plain),
         Kind::Error => (node.last_error.clone().unwrap_or_default(), Tone::Red),
         Kind::Traffic => (render::node_traffic(node), Tone::Dim),
     }
 }
 
-fn draw_row(canvas: &mut Canvas<'_>, y: usize, cols: &[Col], node: &Node, current: bool) {
+fn draw_row(
+    canvas: &mut Canvas<'_>,
+    y: usize,
+    cols: &[Col],
+    node: &Node,
+    speed: &str,
+    current: bool,
+) {
     let marked = highlight();
     if current {
         canvas.fill(y, marked);
     }
     let mut x = 0;
     for col in cols {
-        let (text, tone) = cell(col.kind, node);
+        let (text, tone) = cell(col.kind, node, speed);
         let text = truncate(&text, col.width);
         let shift = if col.right {
             col.width.saturating_sub(display_width(&text))
@@ -562,11 +616,14 @@ fn nodes_section(canvas: &mut Canvas<'_>, y0: usize, room: usize, app: &mut App,
         .iter()
         .filter_map(|index| app.nodes.get(*index))
         .collect();
-    let cols = columns(&shown, inner.width);
+    let speed = app.speed().map_or_else(String::new, |speed| {
+        render::speed_line(speed.down, speed.up)
+    });
+    let cols = columns(&shown, &speed, inner.width);
     draw_titles(&mut inner, 0, &cols);
     for (row, node) in shown.iter().skip(app.offset).take(rows).enumerate() {
         let current = app.offset + row == app.cursor;
-        draw_row(&mut inner, 1 + row, &cols, node, current);
+        draw_row(&mut inner, 1 + row, &cols, node, &speed, current);
     }
 }
 
@@ -652,6 +709,8 @@ fn bottom(canvas: &mut Canvas<'_>, app: &App) {
     } else if let Some(notice) = &app.notice {
         let segs = vec![Seg::new(notice.text.clone(), notice.tone, 0)];
         canvas.line(status_y, 0, segs);
+    } else if matches!(app.link, Link::Up) {
+        canvas.line(status_y, 0, vec![Seg::new("готов", Tone::Dim, 0)]);
     }
     if app.input == InputMode::Filter {
         canvas.line(hints_y, 0, filter_hint(app));
@@ -678,7 +737,7 @@ fn help(canvas: &mut Canvas<'_>) {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -692,6 +751,7 @@ mod tests {
 
     const NOW: u64 = 1_790_596_800;
     const DAY: u64 = 86_400;
+    const GIB: u64 = 1024 * 1024 * 1024;
 
     fn node(name: &str, status: NodeStatus) -> Node {
         Node {
@@ -760,14 +820,19 @@ mod tests {
 
     fn app_with(status: Status, nodes: Vec<Node>) -> App {
         let mut app = App::new(NOW);
-        app.apply(Msg::Snapshot(Box::new(Snapshot {
+        app.apply(snapshot_at(status, nodes, Instant::now()));
+        app
+    }
+
+    fn snapshot_at(status: Status, nodes: Vec<Node>, at: Instant) -> Msg {
+        Msg::Snapshot(Box::new(Snapshot {
             status,
             nodes: Nodes {
                 selected: None,
                 nodes,
             },
-        })));
-        app
+            at,
+        }))
     }
 
     fn sample_app() -> App {
@@ -828,33 +893,33 @@ mod tests {
             "▶ main/NL-1  31 мс  закреплён  выбран лучший живой узел".to_owned(),
             format!("╭─ Подписки · всего 1 {}╮", d(57)),
             format!(
-                "│ main  узлов: 3  3.0 МиБ из 100.0 ГиБ (0%)  обновлена 2 ч назад{}│",
-                s(15)
+                "│ main  узлов: 3  ▱▱▱▱▱▱▱▱▱▱ 0% 3.0 МиБ/100.0 ГиБ  обновлена 2 ч назад{}│",
+                s(9)
             ),
             format!("╰{}╯", d(78)),
             format!("╭─ Узлы · всего 3 {}╮", d(61)),
             format!(
-                "│    Подписка  Узел  Статус{}Задержка     Сбои  Ошибка{}│",
+                "│    Подписка  Узел  Статус{}Задержка     Сбои  Трафик{}│",
                 s(9),
                 s(18)
             ),
             format!(
-                "│ ★  main      NL-1  ● жив{}31 мс{}0{}│",
+                "│ ★  main      NL-1  ● жив{}31 мс{}0  ↑10.0 КиБ ↓200.0 КиБ{}│",
                 s(13),
                 s(8),
-                s(26)
+                s(4)
             ),
             format!(
-                "│    main      DE-2  ● жив{}45 мс{}0{}│",
+                "│    main      DE-2  ● жив{}45 мс{}0  ↑10.0 КиБ ↓200.0 КиБ{}│",
                 s(13),
                 s(8),
-                s(26)
+                s(4)
             ),
             format!(
-                "│    main      US-3  ✗ не отвечает{}—{}3  тайм-аут{}│",
+                "│    main      US-3  ✗ не отвечает{}—{}3  ↑10.0 КиБ ↓200.0 КиБ{}│",
                 s(9),
                 s(8),
-                s(16)
+                s(4)
             ),
             format!("│{}│", s(78)),
             format!("│{}│", s(78)),
@@ -864,7 +929,7 @@ mod tests {
             format!("╭─ Журнал · время UTC {}╮", d(57)),
             format!("│ 12:00:00  подключено к демону, версия 0.1.0{}│", s(34)),
             format!("╰{}╯", d(78)),
-            String::new(),
+            "готов".to_owned(),
             "↑↓ выбор  Enter закрепить  a авто  u обновить  / фильтр  ? справка  q выход"
                 .to_owned(),
         ];
@@ -1386,16 +1451,115 @@ mod tests {
     fn columns_are_chosen_by_priority_and_fit_the_width() {
         let nodes = sample_nodes();
         let refs: Vec<&Node> = nodes.iter().collect();
-        for width in 24..160 {
-            let cols = columns(&refs, width);
-            let total: usize = cols.iter().map(|col| col.width).sum::<usize>()
-                + GAP * cols.len().saturating_sub(1);
-            assert!(total <= width, "{width}: {total}");
-            assert!(cols.iter().any(|col| col.kind == Kind::Name));
+        for speed in ["", "↓ 5.2 Мбит/с ↑ 0.3 Мбит/с"] {
+            for width in 24..160 {
+                let cols = columns(&refs, speed, width);
+                let total: usize = cols.iter().map(|col| col.width).sum::<usize>()
+                    + GAP * cols.len().saturating_sub(1);
+                assert!(total <= width, "{width}: {total}");
+                assert!(cols.iter().any(|col| col.kind == Kind::Name));
+            }
         }
-        let wide = columns(&refs, 200);
+        let wide = columns(&refs, "", 200);
         assert!(wide.iter().any(|col| col.kind == Kind::Traffic));
-        let narrow = columns(&refs, 30);
+        let narrow = columns(&refs, "", 30);
         assert!(!narrow.iter().any(|col| col.kind == Kind::Traffic));
+    }
+
+    fn kinds(cols: &[Col]) -> Vec<Kind> {
+        cols.iter().map(|col| col.kind).collect()
+    }
+
+    #[test]
+    fn the_speed_column_stays_after_traffic_and_errors_leave_first() {
+        let nodes = sample_nodes();
+        let refs: Vec<&Node> = nodes.iter().collect();
+        let speed = "↓ 5.2 Мбит/с ↑ 0.3 Мбит/с";
+        let tight = kinds(&columns(&refs, speed, 78));
+        assert!(tight.contains(&Kind::Speed), "{tight:?}");
+        assert!(!tight.contains(&Kind::Traffic), "{tight:?}");
+        assert!(!tight.contains(&Kind::Error), "{tight:?}");
+        let wide = kinds(&columns(&refs, speed, 200));
+        assert!(
+            wide.contains(&Kind::Speed) && wide.contains(&Kind::Error),
+            "{wide:?}"
+        );
+        assert!(!kinds(&columns(&refs, "", 200)).contains(&Kind::Speed));
+    }
+
+    #[test]
+    fn the_speed_shows_only_on_the_selected_node() {
+        let mut moved = sample_nodes();
+        moved[0].uplink_bytes = Some(85_240);
+        moved[0].downlink_bytes = Some(1_504_800);
+        let t0 = Instant::now();
+        let mut app = App::new(NOW);
+        app.apply(snapshot_at(sample_status(), sample_nodes(), t0));
+        app.apply(snapshot_at(
+            sample_status(),
+            moved,
+            t0 + Duration::from_secs(2),
+        ));
+        let lines = screen(&mut app, 120, 24);
+        assert!(lines.iter().any(|line| line.contains("Скорость")));
+        let selected = lines.iter().find(|line| line.starts_with("│ ★")).unwrap();
+        assert!(
+            selected.contains("↓ 5.2 Мбит/с ↑ 0.3 Мбит/с"),
+            "{selected:?}"
+        );
+        let other = lines.iter().find(|line| line.contains("DE-2")).unwrap();
+        assert!(!other.contains("Мбит/с"), "{other:?}");
+        assert!(lines[1].contains("31 мс  ↓ 5.2 Мбит/с ↑ 0.3 Мбит/с  закреплён"));
+    }
+
+    #[test]
+    fn the_traffic_bar_fills_by_percent_and_turns_yellow_then_red() {
+        let total = Some(100 * GIB);
+        let cells = |filled: usize| format!("{}{}", "▰".repeat(filled), "▱".repeat(10 - filled));
+        let case = |percent: u64, filled: usize, tone: Tone| {
+            let seg = traffic_seg(percent * GIB, total);
+            let text = format!(
+                "{} {percent}% {}/{}",
+                cells(filled),
+                format_bytes(percent * GIB),
+                format_bytes(100 * GIB)
+            );
+            assert_eq!(seg.text, text);
+            assert_eq!(seg.tone, tone, "{percent}%");
+        };
+        case(0, 0, Tone::Green);
+        case(30, 3, Tone::Green);
+        case(79, 7, Tone::Green);
+        case(80, 8, Tone::Yellow);
+        case(94, 9, Tone::Yellow);
+        case(95, 9, Tone::Red);
+        case(100, 10, Tone::Red);
+        case(120, 10, Tone::Red);
+        assert_eq!(bar(30), "▰▰▰▱▱▱▱▱▱▱");
+        assert_eq!(bar(0), "▱▱▱▱▱▱▱▱▱▱");
+    }
+
+    #[test]
+    fn a_subscription_without_a_limit_shows_only_the_volume() {
+        let mib = 1024 * 1024;
+        let plain = traffic_seg(3 * mib, Some(0));
+        assert_eq!(plain.text, "3.0 МиБ (без ограничения)");
+        assert_eq!(plain.tone, Tone::Plain);
+        let unknown = traffic_seg(3 * mib, None);
+        assert_eq!(unknown.text, "3.0 МиБ");
+        assert_eq!(unknown.tone, Tone::Plain);
+    }
+
+    #[test]
+    fn the_status_line_says_ready_only_when_connected_and_idle() {
+        let mut app = App::new(NOW);
+        assert_eq!(screen(&mut app, 80, 20)[18], "");
+        let app = &mut sample_app();
+        assert_eq!(screen(app, 80, 20)[18], "готов");
+        app.apply(Msg::Down {
+            reason: "обрыв связи".to_owned(),
+            retry_in: Duration::from_secs(1),
+        });
+        assert_eq!(screen(app, 80, 20)[18], "");
     }
 }
