@@ -135,7 +135,7 @@ mod tests {
             (&config.subscriptions[0], nodes.as_slice(), None),
             (&config.subscriptions[1], &nodes[..1], None),
         ];
-        compile_config(config, &inputs, 10_085, 10_086, None)
+        compile_config(config, &inputs, 10_085, crate::speedtest::test_inbound(), None)
             .unwrap()
             .tags
     }

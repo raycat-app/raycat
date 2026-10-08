@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use crate::daemon::free_port;
 use crate::plan;
+use crate::speedtest;
 use crate::store::Store;
 use crate::tuning;
 use crate::updater::{self, Source};
@@ -99,7 +100,7 @@ pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
         config,
         &inputs,
         free_port()?,
-        free_port()?,
+        speedtest::new_inbound(free_port()?)?,
         congestion.algorithm(),
     )?;
     say!(

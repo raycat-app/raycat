@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use crate::nodes::compile_node;
 use crate::tuning::{self, Tuning};
-use crate::{Action, Domain, DomainKind, Mode, Node, Rule, Settings, Subnet};
+use crate::{Action, Domain, DomainKind, Mode, Node, Rule, Settings, SpeedtestInbound, Subnet};
 
 const PRIVATE_NETWORKS: [&str; 7] = [
     "10.0.0.0/8",
@@ -289,19 +289,22 @@ fn route(field: &str, value: Value, action: Action) -> Value {
 
 fn inbound_list(settings: &Settings) -> Vec<Value> {
     let mut list = inbounds(&settings.mode, route_only(&settings.rules));
-    list.extend(settings.speedtest_port.map(speedtest_inbound));
+    list.extend(settings.speedtest.as_ref().map(speedtest_inbound));
     list
 }
 
-/// Служебный вход теста скорости: только петля и без пароля. Трафик от него уходит по тому же
-/// правилу по умолчанию, что и весь остальной, то есть на выбранный узел.
-fn speedtest_inbound(port: u16) -> Value {
+/// Служебный вход теста скорости: только петля и логин с паролем. Трафик от него уходит по тому
+/// же правилу по умолчанию, что и весь остальной, то есть на выбранный узел.
+fn speedtest_inbound(inbound: &SpeedtestInbound) -> Value {
     json!({
         "tag": SPEEDTEST_TAG,
         "protocol": "mixed",
         "listen": "127.0.0.1",
-        "port": port,
-        "settings": {"auth": "noauth"},
+        "port": inbound.port,
+        "settings": {
+            "auth": "password",
+            "accounts": [{"user": inbound.credentials.user, "pass": inbound.credentials.password}],
+        },
     })
 }
 

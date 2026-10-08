@@ -10,6 +10,7 @@ use anyhow::{Context, Result, bail};
 use raycat_http::{Client, Url, redact};
 use raycat_proto::{SpeedtestRequest, SpeedtestResult, SpeedtestRun};
 use raycat_select::PinTarget;
+use raycat_xray::SpeedtestInbound;
 use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
@@ -35,7 +36,7 @@ struct NodeTarget {
 /// Всё, что нужно тесту, чтобы идти в отдельной задаче без демона.
 struct Job {
     shared: Arc<Shared>,
-    port: u16,
+    inbound: SpeedtestInbound,
     request: SpeedtestRequest,
     target: NodeTarget,
     /// Закрепление, которое было до теста; вернётся в конце, при любом исходе.
@@ -64,7 +65,7 @@ impl Daemon {
         self.speedtest_active = true;
         let job = Job {
             shared: Arc::clone(&self.shared),
-            port: self.speedtest_port,
+            inbound: self.speedtest.clone(),
             request,
             target: NodeTarget {
                 id: node.id,
@@ -105,14 +106,14 @@ impl Daemon {
 async fn run(job: Job) {
     let Job {
         shared,
-        port,
+        inbound,
         request,
         target,
         previous,
         reply,
         apply_timeout,
     } = job;
-    let outcome = measure(&shared, port, &request, &target, apply_timeout).await;
+    let outcome = measure(&shared, &inbound, &request, &target, apply_timeout).await;
     restore(&shared, previous).await;
     shared.end_speedtest();
     let answer = match outcome {
@@ -135,16 +136,17 @@ async fn run(job: Job) {
 
 async fn measure(
     shared: &Shared,
-    port: u16,
+    inbound: &SpeedtestInbound,
     request: &SpeedtestRequest,
     target: &NodeTarget,
     apply_timeout: Duration,
 ) -> Result<SpeedtestResult> {
     wait_applied(shared, &target.tag, apply_timeout).await?;
-    let proxy =
-        Url::parse(&format!("http://127.0.0.1:{port}")).context("адрес служебного входа xray")?;
+    let proxy = Url::parse(&format!("http://127.0.0.1:{}", inbound.port))
+        .context("адрес служебного входа xray")?;
     let client = Arc::new(Client {
         proxy: Some(proxy),
+        proxy_authorization: Some(speedtest::proxy_authorization(&inbound.credentials)),
         total_timeout: speedtest::STREAM_TIMEOUT,
         ..Client::default()
     });
@@ -326,7 +328,10 @@ mod tests {
         let (reply, answer) = oneshot::channel();
         tokio::spawn(run(Job {
             shared: Arc::clone(&shared),
-            port: 9,
+            inbound: SpeedtestInbound {
+                port: 9,
+                ..speedtest::test_inbound()
+            },
             request: request(Some(1), None),
             target: target(),
             previous: previous.clone(),
@@ -354,7 +359,10 @@ mod tests {
         let (reply, answer) = oneshot::channel();
         tokio::spawn(run(Job {
             shared: Arc::clone(&shared),
-            port: fake_proxy("0123456789"),
+            inbound: SpeedtestInbound {
+                port: fake_proxy("0123456789"),
+                ..speedtest::test_inbound()
+            },
             request: request(Some(1), Some("http://203.0.113.7:8080/file")),
             target: target(),
             previous: None,

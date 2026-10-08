@@ -2,12 +2,17 @@
 //! Замеры ведёт демон (`daemon/measure.rs`): он закрепляет узел и качает через служебный
 //! вход xray. Здесь то, что от демона не зависит.
 
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use raycat_http::{Client, Request, Scheme, Url};
 use raycat_proto::{SpeedtestRequest, SpeedtestRun};
+use raycat_xray::{Credentials, SpeedtestInbound};
+use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::util::sanitize;
 
@@ -99,6 +104,43 @@ pub(crate) fn runs(streams: Option<u8>) -> Vec<u8> {
 /// Объём одного потока: общий объём делится поровну.
 pub(crate) fn share(size: u64, streams: u8) -> u64 {
     size / u64::from(streams.max(1))
+}
+
+/// Служебный вход с фиксированными учётными данными для тестов сборки конфига.
+#[cfg(test)]
+pub(crate) fn test_inbound() -> SpeedtestInbound {
+    SpeedtestInbound {
+        port: 10_086,
+        credentials: Credentials {
+            user: "speedtest".to_owned(),
+            password: "test-password".to_owned(),
+        },
+    }
+}
+
+/// Служебный вход со свежими учётными данными. Пароль случайный на каждый запуск демона,
+/// живёт только в памяти и в конфиге xray, который записан с правами 0600.
+pub(crate) fn new_inbound(port: u16) -> Result<SpeedtestInbound> {
+    let mut secret = [0u8; 32];
+    SecureRandom::fill(&SystemRandom::new(), &mut secret)
+        .map_err(|_| anyhow!("не удалось получить случайные числа для теста скорости"))?;
+    let password = secret.iter().fold(String::new(), |mut hex, byte| {
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    });
+    Ok(SpeedtestInbound {
+        port,
+        credentials: Credentials {
+            user: "speedtest".to_owned(),
+            password,
+        },
+    })
+}
+
+/// Заголовок `Proxy-Authorization` для служебного входа.
+pub(crate) fn proxy_authorization(credentials: &Credentials) -> String {
+    let pair = format!("{}:{}", credentials.user, credentials.password);
+    format!("Basic {}", STANDARD.encode(pair))
 }
 
 /// Адрес одного потока. У тестового сервера размер задаётся параметром `bytes`; свой адрес
@@ -381,5 +423,24 @@ mod tests {
         let sample = fetch(&Client::default(), &url, 4, &done).unwrap();
         assert_eq!(sample.bytes, 4);
         assert_eq!(done.load(Ordering::Relaxed), 4);
+    }
+
+    #[test]
+    fn every_start_gets_its_own_password() {
+        let first = new_inbound(1).unwrap();
+        let second = new_inbound(1).unwrap();
+        assert_eq!(first.credentials.password.len(), 64);
+        assert!(first.credentials.password.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_ne!(first.credentials.password, second.credentials.password);
+        assert_eq!(first.port, 1);
+    }
+
+    #[test]
+    fn the_proxy_header_is_basic_auth() {
+        let credentials = Credentials {
+            user: "user".to_owned(),
+            password: "pass".to_owned(),
+        };
+        assert_eq!(proxy_authorization(&credentials), "Basic dXNlcjpwYXNz");
     }
 }

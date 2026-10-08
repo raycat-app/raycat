@@ -18,7 +18,7 @@ use raycat_netfilter::Rules;
 use raycat_proto::{Event, Mode as ApiMode, Status, UpdateResult, Updates, XrayState, XrayStatus};
 use raycat_select::{PinTarget, Selector};
 use raycat_subscription::{Routing, Usage, redact_in};
-use raycat_xray::Node;
+use raycat_xray::{Node, SpeedtestInbound};
 use raycat_xray_api::XrayApi;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -33,6 +33,7 @@ use crate::paths;
 use crate::plan;
 use crate::schedule::{HEALTHY_UPTIME, RESTART_FIRST, next_restart_delay};
 use crate::selection;
+use crate::speedtest;
 use crate::store::{Store, StoredPin};
 use crate::tuning;
 use crate::updater::{self, Outcome, Refresh, Source};
@@ -104,7 +105,7 @@ async fn serve(config: Config, store: Store, socket: PathBuf) -> Result<()> {
         store,
         &machine_id,
         free_port()?,
-        free_port()?,
+        speedtest::new_inbound(free_port()?)?,
         Arc::clone(&shared),
     )?;
     let listener = api::bind(&socket)?;
@@ -237,8 +238,8 @@ struct Daemon {
     config: Config,
     store: Store,
     api_port: u16,
-    /// Порт служебного входа xray для теста скорости.
-    speedtest_port: u16,
+    /// Служебный вход xray для теста скорости: порт и учётные данные только в памяти.
+    speedtest: SpeedtestInbound,
     /// Тест скорости идёт: закрепление узла меняется только им и не записывается на диск.
     speedtest_active: bool,
     subs: Vec<Sub>,
@@ -285,7 +286,7 @@ impl Daemon {
         store: Store,
         machine_id: &str,
         api_port: u16,
-        speedtest_port: u16,
+        speedtest: SpeedtestInbound,
         shared: Arc<Shared>,
     ) -> Result<Self> {
         let now = Instant::now();
@@ -324,7 +325,7 @@ impl Daemon {
             config,
             store,
             api_port,
-            speedtest_port,
+            speedtest,
             speedtest_active: false,
             subs,
             process,
@@ -407,7 +408,7 @@ impl Daemon {
             &self.config,
             &inputs,
             self.api_port,
-            self.speedtest_port,
+            self.speedtest.clone(),
             self.tcp_congestion.as_deref(),
         ) {
             Ok(plan) => plan,
@@ -756,7 +757,7 @@ mod tests {
             store,
             "0d0af05ee8fd4dc29275718f2ce4dff1",
             10_085,
-            10_086,
+            speedtest::test_inbound(),
             shared,
         )
         .unwrap()

@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use raycat_config::{Config, Mode, ProxyAuth, Subscription};
 use raycat_netfilter::{DEFAULT_OWN_MARK, Lan, Rules};
 use raycat_subscription::{Routing, RoutingProfile};
-use raycat_xray::{Credentials, Node, Settings, TagTable, compile};
+use raycat_xray::{Credentials, Node, Settings, SpeedtestInbound, TagTable, compile};
 
 use crate::util::fnv1a;
 
@@ -512,7 +512,7 @@ pub(crate) fn compile_config(
     config: &Config,
     inputs: &[(&Subscription, &[Node], Option<&Routing>)],
     api_port: u16,
-    speedtest_port: u16,
+    speedtest: SpeedtestInbound,
     tcp_congestion: Option<&str>,
 ) -> Result<Plan> {
     let mode = xray_mode(config);
@@ -536,7 +536,7 @@ pub(crate) fn compile_config(
             None => (None, Vec::new()),
         };
     let mut settings = Settings::new(mode, api_port);
-    settings.speedtest_port = Some(speedtest_port);
+    settings.speedtest = Some(speedtest);
     settings.dns.resolvers.clone_from(&config.dns.resolvers);
     settings.probe.url.clone_from(&config.selection.check_url);
     settings.probe.interval = config.selection.check_interval;
@@ -582,7 +582,7 @@ mod tests {
             config,
             &[(&config.subscriptions[0], nodes, None)],
             10_085,
-            10_086,
+            crate::speedtest::test_inbound(),
             None,
         )
     }
@@ -751,7 +751,14 @@ mod tests {
             (&config.subscriptions[0], &all[1..], None),
             (&config.subscriptions[1], &all[..1], None),
         ];
-        let plan = compile_config(&config, &inputs, 10_085, 10_086, None).unwrap();
+        let plan = compile_config(
+            &config,
+            &inputs,
+            10_085,
+            crate::speedtest::test_inbound(),
+            None,
+        )
+        .unwrap();
         assert_eq!(plan.nodes, 2);
     }
 
@@ -777,7 +784,7 @@ mod tests {
             config,
             &[(&config.subscriptions[0], nodes.as_slice(), None)],
             10_085,
-            10_086,
+            crate::speedtest::test_inbound(),
             tcp_congestion,
         )
         .unwrap();
@@ -924,7 +931,7 @@ mod tests {
             config,
             &[(&config.subscriptions[0], nodes.as_slice(), Some(&routing))],
             10_085,
-            10_086,
+            crate::speedtest::test_inbound(),
             None,
         )
         .unwrap();

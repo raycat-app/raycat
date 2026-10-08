@@ -462,6 +462,57 @@ fn streams_through_a_proxy() {
 }
 
 #[test]
+fn the_tunnel_needs_the_proxy_credentials() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let proxy = thread::spawn(move || {
+        let mut answers = Vec::new();
+        for _ in 0..2 {
+            let mut sock = accept(&listener);
+            let connect = String::from_utf8(read_request(&mut sock)).unwrap();
+            if connect.contains("Proxy-Authorization: Basic dXNlcjpwYXNz\r\n") {
+                sock.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                    .unwrap();
+                read_request(&mut sock);
+                sock.write_all(OK).unwrap();
+            } else {
+                sock.write_all(b"HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n")
+                    .unwrap();
+            }
+            answers.push(connect);
+        }
+        answers
+    });
+    let target = Url::parse("http://203.0.113.7/").unwrap();
+    let sent = headers(&[("Host", "203.0.113.7")]);
+    let request = || Request {
+        method: "GET",
+        target: "/",
+        headers: &sent,
+        body: &[],
+    };
+    let anonymous = Client {
+        proxy: Some(url(port)),
+        ..Client::default()
+    };
+    let text = err_text(anonymous.send(&target, &request()));
+    assert!(text.contains("407"), "{text}");
+
+    let authorized = Client {
+        proxy: Some(url(port)),
+        proxy_authorization: Some("Basic dXNlcjpwYXNz".to_owned()),
+        ..Client::default()
+    };
+    assert_eq!(
+        authorized.send(&target, &request()).unwrap().body,
+        b"ok"
+    );
+    let answers = proxy.join().unwrap();
+    assert!(!answers[0].contains("Proxy-Authorization"));
+    assert!(answers[1].contains("Proxy-Authorization: Basic dXNlcjpwYXNz\r\n"));
+}
+
+#[test]
 fn compressed_bodies_are_refused_when_streaming() {
     let (port, server) = serve(vec![
         b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 2\r\n\r\nxx".to_vec(),

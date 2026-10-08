@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use raycat_xray::{
     Action, CompileError, Compiled, Credentials, Domain, DomainKind, Mode, Node, Rule, Settings,
-    SkippedNode, Subnet, Subscription, compile,
+    SkippedNode, SpeedtestInbound, Subnet, Subscription, compile,
 };
 use serde_json::{Value, json};
 
@@ -1001,7 +1001,13 @@ fn speedtest_inbound_exists_only_when_asked() {
     assert!(!inbound_tags(&plain).contains(&"speedtest-in".to_owned()));
 
     let mut settings = Settings::new(gateway_mode(), 10085);
-    settings.speedtest_port = Some(10086);
+    settings.speedtest = Some(SpeedtestInbound {
+        port: 10086,
+        credentials: Credentials {
+            user: "speedtest".to_owned(),
+            password: "secret-pass".to_owned(),
+        },
+    });
     let config = compile(&subscriptions(), &settings).unwrap().config;
     assert!(inbound_tags(&config).contains(&"speedtest-in".to_owned()));
     let inbound = config["inbounds"]
@@ -1017,7 +1023,10 @@ fn speedtest_inbound_exists_only_when_asked() {
             "protocol": "mixed",
             "listen": "127.0.0.1",
             "port": 10086,
-            "settings": {"auth": "noauth"}
+            "settings": {
+                "auth": "password",
+                "accounts": [{"user": "speedtest", "pass": "secret-pass"}]
+            }
         })
     );
     let balancer_rule = config["routing"]["rules"]

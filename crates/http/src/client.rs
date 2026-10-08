@@ -30,6 +30,8 @@ pub struct Client {
     pub total_timeout: Duration,
     /// Прокси `http://host:port`, через который идёт `CONNECT`.
     pub proxy: Option<Url>,
+    /// Значение заголовка `Proxy-Authorization` для `CONNECT`, например `Basic …`.
+    pub proxy_authorization: Option<String>,
     pub max_body: usize,
     /// `SO_MARK` для исходящих TCP-соединений и DNS-запросов, чтобы kill switch шлюза
     /// их пропускал. Нужен `CAP_NET_ADMIN`; без него метка не ставится.
@@ -43,6 +45,7 @@ impl Default for Client {
             io_timeout: Duration::from_secs(30),
             total_timeout: Duration::from_secs(90),
             proxy: None,
+            proxy_authorization: None,
             max_body: 32 * 1024 * 1024,
             mark: None,
         }
@@ -156,9 +159,16 @@ impl Client {
         } else {
             format!("{host}:{port}")
         };
+        let auth = match &self.proxy_authorization {
+            Some(value) if value.chars().any(char::is_control) => {
+                bail!("недопустимый символ в Proxy-Authorization");
+            }
+            Some(value) => format!("Proxy-Authorization: {value}\r\n"),
+            None => String::new(),
+        };
         write!(
             stream,
-            "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n"
+            "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n{auth}\r\n"
         )
         .context("отправка CONNECT")?;
         // Читаем побайтно: за концом ответа прокси нельзя потребить ни байта,

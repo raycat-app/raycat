@@ -1449,6 +1449,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.23.1",
  "clap",
  "clap_complete",
  "clap_mangen",
@@ -1465,6 +1466,7 @@ dependencies = [
  "raycat-subscription",
  "raycat-xray",
  "raycat-xray-api",
+ "ring",
  "serde",
  "serde_json",
  "tokio",
