@@ -941,6 +941,7 @@ fn environment_listen_for_the_proxy() {
         ("RAYCAT_APP", "happ"),
         ("RAYCAT_PLATFORM", "windows"),
         ("RAYCAT_LISTEN", "0.0.0.0:1080"),
+        ("RAYCAT_PROXY_AUTH", "alice:s3cret-pass"),
     ]);
     let config = Config::from_toml_str("", &vars).unwrap();
     assert_eq!(
