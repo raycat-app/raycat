@@ -18,7 +18,9 @@ const SNAPSHOT_PREFIX: &str = "# Снимок: ";
 /// Доменные зоны РФ без точки, в ASCII (кириллические зоны в punycode), по алфавиту.
 pub fn ru_zones() -> &'static [&'static str] {
     static ZONES: OnceLock<Vec<&'static str>> = OnceLock::new();
-    ZONES.get_or_init(|| data_lines(ZONES_TEXT).collect()).as_slice()
+    ZONES
+        .get_or_init(|| data_lines(ZONES_TEXT).collect())
+        .as_slice()
 }
 
 /// Российские подсети `IPv4`: адрес сети и длина префикса.
@@ -28,7 +30,9 @@ pub fn ru_ipv4() -> impl Iterator<Item = (Ipv4Addr, u8)> {
 
 /// Дата снимка RIPE NCC, из которого собраны подсети, в формате `ГГГГ-ММ-ДД`.
 pub fn data_date() -> Option<&'static str> {
-    IPV4_TEXT.lines().find_map(|line| line.strip_prefix(SNAPSHOT_PREFIX))
+    IPV4_TEXT
+        .lines()
+        .find_map(|line| line.strip_prefix(SNAPSHOT_PREFIX))
 }
 
 fn data_lines(text: &'static str) -> impl Iterator<Item = &'static str> {
@@ -79,7 +83,14 @@ mod tests {
     #[test]
     fn zones_include_russian_segment() {
         let zones = ru_zones();
-        for expected in ["ru", "su", "xn--p1ai", "xn--d1acj3b", "xn--80adxhks", "xn--p1acf"] {
+        for expected in [
+            "ru",
+            "su",
+            "xn--p1ai",
+            "xn--d1acj3b",
+            "xn--80adxhks",
+            "xn--p1acf",
+        ] {
             assert!(zones.contains(&expected), "нет зоны {expected}");
         }
         assert!(!zones.contains(&"xn--80asehdb"));
@@ -87,7 +98,10 @@ mod tests {
 
     #[test]
     fn parse_accepts_only_aligned_prefixes() {
-        assert_eq!(parse_cidr("10.0.0.0/24"), Some((Ipv4Addr::new(10, 0, 0, 0), 24)));
+        assert_eq!(
+            parse_cidr("10.0.0.0/24"),
+            Some((Ipv4Addr::new(10, 0, 0, 0), 24))
+        );
         assert_eq!(parse_cidr("10.0.0.1/24"), None);
         assert_eq!(parse_cidr("10.0.0.0/7"), None);
         assert_eq!(parse_cidr("10.0.0.0/33"), None);

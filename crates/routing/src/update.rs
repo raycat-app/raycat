@@ -12,8 +12,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail, ensure};
 
-const SOURCE_URL: &str =
-    "https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest";
+const SOURCE_URL: &str = "https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest";
 const SPACE_END: u64 = 1 << 32;
 /// Блок не крупнее /8: длины префиксов остаются в диапазоне 8..=32, который проверяет `ru_ipv4`.
 const MAX_BLOCK: u64 = 1 << 24;
@@ -27,8 +26,7 @@ pub struct Summary {
 
 /// Читает статистику RIPE из `input` и записывает подсети в `output`.
 pub fn run(input: &Path, output: &Path) -> Result<Summary> {
-    let text = fs::read_to_string(input)
-        .with_context(|| format!("чтение {}", input.display()))?;
+    let text = fs::read_to_string(input).with_context(|| format!("чтение {}", input.display()))?;
     let (body, summary) = build(&text)?;
     fs::write(output, body).with_context(|| format!("запись {}", output.display()))?;
     Ok(summary)
@@ -89,7 +87,12 @@ fn snapshot_date(serial: &str) -> Result<String> {
         serial.len() == 8 && serial.bytes().all(|b| b.is_ascii_digit()),
         "дата снимка не в формате ГГГГММДД: {serial}"
     );
-    Ok(format!("{}-{}-{}", &serial[..4], &serial[4..6], &serial[6..]))
+    Ok(format!(
+        "{}-{}-{}",
+        &serial[..4],
+        &serial[4..6],
+        &serial[6..]
+    ))
 }
 
 fn record_range(start: &str, count: &str) -> Result<(u64, u64)> {
@@ -150,7 +153,10 @@ fn render(date: &str, prefixes: &[(u64, u32)]) -> Result<String> {
     writeln!(body, "# Источник: {SOURCE_URL}")?;
     writeln!(body, "# Снимок: {date}")?;
     writeln!(body, "# Подсетей: {}", prefixes.len())?;
-    writeln!(body, "# Файл создаёт инструмент update-ru-ipv4, вручную не править.")?;
+    writeln!(
+        body,
+        "# Файл создаёт инструмент update-ru-ipv4, вручную не править."
+    )?;
     for &(start, len) in prefixes {
         let addr = Ipv4Addr::from(u32::try_from(start)?);
         writeln!(body, "{addr}/{len}")?;
@@ -214,8 +220,14 @@ ripencc|*|ipv4|*|4|summary
     #[test]
     fn split_is_minimal_cidr_cover() {
         assert_eq!(split(1, 4), [(1, 32), (2, 31)]);
-        assert_eq!(split(ip("10.0.0.0"), ip("10.0.0.0") + 768), [(ip("10.0.0.0"), 23), (ip("10.0.2.0"), 24)]);
-        assert_eq!(split(ip("10.0.0.0"), ip("10.0.0.0") + 256), [(ip("10.0.0.0"), 24)]);
+        assert_eq!(
+            split(ip("10.0.0.0"), ip("10.0.0.0") + 768),
+            [(ip("10.0.0.0"), 23), (ip("10.0.2.0"), 24)]
+        );
+        assert_eq!(
+            split(ip("10.0.0.0"), ip("10.0.0.0") + 256),
+            [(ip("10.0.0.0"), 24)]
+        );
     }
 
     #[test]
