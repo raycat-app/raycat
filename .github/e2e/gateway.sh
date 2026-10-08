@@ -3,10 +3,18 @@
 # через узел; kill switch, DNS, IPv6, восстановление правил и их снятие.
 #
 #   docker load < образ   # тег raycat:ci
-#   bash .github/e2e/gateway.sh
+#   bash .github/e2e/gateway.sh [all|main|guard]
 #
+# main — всё, кроме возврата сброшенных правил, guard — только он (демон проверяет правила
+# раз в 30 с, и ожидание идёт в отдельном запуске параллельно с остальными проверками).
 # Стенд описан в .github/e2e/gateway/compose.yml. Нужен Docker с compose v2.
 set -euo pipefail
+
+mode=${1:-all}
+case "$mode" in
+  all | main | guard) ;;
+  *) echo "режим: all, main или guard" >&2; exit 2 ;;
+esac
 
 here=$(cd "$(dirname "$0")" && pwd)
 compose=(docker compose -f "$here/gateway/compose.yml")
@@ -43,25 +51,52 @@ cleanup() {
   fi
   "${compose[@]}" --profile lifecycle down --volumes --remove-orphans --timeout 3 >/dev/null 2>&1
   docker rm -f raycat-e2e-leak raycat-e2e-unready >/dev/null 2>&1
+  rm -rf "$scratch"
   exit "$status"
 }
 trap cleanup EXIT
+
+scratch=$(mktemp -d)
 
 app_run() { docker exec "$app" "$@"; }
 gateway_run() { docker exec "$gateway" "$@"; }
 fetch() { app_run wget -q -T 5 -O - "$1"; }
 
+# Опрос раз в 0,2 с; второй аргумент — предел в секундах.
 wait_for() {
-  local what=$1 tries=$2
+  local what=$1 limit=$2
   shift 2
-  local _
-  for _ in $(seq "$tries"); do
+  local deadline=$((SECONDS + limit))
+  while :; do
     if "$@" >/dev/null 2>&1; then
       return 0
     fi
-    sleep 1
+    [ "$SECONDS" -lt "$deadline" ] || break
+    sleep 0.2
   done
   fail "не дождались: $what"
+}
+
+# Проверки «наружу ничего не уходит» ждут тайм-аутов, поэтому идут одновременно:
+# refuse запускает команду в фоне, refused_all требует, чтобы каждая завершилась ошибкой.
+refuse_jobs=()
+refuse_names=()
+refuse() {
+  local what=$1
+  shift
+  "$@" >"$scratch/refuse.${#refuse_jobs[@]}" 2>&1 &
+  refuse_jobs+=($!)
+  refuse_names+=("$what")
+}
+refused_all() {
+  local i
+  for i in "${!refuse_jobs[@]}"; do
+    if wait "${refuse_jobs[$i]}"; then
+      fail "${refuse_names[$i]}: $(cat "$scratch/refuse.$i")"
+    fi
+  done
+  refuse_jobs=()
+  refuse_names=()
 }
 
 in_list() {
@@ -113,6 +148,7 @@ if gateway_run sh -c 'touch /probe' 2>/dev/null; then
   fail "в корень шлюза удалось записать файл"
 fi
 gateway_run test -S /var/lib/raycat/raycat.sock || fail "сокет API не в каталоге состояния"
+wait_for "raycat health: узел выбран" 30 gateway_run raycat health
 health_line=$(gateway_run raycat health 2>&1) || fail "raycat health в работающем шлюзе: $health_line"
 grep -q '^готов: xray работает' <<<"$health_line" || fail "неожиданный вывод raycat health: $health_line"
 echo "  $health_line"
@@ -137,32 +173,32 @@ if app_run ping -6 -c 1 -W 2 2606:4700:4700::1111 >/dev/null 2>&1; then
   fail "IPv6 ping вышел наружу"
 fi
 
-echo "== правила возвращаются, если их сбросили"
-gateway_run ip -4 rule del fwmark 0x52540000 lookup 7263 priority 7263
-if rule_present docker exec "$gateway"; then
-  fail "правило маршрутизации не удалилось"
+if [ "$mode" != main ]; then
+  echo "== правила возвращаются, если их сбросили"
+  gateway_run ip -4 rule del fwmark 0x52540000 lookup 7263 priority 7263
+  if rule_present docker exec "$gateway"; then
+    fail "правило маршрутизации не удалилось"
+  fi
+  # Демон проверяет правила раз в 30 с: ожидание вынесено в отдельный запуск.
+  wait_for "правило маршрутизации вернулось" 50 rule_present docker exec "$gateway"
+  log_has "$gateway" "правила перехвата пропали" || fail "в журнале нет предупреждения о пропаже правил"
+  log_has "$gateway" "правила перехвата восстановлены" || fail "в журнале нет строки о восстановлении"
+  expect_via_node "$site" "${nodes_inet[@]}"
 fi
-wait_for "правило маршрутизации вернулось" 50 rule_present docker exec "$gateway"
-log_has "$gateway" "правила перехвата пропали" || fail "в журнале нет предупреждения о пропаже правил"
-log_has "$gateway" "правила перехвата восстановлены" || fail "в журнале нет строки о восстановлении"
-expect_via_node "$site" "${nodes_inet[@]}"
+if [ "$mode" = guard ]; then
+  echo "e2e шлюза (восстановление правил): успех"
+  exit 0
+fi
 
 echo "== kill switch: xray убит, демон заморожен"
 docker kill --signal STOP "$gateway" >/dev/null
 gateway_run sh -c 'kill -9 $(pidof xray)'
 sleep 1
-if leaked=$(app_run wget -q -T 4 -O - "$canary" 2>&1); then
-  fail "трафик приложения ушёл мимо xray: $leaked"
-fi
-if leaked=$(app_run wget -q -T 4 -O - "$site" 2>&1); then
-  fail "трафик по имени прошёл без xray: $leaked"
-fi
-if app_run timeout 8 nslookup site.e2e.test 1.1.1.1 >/dev/null 2>&1; then
-  fail "DNS-запрос вышел наружу без xray"
-fi
-if app_run ping -c 1 -W 2 11.30.0.50 >/dev/null 2>&1; then
-  fail "ICMP вышел наружу без xray"
-fi
+refuse "трафик приложения ушёл мимо xray" app_run wget -q -T 4 -O - "$canary"
+refuse "трафик по имени прошёл без xray" app_run wget -q -T 4 -O - "$site"
+refuse "DNS-запрос вышел наружу без xray" app_run timeout 8 nslookup site.e2e.test 1.1.1.1
+refuse "ICMP вышел наружу без xray" app_run ping -c 1 -W 2 11.30.0.50
+refused_all
 echo "  без xray трафик, DNS и ICMP приложения отклоняются"
 started=$SECONDS
 if health_out=$(gateway_run raycat health 2>&1); then

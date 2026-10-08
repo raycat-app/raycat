@@ -35,6 +35,8 @@ x-idle-health: &idle-health
   interval: 2s
   timeout: 2s
   retries: 3
+  start_period: 10s
+  start_interval: 500ms
 
 x-node: &node
   image: raycat:ci
@@ -78,6 +80,11 @@ services:
       - /e2e/lan/subscription.txt
       - --requests
       - /tmp/requests.log
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 1).close()"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
     volumes:
       - ..:/e2e:ro
     networks:
@@ -126,7 +133,17 @@ services:
         ipv4_address: 10.77.0.2
       wan:
         ipv4_address: 11.60.0.2
-    depends_on: [panel, node1, node2, site, canary]
+    depends_on:
+      panel:
+        condition: service_healthy
+      node1:
+        condition: service_started
+      node2:
+        condition: service_started
+      site:
+        condition: service_started
+      canary:
+        condition: service_started
 
   # Службы хоста: «ssh» (долгое соединение) и обычный сервис.
   sshd:

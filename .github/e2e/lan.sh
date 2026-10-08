@@ -68,15 +68,17 @@ client_run() { docker exec "$client" "$@"; }
 router_run() { docker exec "$router" "$@"; }
 fetch() { client_run wget -q -T 5 -O - "$1"; }
 
+# Опрос раз в 0,2 с; второй аргумент — предел в секундах.
 wait_for() {
-  local what=$1 tries=$2
+  local what=$1 limit=$2
   shift 2
-  local _
-  for _ in $(seq "$tries"); do
+  local deadline=$((SECONDS + limit))
+  while :; do
     if "$@" >/dev/null 2>&1; then
       return 0
     fi
-    sleep 1
+    [ "$SECONDS" -lt "$deadline" ] || break
+    sleep 0.2
   done
   fail "не дождались: $what"
 }
@@ -141,11 +143,35 @@ open_stream() {
 alive() {
   local what=$1 name out
   shift
+  local states=()
   for name in "$@"; do
-    out=$(python3 "$here/stream.py" check --state "$state/$name.state" 2>&1) ||
-      fail "соединение $name не пережило: $what ($out)"
+    states+=(--state "$state/$name.state")
   done
+  out=$(python3 "$here/stream.py" check "${states[@]}" 2>&1) ||
+    fail "соединения $* не пережили: $what ($out)"
   echo "  $what: соединения $* живы"
+}
+
+# Проверки «наружу ничего не уходит» ждут тайм-аутов, поэтому идут одновременно:
+# refuse запускает команду в фоне, refused_all требует, чтобы каждая завершилась ошибкой.
+refuse_jobs=()
+refuse_names=()
+refuse() {
+  local what=$1
+  shift
+  "$@" >"$state/refuse.${#refuse_jobs[@]}" 2>&1 &
+  refuse_jobs+=($!)
+  refuse_names+=("$what")
+}
+refused_all() {
+  local i
+  for i in "${!refuse_jobs[@]}"; do
+    if wait "${refuse_jobs[$i]}"; then
+      fail "${refuse_names[$i]}: $(cat "$state/refuse.$i")"
+    fi
+  done
+  refuse_jobs=()
+  refuse_names=()
 }
 
 write_config() {
@@ -238,6 +264,7 @@ log_has "$daemon" "локальная сеть: интерфейс $lan_if" || f
 expect_via_node "$site" "${nodes_inet[@]}"
 expect_via_node "$canary" "${nodes_wan[@]}"
 [ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$daemon")" = true ] || fail "корень демона не только для чтения"
+wait_for "raycat health: узел выбран" 30 docker exec "$daemon" raycat health
 health_line=$(docker exec "$daemon" raycat health 2>&1) || fail "raycat health в работающем шлюзе: $health_line"
 grep -q '^готов: xray работает' <<<"$health_line" || fail "неожиданный вывод raycat health: $health_line"
 status_json=$(docker exec "$daemon" raycat status --json) || fail "raycat status внутри контейнера не нашёл демон: $status_json"
@@ -260,33 +287,21 @@ expect_seen_as http://10.77.0.20/ 10.77.0.10
 echo "== ip_forward=1 и NAT на хосте: наружу напрямую устройство не выходит"
 set_forward 1
 expect_via_node "$canary" "${nodes_wan[@]}"
-if client_run ping -c 1 -W 2 11.60.0.50 >/dev/null 2>&1; then
-  fail "ICMP устройства вышел наружу напрямую"
-fi
-if client_run wget -q -T 4 -O - http://10.77.0.2:12345/ >/dev/null 2>&1; then
-  fail "устройство дошло до порта xray напрямую"
-fi
+refuse "ICMP устройства вышел наружу напрямую" client_run ping -c 1 -W 2 11.60.0.50
+refuse "устройство дошло до порта xray напрямую" client_run wget -q -T 4 -O - http://10.77.0.2:12345/
 alive "пересылка включена" wan lan wan-new
+refused_all
 
 echo "== kill switch: xray убит, демон заморожен"
 docker kill --signal STOP "$daemon" >/dev/null
 docker exec "$daemon" sh -c 'kill -9 $(pidof xray)'
 sleep 1
-if leaked=$(client_run wget -q -T 4 -O - "$canary" 2>&1); then
-  fail "трафик устройства ушёл мимо xray: $leaked"
-fi
-if leaked=$(client_run wget -q -T 4 -O - "$site" 2>&1); then
-  fail "трафик по имени прошёл без xray: $leaked"
-fi
-if client_run timeout 8 nslookup site.e2e.test 1.1.1.1 >/dev/null 2>&1; then
-  fail "DNS-запрос устройства вышел наружу без xray"
-fi
-if client_run timeout 8 nslookup site.e2e.test >/dev/null 2>&1; then
-  fail "DNS-запрос к хосту сработал без xray"
-fi
-if client_run ping -c 1 -W 2 11.60.0.50 >/dev/null 2>&1; then
-  fail "ICMP устройства вышел наружу без xray"
-fi
+refuse "трафик устройства ушёл мимо xray" client_run wget -q -T 4 -O - "$canary"
+refuse "трафик по имени прошёл без xray" client_run wget -q -T 4 -O - "$site"
+refuse "DNS-запрос устройства вышел наружу без xray" client_run timeout 8 nslookup site.e2e.test 1.1.1.1
+refuse "DNS-запрос к хосту сработал без xray" client_run timeout 8 nslookup site.e2e.test
+refuse "ICMP устройства вышел наружу без xray" client_run ping -c 1 -W 2 11.60.0.50
+refused_all
 echo "  без xray у устройства нет ни прямого выхода, ни DNS"
 expect_seen_as http://10.77.0.2:8081/ host-10.77.0.10
 alive "xray убит" wan lan wan-new
@@ -320,10 +335,9 @@ docker kill --signal KILL "$daemon" >/dev/null
 sleep 1
 tables_present >/dev/null || fail "после аварии исчезла таблица nftables"
 rule_present || fail "после аварии исчезло правило маршрутизации"
-if leaked=$(client_run wget -q -T 4 -O - "$canary" 2>&1); then
-  fail "после аварии трафик устройства ушёл напрямую: $leaked"
-fi
+refuse "после аварии трафик устройства ушёл напрямую" client_run wget -q -T 4 -O - "$canary"
 alive "демон убит" wan lan wan-new
+refused_all
 docker start "$daemon" >/dev/null
 wait_for "трафик через узел после аварии" 90 via_node "$canary"
 [ "$(router_run ip -4 rule show | grep -c 7263)" = 1 ] || fail "после перезапуска не одно правило маршрутизации"

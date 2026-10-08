@@ -53,7 +53,11 @@ RUN set -eu; \
     grep -v '^go ' /noaes.mod > /noaes.rest; \
     cmp /upstream.rest /noaes.rest
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-modfile=/noaes.mod
-RUN set -eu; \
+# Кэши Go в монтировании, а не в слое: слой остаётся размером с бинарник, и его дёшево
+# хранить в кэше сборки CI.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    set -eu; \
     case "${TARGETARCH:-}${TARGETVARIANT:-}" in \
       arm64|arm64v8) GOARCH=arm64; GOARM= ;; \
       armv7) GOARCH=arm; GOARM=7 ;; \

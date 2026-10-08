@@ -14,6 +14,16 @@ New-Item -ItemType Directory -Force $Out | Out-Null
 
 function Find-App {
     $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, "$env:LOCALAPPDATA\Programs", $env:LOCALAPPDATA, $env:APPDATA)
+    # Обычно приложение лежит не глубже «издатель\продукт»: мелкий поиск занимает секунды,
+    # полный обход каталогов нужен только если он ничего не нашёл.
+    foreach ($root in $roots) {
+        if (-not $root -or -not (Test-Path $root)) { continue }
+        foreach ($pattern in "*", "*\*") {
+            $hit = Get-ChildItem (Join-Path $root $pattern) -Filter $ExeName -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -notmatch "unins|setup|update|crash" } | Select-Object -First 1
+            if ($hit) { return $hit.FullName }
+        }
+    }
     foreach ($root in $roots) {
         if (-not $root -or -not (Test-Path $root)) { continue }
         $hit = Get-ChildItem $root -Recurse -Filter $ExeName -ErrorAction SilentlyContinue |
@@ -76,7 +86,12 @@ if ($Date) {
 }
 "before link: $([DateTime]::UtcNow.ToString('o'))" | Out-File -Encoding utf8 "$Out\clock.txt"
 Start-Process $Link
-Start-Sleep 25
+# Ждём первый запрос приложения (не дольше 25 с) и ещё 3 с на повторные.
+$deadline = (Get-Date).AddSeconds(25)
+while ((Get-Date) -lt $deadline -and -not (Get-ChildItem $Out -Filter *.http -ErrorAction SilentlyContinue)) {
+    Start-Sleep -Milliseconds 500
+}
+Start-Sleep 3
 "after wait: $([DateTime]::UtcNow.ToString('o'))" | Out-File -Append -Encoding utf8 "$Out\clock.txt"
 Save-Screen "protocol"
 Get-Process | Where-Object { $_.Path -eq $app } | Stop-Process -Force
