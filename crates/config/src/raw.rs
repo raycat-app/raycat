@@ -64,7 +64,7 @@ pub(crate) struct RawSubscription {
     pub(crate) name: Option<String>,
     /// Ссылка подписки: `https://…` (`http://` только с `allow_http = true`), до 2048 символов, без логина и пароля. Обязательна, если не задан `url_file`. Это секрет.
     pub(crate) url: Option<String>,
-    /// Путь к файлу с одной ссылкой (до 4 КиБ), например Docker secret. Вместе с `url` не задаётся.
+    /// Путь к файлу с одной ссылкой (до 4 килобайт), например Docker secret. Вместе с `url` не задаётся.
     pub(crate) url_file: Option<String>,
     /// Разрешает `http://` для этой подписки. По умолчанию `false`: по http ссылка и ответ передаются открыто.
     pub(crate) allow_http: Option<bool>,
