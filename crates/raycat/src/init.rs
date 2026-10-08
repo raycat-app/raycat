@@ -225,7 +225,9 @@ fn next_steps(systemd: bool) -> String {
 
 fn from_flags(flags: &Flags, link: Option<String>) -> Result<Answers> {
     let Some(url) = link else {
-        bail!("без терминала не хватает флагов: --subscription или --subscription-file. Справка: raycat init --help");
+        bail!(
+            "без терминала не хватает флагов: --subscription или --subscription-file. Справка: raycat init --help"
+        );
     };
     let app = flags.app.unwrap_or(AppChoice::Happ);
     let platform = match app {
@@ -251,7 +253,12 @@ fn ask_all<R: BufRead, W: Write>(
     };
     let app = match flags.app {
         Some(app) => app,
-        None => match dialog.choose("Какое приложение указано у провайдера?", &APP_OPTIONS, 0, None)? {
+        None => match dialog.choose(
+            "Какое приложение указано у провайдера?",
+            &APP_OPTIONS,
+            0,
+            None,
+        )? {
             0 => AppChoice::Happ,
             _ => AppChoice::Incy,
         },
@@ -511,8 +518,9 @@ fn save(path: &Path, text: &str, env: &Env) -> Result<Option<PathBuf>> {
     if let Err(error) = Config::load(Some(path), env, paths::is_root()) {
         match &backup {
             Some(backup) => {
-                fs::rename(backup, path)
-                    .with_context(|| format!("не удалось вернуть прежний файл {}", path.display()))?;
+                fs::rename(backup, path).with_context(|| {
+                    format!("не удалось вернуть прежний файл {}", path.display())
+                })?;
                 bail!("новые настройки не прошли проверку, прежний файл возвращён: {error}");
             }
             None => {
@@ -640,7 +648,11 @@ mod tests {
             (AppChoice::Incy, PlatformChoice::Android),
         ];
         for (app, platform) in pairs {
-            for mode in [ModeChoice::Proxy, ModeChoice::Gateway, ModeChoice::GatewayLan] {
+            for mode in [
+                ModeChoice::Proxy,
+                ModeChoice::Gateway,
+                ModeChoice::GatewayLan,
+            ] {
                 fs::write(&path, render(&answers(app, platform, mode))).unwrap();
                 Config::load(Some(&path), &Env::new(), false).unwrap();
             }
@@ -658,10 +670,14 @@ mod tests {
         assert_eq!(link_problem(URL), None);
         assert_eq!(link_problem("https://example.com/a\"b\\c"), None);
         assert_eq!(link_problem(""), Some("ссылка пустая (…)".to_owned()));
-        assert!(link_problem("http://example.com/sub/abcd1234")
-            .is_some_and(|problem| problem.contains("http небезопасен")));
-        assert!(link_problem("https://example.com/a\nb")
-            .is_some_and(|problem| problem.contains("управляющие")));
+        assert!(
+            link_problem("http://example.com/sub/abcd1234")
+                .is_some_and(|problem| problem.contains("http небезопасен"))
+        );
+        assert!(
+            link_problem("https://example.com/a\nb")
+                .is_some_and(|problem| problem.contains("управляющие"))
+        );
     }
 
     #[test]
@@ -678,9 +694,7 @@ mod tests {
     #[test]
     fn a_wrong_menu_answer_asks_again() {
         let mut dialog = scripted("9\n\n");
-        let index = dialog
-            .choose("Режим:", &MODE_OPTIONS, 0, None)
-            .unwrap();
+        let index = dialog.choose("Режим:", &MODE_OPTIONS, 0, None).unwrap();
         assert_eq!(index, 0);
         let text = output(dialog);
         assert!(text.contains("Введите номер от 1 до 3."));
@@ -705,7 +719,8 @@ mod tests {
 
     #[test]
     fn enter_on_every_question_gives_the_defaults() {
-        let mut dialog = scripted(&format!("{URL}\n\n\n\n"));
+        let input = format!("{URL}\n\n\n\n");
+        let mut dialog = scripted(&input);
         let answers = ask_all(&mut dialog, &Flags::default(), None).unwrap();
         assert_eq!(
             answers,
@@ -739,7 +754,11 @@ mod tests {
         let answers = ask_all(&mut dialog, &flags, Some(URL.to_owned())).unwrap();
         assert_eq!(
             answers,
-            self::answers(AppChoice::Incy, PlatformChoice::Android, ModeChoice::Gateway)
+            self::answers(
+                AppChoice::Incy,
+                PlatformChoice::Android,
+                ModeChoice::Gateway
+            )
         );
     }
 
