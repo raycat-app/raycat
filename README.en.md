@@ -18,6 +18,10 @@
 > [!IMPORTANT]
 > raycat is under development; the first version has not been released yet.
 
+<p align="center">
+  <img src="assets/tui.svg" alt="raycat tui" width="100%">
+</p>
+
 ## What it is
 
 raycat is a VPN subscription client for Linux servers. It fetches the subscription from your
@@ -236,8 +240,6 @@ the current node and the reason it was chosen), the "Subscriptions", "Nodes" and
 (the last 200 events) and a hint line at the bottom. The `▶` marker is on the selected node, and
 `★` is on the node pinned by hand. The TUI requires a terminal and a window of at least 44×12. If
 the daemon is unavailable, the screen shows the reason and reconnects by itself.
-
-<!-- TUI screenshot will go here -->
 
 | Key | Action |
 | --- | --- |

@@ -198,9 +198,7 @@ fn hex(color: Color) -> Option<String> {
 }
 
 fn paint(color: Option<Color>, fallback: &str) -> String {
-    color
-        .and_then(hex)
-        .unwrap_or_else(|| fallback.to_owned())
+    color.and_then(hex).unwrap_or_else(|| fallback.to_owned())
 }
 
 fn look_of(cell: &Cell) -> Look {

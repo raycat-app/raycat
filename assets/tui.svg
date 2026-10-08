@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="630" viewBox="0 0 9000 6300" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, &quot;DejaVu Sans Mono&quot;, monospace">
+<defs><clipPath id="window"><rect x="160" y="160" width="8680" height="5980" rx="100"/></clipPath></defs>
+<rect x="160" y="160" width="8680" height="5980" rx="100" fill="#1e1e2e" stroke="#313244" stroke-width="10"/>
+<rect x="160" y="160" width="8680" height="360" fill="#181825" clip-path="url(#window)"/>
+<circle cx="360" cy="340" r="60" fill="#f38ba8"/>
+<circle cx="560" cy="340" r="60" fill="#f9e2af"/>
+<circle cx="760" cy="340" r="60" fill="#a6e3a1"/>
+<text x="4500" y="385" text-anchor="middle" font-size="130" fill="#6c7086">raycat</text>
+<g font-size="140">
+<rect x="468" y="2420" width="8064" height="180" fill="#cdd6f4"/>
+<text x="300" y="750" textLength="504" xml:space="preserve" fill="#cdd6f4" font-weight="bold">raycat</text>
+<text x="804" y="750" textLength="168" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6"> ·</text>
+<text x="1056" y="750" textLength="336" xml:space="preserve" fill="#cdd6f4">шлюз</text>
+<text x="1392" y="750" textLength="168" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6"> ·</text>
+<text x="1644" y="750" textLength="1008" xml:space="preserve" fill="#a6e3a1">● подключено</text>
+<text x="2652" y="750" textLength="168" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6"> ·</text>
+<text x="2904" y="750" textLength="1092" xml:space="preserve" fill="#a6e3a1">kill switch ●</text>
+<text x="6768" y="750" textLength="1932" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">время работы 3 ч 12 мин</text>
+<text x="300" y="930" textLength="1848" xml:space="preserve" fill="#cdd6f4" font-weight="bold">▶ main/🇳🇱 Нидерланды 2</text>
+<text x="2316" y="930" textLength="420" xml:space="preserve" fill="#a6e3a1">31 мс</text>
+<text x="2904" y="930" textLength="2184" xml:space="preserve" fill="#cdd6f4">↓ 48.3 Мбит/с ↑ 2.1 Мбит/с</text>
+<text x="5088" y="930" textLength="924" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">  закреплён</text>
+<text x="300" y="1110" textLength="168" xml:space="preserve" fill="#585b70">╭─</text>
+<text x="552" y="1110" textLength="672" xml:space="preserve" fill="#cdd6f4" font-weight="bold">Подписки</text>
+<text x="1224" y="1110" textLength="840" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6"> · всего 2</text>
+<text x="2064" y="1110" textLength="6636" xml:space="preserve" fill="#585b70"> ─────────────────────────────────────────────────────────────────────────────╮</text>
+<text x="300" y="1290" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="468" y="1290" textLength="336" xml:space="preserve" fill="#cdd6f4" font-weight="bold">main</text>
+<text x="972" y="1290" textLength="672" xml:space="preserve" fill="#cdd6f4">узлов: 5</text>
+<text x="1812" y="1290" textLength="2772" xml:space="preserve" fill="#a6e3a1">▰▰▰▱▱▱▱▱▱▱ 34% 34.0 ГиБ/100.0 ГиБ</text>
+<text x="4752" y="1290" textLength="1848" xml:space="preserve" fill="#cdd6f4">обновлена 18 мин назад</text>
+<text x="8616" y="1290" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="1470" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="468" y="1470" textLength="504" xml:space="preserve" fill="#cdd6f4" font-weight="bold">backup</text>
+<text x="1140" y="1470" textLength="672" xml:space="preserve" fill="#cdd6f4">узлов: 4</text>
+<text x="1980" y="1470" textLength="2772" xml:space="preserve" fill="#f9e2af">▰▰▰▰▰▰▰▰▱▱ 81% 81.0 ГиБ/100.0 ГиБ</text>
+<text x="4920" y="1470" textLength="2184" xml:space="preserve" fill="#cdd6f4">обновлена 3 ч 12 мин назад</text>
+<text x="8616" y="1470" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="1650" textLength="8400" xml:space="preserve" fill="#585b70">╰──────────────────────────────────────────────────────────────────────────────────────────────────╯</text>
+<text x="300" y="1830" textLength="168" xml:space="preserve" fill="#585b70">╭─</text>
+<text x="552" y="1830" textLength="336" xml:space="preserve" fill="#cdd6f4" font-weight="bold">Узлы</text>
+<text x="888" y="1830" textLength="840" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6"> · всего 9</text>
+<text x="1728" y="1830" textLength="6972" xml:space="preserve" fill="#585b70"> ─────────────────────────────────────────────────────────────────────────────────╮</text>
+<text x="300" y="2010" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="720" y="2010" textLength="672" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">Подписка</text>
+<text x="1560" y="2010" textLength="336" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">Узел</text>
+<text x="2988" y="2010" textLength="504" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">Статус</text>
+<text x="4248" y="2010" textLength="672" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">Задержка</text>
+<text x="5340" y="2010" textLength="336" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">Сбои</text>
+<text x="5844" y="2010" textLength="672" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">Скорость</text>
+<text x="8616" y="2010" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="2190" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="384" y="2190" textLength="2184" xml:space="preserve" fill="#cdd6f4">    main      🇫🇮 Финляндия</text>
+<text x="2988" y="2190" textLength="420" xml:space="preserve" fill="#a6e3a1">● жив</text>
+<text x="4500" y="2190" textLength="420" xml:space="preserve" fill="#a6e3a1">44 мс</text>
+<text x="5592" y="2190" textLength="84" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">0</text>
+<text x="8616" y="2190" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="2370" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="384" y="2370" textLength="2268" xml:space="preserve" fill="#cdd6f4">    main      🇩🇪 Германия 1</text>
+<text x="2988" y="2370" textLength="420" xml:space="preserve" fill="#a6e3a1">● жив</text>
+<text x="4500" y="2370" textLength="420" xml:space="preserve" fill="#a6e3a1">61 мс</text>
+<text x="5592" y="2370" textLength="84" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">0</text>
+<text x="8616" y="2370" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="2550" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="468" y="2550" textLength="7560" xml:space="preserve" fill="#1e1e2e" font-weight="bold">★  main      🇳🇱 Нидерланды 2  ● жив             31 мс        0  ↓ 48.3 Мбит/с ↑ 2.1 Мбит/с</text>
+<text x="8616" y="2550" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="2730" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="384" y="2730" textLength="1932" xml:space="preserve" fill="#cdd6f4">    main      🇸🇪 Швеция</text>
+<text x="2988" y="2730" textLength="420" xml:space="preserve" fill="#a6e3a1">● жив</text>
+<text x="4416" y="2730" textLength="504" xml:space="preserve" fill="#f38ba8" font-weight="bold">412 мс</text>
+<text x="5592" y="2730" textLength="84" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">0</text>
+<text x="8616" y="2730" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="2910" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="384" y="2910" textLength="1932" xml:space="preserve" fill="#cdd6f4">    main      🇵🇱 Польша</text>
+<text x="2988" y="2910" textLength="1092" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">○ не проверен</text>
+<text x="4836" y="2910" textLength="84" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">—</text>
+<text x="5592" y="2910" textLength="84" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">0</text>
+<text x="8616" y="2910" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="3090" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="384" y="3090" textLength="2268" xml:space="preserve" fill="#cdd6f4">    backup    🇩🇪 Германия 2</text>
+<text x="2988" y="3090" textLength="420" xml:space="preserve" fill="#a6e3a1">● жив</text>
+<text x="4416" y="3090" textLength="504" xml:space="preserve" fill="#f9e2af">218 мс</text>
+<text x="5592" y="3090" textLength="84" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">0</text>
+<text x="8616" y="3090" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="3270" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="384" y="3270" textLength="2436" xml:space="preserve" fill="#cdd6f4">    backup    🇳🇱 Нидерланды 1</text>
+<text x="2988" y="3270" textLength="420" xml:space="preserve" fill="#a6e3a1">● жив</text>
+<text x="4500" y="3270" textLength="420" xml:space="preserve" fill="#a6e3a1">47 мс</text>
+<text x="5592" y="3270" textLength="84" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">0</text>
+<text x="8616" y="3270" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="3450" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="384" y="3450" textLength="1680" xml:space="preserve" fill="#cdd6f4">    backup    🇺🇸 США</text>
+<text x="2988" y="3450" textLength="1092" xml:space="preserve" fill="#f38ba8" font-weight="bold">✗ не отвечает</text>
+<text x="4836" y="3450" textLength="84" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">—</text>
+<text x="5592" y="3450" textLength="84" xml:space="preserve" fill="#f9e2af">3</text>
+<text x="8616" y="3450" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="3630" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="384" y="3630" textLength="2016" xml:space="preserve" fill="#cdd6f4">    backup    🇪🇪 Эстония</text>
+<text x="2988" y="3630" textLength="420" xml:space="preserve" fill="#a6e3a1">● жив</text>
+<text x="4500" y="3630" textLength="420" xml:space="preserve" fill="#a6e3a1">96 мс</text>
+<text x="5592" y="3630" textLength="84" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">0</text>
+<text x="8616" y="3630" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="3810" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="8616" y="3810" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="3990" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="8616" y="3990" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="4170" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="8616" y="4170" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="4350" textLength="8400" xml:space="preserve" fill="#585b70">╰──────────────────────────────────────────────────────────────────────────────────────────────────╯</text>
+<text x="300" y="4530" textLength="168" xml:space="preserve" fill="#585b70">╭─</text>
+<text x="552" y="4530" textLength="504" xml:space="preserve" fill="#cdd6f4" font-weight="bold">Журнал</text>
+<text x="1056" y="4530" textLength="1008" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6"> · время UTC</text>
+<text x="2064" y="4530" textLength="6636" xml:space="preserve" fill="#585b70"> ─────────────────────────────────────────────────────────────────────────────╮</text>
+<text x="300" y="4710" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="468" y="4710" textLength="3612" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">11:10:00  подключено к демону, версия 0.1.0</text>
+<text x="8616" y="4710" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="4890" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="468" y="4890" textLength="672" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">11:25:00</text>
+<text x="1308" y="4890" textLength="6216" xml:space="preserve" fill="#cdd6f4">узел: main/🇩🇪 Германия 1 → main/🇳🇱 Нидерланды 2: быстрее всех живых: 31 мс</text>
+<text x="8616" y="4890" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="5070" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="468" y="5070" textLength="672" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">11:35:00</text>
+<text x="1308" y="5070" textLength="2940" xml:space="preserve" fill="#f9e2af">закреплён узел main/🇳🇱 Нидерланды 2</text>
+<text x="8616" y="5070" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="5250" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="468" y="5250" textLength="672" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">11:45:00</text>
+<text x="1308" y="5250" textLength="2940" xml:space="preserve" fill="#a6e3a1">подписка «main» обновлена, узлов: 5</text>
+<text x="8616" y="5250" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="5430" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="468" y="5430" textLength="672" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">11:56:00</text>
+<text x="1308" y="5430" textLength="3612" xml:space="preserve" fill="#f9e2af">WARN: трафик подписки «backup» превысил 80%</text>
+<text x="8616" y="5430" textLength="84" xml:space="preserve" fill="#585b70">│</text>
+<text x="300" y="5610" textLength="8400" xml:space="preserve" fill="#585b70">╰──────────────────────────────────────────────────────────────────────────────────────────────────╯</text>
+<text x="300" y="5790" textLength="420" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">готов</text>
+<text x="300" y="5970" textLength="168" xml:space="preserve" fill="#cdd6f4" font-weight="bold">↑↓</text>
+<text x="552" y="5970" textLength="420" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">выбор</text>
+<text x="1140" y="5970" textLength="420" xml:space="preserve" fill="#cdd6f4" font-weight="bold">Enter</text>
+<text x="1644" y="5970" textLength="756" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">закрепить</text>
+<text x="2568" y="5970" textLength="84" xml:space="preserve" fill="#cdd6f4" font-weight="bold">a</text>
+<text x="2736" y="5970" textLength="336" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">авто</text>
+<text x="3240" y="5970" textLength="84" xml:space="preserve" fill="#cdd6f4" font-weight="bold">u</text>
+<text x="3408" y="5970" textLength="672" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">обновить</text>
+<text x="4248" y="5970" textLength="84" xml:space="preserve" fill="#cdd6f4" font-weight="bold">U</text>
+<text x="4416" y="5970" textLength="672" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">подписку</text>
+<text x="5256" y="5970" textLength="84" xml:space="preserve" fill="#cdd6f4" font-weight="bold">/</text>
+<text x="5424" y="5970" textLength="504" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">фильтр</text>
+<text x="6096" y="5970" textLength="84" xml:space="preserve" fill="#cdd6f4" font-weight="bold">?</text>
+<text x="6264" y="5970" textLength="588" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">справка</text>
+<text x="7020" y="5970" textLength="84" xml:space="preserve" fill="#cdd6f4" font-weight="bold">q</text>
+<text x="7188" y="5970" textLength="420" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">выход</text>
+</g>
+</svg>
