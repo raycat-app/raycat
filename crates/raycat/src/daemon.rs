@@ -413,7 +413,11 @@ impl Daemon {
         };
         self.plan_problem.clear();
         if let Some(text) = provider_news(&mut self.provider_digest, plan.provider.as_ref()) {
-            if plan.provider.as_ref().is_some_and(|provider| provider.skipped.is_empty()) {
+            if plan
+                .provider
+                .as_ref()
+                .is_some_and(|provider| provider.skipped.is_empty())
+            {
                 info!("{text}");
             } else {
                 warn!("{text}");

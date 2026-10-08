@@ -64,8 +64,8 @@ pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
             answers.push(None);
         }
     }
-    let provider = plan::provider_profile(config, answers.iter().map(Option::as_ref))
-        .map(plan::translate);
+    let provider =
+        plan::provider_profile(config, answers.iter().map(Option::as_ref)).map(plan::translate);
     let provider_text = config.routing.provider.then(|| match &provider {
         Some((provider, _)) => plan::provider_summary(provider),
         None => "провайдер: профиля нет".to_owned(),
@@ -83,14 +83,16 @@ pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
     if cached.iter().all(Vec::is_empty) {
         bail!("кэша подписок нет: запустите демон (raycat daemon), он получит подписки");
     }
-    let inputs: Vec<(&Subscription, &[Node], Option<&raycat_subscription::Routing>)> = config
+    let inputs: Vec<(
+        &Subscription,
+        &[Node],
+        Option<&raycat_subscription::Routing>,
+    )> = config
         .subscriptions
         .iter()
         .zip(&cached)
         .zip(&answers)
-        .map(|((subscription, nodes), routing)| {
-            (subscription, nodes.as_slice(), routing.as_ref())
-        })
+        .map(|((subscription, nodes), routing)| (subscription, nodes.as_slice(), routing.as_ref()))
         .collect();
     let congestion = tuning::congestion(&config.xray.tcp_congestion);
     let plan = plan::compile_config(config, &inputs, free_port()?, congestion.algorithm())?;

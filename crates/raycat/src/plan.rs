@@ -197,10 +197,13 @@ pub(crate) fn provider_profile<'a>(
     if !config.routing.provider {
         return None;
     }
-    routings.into_iter().flatten().find_map(|routing| match routing {
-        Routing::Profile(profile) => Some(&**profile),
-        Routing::Off => None,
-    })
+    routings
+        .into_iter()
+        .flatten()
+        .find_map(|routing| match routing {
+            Routing::Profile(profile) => Some(&**profile),
+            Routing::Off => None,
+        })
 }
 
 /// Что из профиля провайдера применено и что пропущено; для журнала и `raycat check`.
@@ -237,7 +240,9 @@ impl Skip {
         match self {
             Self::Geo => "категории geosite/geoip, кроме ru и private, и ext: не поддерживаются",
             Self::Regexp => "regexp: не поддерживаются",
-            Self::Private => "geoip:private только в списке напрямую, частные сети и так идут напрямую",
+            Self::Private => {
+                "geoip:private только в списке напрямую, частные сети и так идут напрямую"
+            }
             Self::Invalid => "некорректные записи",
         }
     }
@@ -435,7 +440,12 @@ pub(crate) fn provider_note(provider: &ProviderRouting) -> String {
     }
     let reasons: Vec<&str> = [Skip::Geo, Skip::Regexp, Skip::Private, Skip::Invalid]
         .into_iter()
-        .filter(|reason| provider.skipped.iter().any(|skipped| skipped.reason == *reason))
+        .filter(|reason| {
+            provider
+                .skipped
+                .iter()
+                .any(|skipped| skipped.reason == *reason)
+        })
         .map(Skip::describe)
         .collect();
     let examples: Vec<String> = provider
@@ -450,7 +460,11 @@ pub(crate) fn provider_note(provider: &ProviderRouting) -> String {
     } else {
         String::new()
     };
-    format!("{head} ({}: {}{tail})", reasons.join("; "), examples.join(", "))
+    format!(
+        "{head} ({}: {}{tail})",
+        reasons.join("; "),
+        examples.join(", ")
+    )
 }
 
 /// Итог для строки маршрутизации в `raycat check`.
@@ -562,7 +576,12 @@ mod tests {
     }
 
     fn plan(config: &Config, nodes: &[Node]) -> Result<Plan> {
-        compile_config(config, &[(&config.subscriptions[0], nodes, None)], 10_085, None)
+        compile_config(
+            config,
+            &[(&config.subscriptions[0], nodes, None)],
+            10_085,
+            None,
+        )
     }
 
     fn outbound_tags(plan: &Plan) -> Vec<String> {
