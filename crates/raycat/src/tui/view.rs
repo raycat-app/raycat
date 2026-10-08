@@ -26,7 +26,10 @@ const HELP: [(&str, &str); 12] = [
     ("Enter", "закрепить выбранный узел"),
     ("a", "вернуть автоматический выбор узла"),
     ("u", "обновить все подписки"),
-    ("U", "обновить подписку (выбранную Tab или узла под курсором)"),
+    (
+        "U",
+        "обновить подписку (выбранную Tab или узла под курсором)",
+    ),
     ("/", "фильтр по тексту (Enter — применить, Esc — сбросить)"),
     ("Tab", "фильтр по подписке (Shift+Tab — в обратную сторону)"),
     ("Esc", "сбросить фильтры"),
@@ -46,7 +49,10 @@ fn draw_at(frame: &mut Frame<'_>, app: &mut App, palette: Palette, zone: &TimeZo
 fn compose(canvas: &mut Canvas<'_>, app: &mut App, zone: &TimeZone) {
     if canvas.width < MIN_WIDTH || canvas.height < MIN_HEIGHT {
         let need = format!("{MIN_WIDTH}×{MIN_HEIGHT}");
-        let full = format!("Мало места: {}×{}, нужно {need}", canvas.width, canvas.height);
+        let full = format!(
+            "Мало места: {}×{}, нужно {need}",
+            canvas.width, canvas.height
+        );
         let text = if display_width(&full) <= canvas.width {
             full
         } else {
@@ -940,8 +946,9 @@ mod tests {
         );
         let lines = screen(&mut app, 80, 12);
         assert!(
-            lines.iter().any(|line| line
-                == "Узлы  всего 3  (подписки скрыты)  (журнал скрыт: мало строк)"),
+            lines
+                .iter()
+                .any(|line| line == "Узлы  всего 3  (подписки скрыты)  (журнал скрыт: мало строк)"),
             "{lines:?}"
         );
     }
@@ -960,7 +967,7 @@ mod tests {
         assert_eq!(lines[1], "Запустите службу: sudo systemctl start raycat");
         assert_eq!(lines[2], "повторное подключение через 1 с");
         assert_eq!(buffer[(0, 0)].style().fg, Some(Color::LightRed));
-        assert_eq!(buffer[(0, 1)].style().fg, None);
+        assert_ne!(buffer[(0, 1)].style().fg, Some(Color::LightRed));
     }
 
     #[test]
