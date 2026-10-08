@@ -892,7 +892,10 @@ mod tests {
             ),
             "▶ main/NL-1  31 мс  закреплён  выбран лучший живой узел".to_owned(),
             format!("╭─ Подписки · всего 1 {}╮", d(57)),
-            format!("│ main  узлов: 3  ▱▱▱▱▱▱▱▱▱▱ 0% 3.0 МиБ/100.0 ГиБ{}│", s(30)),
+            format!(
+                "│ main  узлов: 3  ▱▱▱▱▱▱▱▱▱▱ 0% 3.0 МиБ/100.0 ГиБ{}│",
+                s(30)
+            ),
             format!("╰{}╯", d(78)),
             format!("╭─ Узлы · всего 3 {}╮", d(61)),
             format!(
@@ -1297,7 +1300,10 @@ mod tests {
     fn the_expiry_outlives_the_update_time_on_a_narrow_line() {
         let mut app = sample_app();
         let lines = screen(&mut app, 100, 20);
-        let line = lines.iter().find(|line| line.starts_with("│ main")).unwrap();
+        let line = lines
+            .iter()
+            .find(|line| line.starts_with("│ main"))
+            .unwrap();
         assert!(line.contains("осталось 40 дн"), "{line:?}");
         assert!(!line.contains("обновлена"), "{line:?}");
     }
