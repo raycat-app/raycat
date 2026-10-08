@@ -142,7 +142,10 @@ async fn dispatch(
 ) -> Result<()> {
     match name {
         "status" => status(client, term, json).await,
-        "nodes" => nodes(client, term, json, sub.get_flag("all")).await,
+        "nodes" => {
+            let subscription = sub.get_one::<String>("subscription").map(String::as_str);
+            nodes(client, term, json, sub.get_flag("all"), subscription).await
+        }
         "use" => {
             let query = sub.get_one::<String>("node").context("не указан узел")?;
             use_node(client, term, json, query).await
@@ -166,14 +169,58 @@ async fn status(client: &Client, term: Term, json: bool) -> Result<()> {
     Ok(())
 }
 
-async fn nodes(client: &Client, term: Term, json: bool, all: bool) -> Result<()> {
-    let nodes = client.nodes().await?;
+async fn nodes(
+    client: &Client,
+    term: Term,
+    json: bool,
+    all: bool,
+    subscription: Option<&str>,
+) -> Result<()> {
+    let mut nodes = client.nodes().await?;
+    if let Some(wanted) = subscription {
+        let names: Vec<String> = client
+            .status()
+            .await?
+            .subscriptions
+            .into_iter()
+            .map(|sub| sub.name)
+            .collect();
+        nodes.nodes = subscription_nodes(&names, nodes.nodes, wanted)?;
+    }
     if json {
         out(&to_json(&nodes)?);
     } else {
         out(&render::nodes(term, &nodes, all));
     }
     Ok(())
+}
+
+/// Узлы одной подписки. Имя ищется без учёта регистра; при неизвестном выводятся известные.
+fn subscription_nodes(names: &[String], nodes: Vec<Node>, wanted: &str) -> Result<Vec<Node>> {
+    let name = subscription_name(names, wanted)?;
+    Ok(nodes
+        .into_iter()
+        .filter(|node| node.subscription == name)
+        .collect())
+}
+
+fn subscription_name(names: &[String], wanted: &str) -> Result<String> {
+    let needle = wanted.trim().to_lowercase();
+    if let Some(name) = names.iter().find(|name| name.to_lowercase() == needle) {
+        return Ok(name.clone());
+    }
+    if names.is_empty() {
+        bail!(
+            "подписки «{}» нет: подписок ещё нет (см. raycat status)",
+            sanitize(wanted)
+        );
+    }
+    let known: Vec<String> = names.iter().map(|name| sanitize(name)).collect();
+    bail!(
+        "подписки «{}» нет; есть: {}",
+        sanitize(wanted),
+        known.join(", ")
+    )
 }
 
 async fn use_node(client: &Client, term: Term, json: bool, query: &str) -> Result<()> {
@@ -378,6 +425,36 @@ mod tests {
     #[test]
     fn the_query_cannot_inject_terminal_codes_into_the_error() {
         let error = resolve(&sample(), "\x1b[2J").unwrap_err();
+        assert!(!error.to_string().contains('\x1b'));
+    }
+
+    #[test]
+    fn a_subscription_keeps_only_its_nodes() {
+        let names = vec!["main".to_owned(), "backup".to_owned()];
+        let kept = subscription_nodes(&names, sample(), "BACKUP").unwrap();
+        assert_eq!(kept.len(), 2);
+        assert!(kept.iter().all(|node| node.subscription == "backup"));
+    }
+
+    #[test]
+    fn an_unknown_subscription_lists_the_known_ones() {
+        let names = vec!["main".to_owned(), "backup".to_owned()];
+        let error = subscription_nodes(&names, sample(), "Токио").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "подписки «Токио» нет; есть: main, backup"
+        );
+        let none = subscription_name(&[], "main").unwrap_err();
+        assert_eq!(
+            none.to_string(),
+            "подписки «main» нет: подписок ещё нет (см. raycat status)"
+        );
+    }
+
+    #[test]
+    fn the_subscription_name_cannot_inject_terminal_codes() {
+        let names = vec!["main".to_owned()];
+        let error = subscription_name(&names, "\x1b[2J").unwrap_err();
         assert!(!error.to_string().contains('\x1b'));
     }
 

@@ -53,6 +53,10 @@ impl Term {
         self.color
     }
 
+    pub(crate) fn width(self) -> Option<usize> {
+        self.width
+    }
+
     pub(crate) fn paint(self, tone: Tone, text: &str) -> String {
         match tone.code() {
             Some(code) if self.color && !text.is_empty() => format!("\x1b[{code}m{text}\x1b[0m"),
