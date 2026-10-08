@@ -205,7 +205,7 @@ if health_out=$(gateway_run raycat health 2>&1); then
   fail "raycat health ответил успехом, хотя демон заморожен, а xray убит: $health_out"
 fi
 [ $((SECONDS - started)) -le 5 ] || fail "raycat health отвечал дольше 5 с"
-grep -q 'демон не ответил' <<<"$health_out" || fail "неожиданная причина в raycat health: $health_out"
+grep -q 'не ответил вовремя' <<<"$health_out" || fail "неожиданная причина в raycat health: $health_out"
 echo "  raycat health: $health_out"
 docker kill --signal CONT "$gateway" >/dev/null
 wait_for "xray перезапущен и трафик снова идёт" 60 fetch "$site"

@@ -26,13 +26,14 @@ const READ_SIZE: usize = 16 * 1024;
 
 #[derive(Debug)]
 pub(crate) enum ClientError {
-    NotRunning(PathBuf),
+    NotRunning,
     Refused(PathBuf),
-    Denied(PathBuf),
+    Denied,
     Closed,
     TimedOut,
     /// Демон ответил ошибкой; текст его, на русском.
     Api(String),
+    /// Техническая деталь разбора; выводится в скобках после совета.
     Protocol(String),
     Io(io::Error),
 }
@@ -40,28 +41,29 @@ pub(crate) enum ClientError {
 impl fmt::Display for ClientError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotRunning(path) => write!(
-                f,
-                "демон не запущен: сокета {} нет (если демон работает от другого пользователя или с другим RAYCAT_SOCKET, задайте тот же RAYCAT_SOCKET)",
-                path.display()
+            Self::NotRunning => f.write_str(
+                "raycat не запущен\nЗапустите службу: sudo systemctl start raycat (в Docker: docker compose up -d raycat)",
             ),
             Self::Refused(path) => write!(
                 f,
-                "демон не отвечает: сокет {} есть, но на нём никто не слушает (демон остановился аварийно?)",
+                "raycat остановился аварийно: сокет {} остался, но никто не отвечает\nПосмотрите журнал: journalctl -u raycat -n 50 (в Docker: docker logs raycat) и перезапустите службу",
                 path.display()
             ),
-            Self::Denied(path) => write!(
-                f,
-                "нет прав на сокет {}: API доступен только пользователю демона и root (попробуйте sudo)",
-                path.display()
+            Self::Denied => f.write_str(
+                "нет доступа к raycat: он запущен от root\nПовторите команду через sudo, например: sudo raycat status",
             ),
             Self::Closed => f.write_str(
-                "демон закрыл соединение, не ответив: API доступен только пользователю демона и root, либо демон остановился",
+                "raycat закрыл соединение, не ответив\nВозможно, он перезапускается: повторите через несколько секунд",
             ),
-            Self::TimedOut => f.write_str("демон не ответил вовремя"),
+            Self::TimedOut => f.write_str(
+                "raycat не ответил вовремя\nОн может быть занят обновлением подписок: повторите позже",
+            ),
             Self::Api(message) => f.write_str(message),
-            Self::Protocol(message) => write!(f, "неожиданный ответ демона: {message}"),
-            Self::Io(error) => write!(f, "ошибка связи с демоном: {error}"),
+            Self::Protocol(detail) => write!(
+                f,
+                "raycat ответил непонятно\nВерсии программы и службы совпадают? Сравните raycat --version и journalctl -u raycat ({detail})"
+            ),
+            Self::Io(error) => write!(f, "ошибка связи с raycat: {error}"),
         }
     }
 }
@@ -157,9 +159,9 @@ impl Client {
         UnixStream::connect(&self.socket)
             .await
             .map_err(|error| match error.kind() {
-                io::ErrorKind::NotFound => ClientError::NotRunning(self.socket.clone()),
+                io::ErrorKind::NotFound => ClientError::NotRunning,
                 io::ErrorKind::ConnectionRefused => ClientError::Refused(self.socket.clone()),
-                io::ErrorKind::PermissionDenied => ClientError::Denied(self.socket.clone()),
+                io::ErrorKind::PermissionDenied => ClientError::Denied,
                 _ => ClientError::Io(error),
             })
     }
@@ -220,7 +222,7 @@ fn json_body<T: Serialize>(value: &T) -> Result<String, ClientError> {
 
 fn api_error(status: u16, data: &[u8]) -> ClientError {
     let message = serde_json::from_slice::<ErrorBody>(data).map_or_else(
-        |_| format!("демон ответил кодом {status}"),
+        |_| format!("raycat ответил кодом {status}"),
         |body| body.error,
     );
     ClientError::Api(sanitize(&message))
@@ -626,7 +628,7 @@ mod tests {
     async fn an_error_without_json_gets_a_generic_message() {
         let fake = fake(|_| reply("502 Bad Gateway", "<html>плохой шлюз</html>"));
         let error = fake.client().status().await.unwrap_err();
-        assert_eq!(error.to_string(), "демон ответил кодом 502");
+        assert_eq!(error.to_string(), "raycat ответил кодом 502");
     }
 
     #[tokio::test]
@@ -637,16 +639,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_missing_socket_means_the_daemon_is_not_running() {
+    async fn a_missing_socket_means_raycat_is_not_running() {
         let temp = TempDir::new("client-missing");
         let socket = temp.path().join("none.sock");
-        let error = Client::new(socket.clone()).status().await.unwrap_err();
-        assert!(matches!(error, ClientError::NotRunning(ref path) if *path == socket));
+        let error = Client::new(socket).status().await.unwrap_err();
+        assert!(matches!(error, ClientError::NotRunning), "{error:?}");
         let text = error.to_string();
-        assert!(
-            text.contains("не запущен") && text.contains("none.sock"),
-            "{text}"
-        );
+        assert!(text.starts_with("raycat не запущен\n"), "{text}");
+        assert!(text.contains("systemctl start raycat"), "{text}");
     }
 
     #[tokio::test]
@@ -656,7 +656,7 @@ mod tests {
         drop(StdListener::bind(&socket).unwrap());
         let error = Client::new(socket).status().await.unwrap_err();
         assert!(matches!(error, ClientError::Refused(_)), "{error:?}");
-        assert!(error.to_string().contains("никто не слушает"));
+        assert!(error.to_string().contains("никто не отвечает"));
     }
 
     #[tokio::test]
@@ -673,7 +673,7 @@ mod tests {
         let fake = fake(|_| Vec::new());
         let error = fake.client().status().await.unwrap_err();
         assert!(matches!(error, ClientError::Closed), "{error:?}");
-        assert!(error.to_string().contains("root"));
+        assert!(error.to_string().contains("закрыл соединение"));
     }
 
     #[tokio::test]
@@ -700,6 +700,18 @@ mod tests {
         let fake = fake_with_body("не json");
         let error = fake.client().status().await.unwrap_err();
         assert!(error.to_string().contains("не разобран"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_protocol_error_says_the_reply_is_unclear_first() {
+        let fake = fake(|_| vec![b"SSH-2.0-OpenSSH\r\n\r\n".to_vec()]);
+        let text = fake.client().status().await.unwrap_err().to_string();
+        assert_eq!(
+            text.lines().next(),
+            Some("raycat ответил непонятно"),
+            "{text}"
+        );
+        assert!(text.ends_with("(это не ответ HTTP)"), "{text}");
     }
 
     fn fake_with_body(body: &'static str) -> Fake {
@@ -775,17 +787,13 @@ mod tests {
     }
 
     #[test]
-    fn socket_path_is_shown_in_the_errors() {
+    fn the_refused_socket_path_is_shown_in_the_error() {
         let path = Path::new("/run/raycat/raycat.sock").to_path_buf();
         assert!(
-            ClientError::Denied(path.clone())
-                .to_string()
-                .contains("sudo")
-        );
-        assert!(
-            ClientError::NotRunning(path)
+            ClientError::Refused(path)
                 .to_string()
                 .contains("/run/raycat/raycat.sock")
         );
+        assert!(ClientError::Denied.to_string().contains("sudo"));
     }
 }

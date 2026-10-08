@@ -19,7 +19,7 @@ if health_output=$(docker run --rm "$image" health 2>&1); then
   exit 1
 fi
 echo "$health_output"
-grep -q 'демон не запущен' <<<"$health_output"
+grep -q 'raycat не запущен' <<<"$health_output"
 version_output=$(docker run --rm --entrypoint "$xray" "$image" version)
 echo "$version_output"
 if [ "${XRAY_BUILD:-}" = noaes ]; then
