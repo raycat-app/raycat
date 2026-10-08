@@ -2,10 +2,12 @@
 
 use std::path::PathBuf;
 
+use anyhow::{Result, bail};
 use clap::builder::styling::{AnsiColor, Effects, Styles};
+use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 
-const HELP_TEMPLATE: &str = "{about}\n\nИспользование: {usage}\n\n{all-args}";
+const HELP_TEMPLATE: &str = "{about}\n\nИспользование: {usage}\n\n{all-args}{after-help}";
 const OPTIONS: &str = "Параметры";
 const ARGUMENTS: &str = "Аргументы";
 
@@ -43,7 +45,6 @@ fn config_option() -> Arg {
         .long("config")
         .value_name("ПУТЬ")
         .value_parser(value_parser!(PathBuf))
-        .global(true)
         .help("Файл настроек (по умолчанию RAYCAT_CONFIG, иначе /etc/raycat/config.toml)")
         .help_heading(OPTIONS)
 }
@@ -52,7 +53,7 @@ fn json_flag() -> Arg {
     Arg::new("json")
         .long("json")
         .action(ArgAction::SetTrue)
-        .help("Вывести сырой JSON без цветов")
+        .help("Вывод в JSON для скриптов")
         .help_heading(OPTIONS)
 }
 
@@ -82,23 +83,29 @@ fn base_command() -> Command {
         .arg_required_else_help(true)
         .arg(help_flag())
         .arg(version_flag())
-        .arg(config_option())
-        .subcommand(subcommand(
-            "daemon",
-            "Работать в переднем плане: получать подписки и держать xray (точка входа службы и контейнера)",
-            "raycat daemon [ПАРАМЕТРЫ]",
-        ))
-        .subcommand(subcommand(
-            "check",
-            "Проверить настройки, собрать конфиг xray из кэша подписок и прогнать xray run -test",
-            "raycat check [ПАРАМЕТРЫ]",
-        ))
+        .subcommand(
+            subcommand(
+                "daemon",
+                "Работать в переднем плане: получать подписки и держать xray (точка входа службы и контейнера)",
+                "raycat daemon [ПАРАМЕТРЫ]",
+            )
+            .arg(config_option()),
+        )
+        .subcommand(
+            subcommand(
+                "check",
+                "Проверить настройки, собрать конфиг xray из кэша подписок и прогнать xray run -test",
+                "raycat check [ПАРАМЕТРЫ]",
+            )
+            .arg(config_option()),
+        )
         .subcommand(
             subcommand(
                 "fetch",
                 "Разово запросить подписку без применения: заголовки, сведения провайдера, узлы, проблемы",
                 "raycat fetch [ПАРАМЕТРЫ] <ПОДПИСКА>",
             )
+            .arg(config_option())
             .arg(
                 Arg::new("subscription")
                     .value_name("ПОДПИСКА")
@@ -107,11 +114,14 @@ fn base_command() -> Command {
                     .help_heading(ARGUMENTS),
             ),
         )
-        .subcommand(subcommand(
-            "identity",
-            "Показать эмулируемое устройство по каждой подписке: приложение, User-Agent, HWID, модель",
-            "raycat identity [ПАРАМЕТРЫ]",
-        ))
+        .subcommand(
+            subcommand(
+                "identity",
+                "Показать эмулируемое устройство по каждой подписке: приложение, User-Agent, HWID, модель",
+                "raycat identity [ПАРАМЕТРЫ]",
+            )
+            .arg(config_option()),
+        )
 }
 
 pub(crate) fn command() -> Command {
@@ -127,6 +137,7 @@ fn control_commands(command: Command) -> Command {
                 "Показать состояние демона: режим, xray, текущий узел, подписки",
                 "raycat status [ПАРАМЕТРЫ]",
             )
+            .after_help("Примеры:\n  raycat status\n  raycat status --json")
             .arg(json_flag()),
         )
         .subcommand(subcommand(
@@ -140,6 +151,7 @@ fn control_commands(command: Command) -> Command {
                 "Показать таблицу узлов: статус, задержка, трафик (по умолчанию живые и выбранный)",
                 "raycat nodes [ПАРАМЕТРЫ]",
             )
+            .after_help("Примеры:\n  raycat nodes\n  raycat nodes --all")
             .arg(
                 Arg::new("all")
                     .long("all")
@@ -154,6 +166,9 @@ fn control_commands(command: Command) -> Command {
                 "use",
                 "Закрепить узел вручную или вернуть автоматический выбор (raycat use auto)",
                 "raycat use [ПАРАМЕТРЫ] <УЗЕЛ>",
+            )
+            .after_help(
+                "Примеры:\n  raycat use Финляндия\n  raycat use основная/NL-1\n  raycat use auto",
             )
             .arg(
                 Arg::new("node")
@@ -170,6 +185,7 @@ fn control_commands(command: Command) -> Command {
                 "Обновить подписки прямо сейчас и показать результат",
                 "raycat update [ПАРАМЕТРЫ] [ПОДПИСКА]",
             )
+            .after_help("Примеры:\n  raycat update\n  raycat update основная")
             .arg(
                 Arg::new("subscription")
                     .value_name("ПОДПИСКА")
@@ -184,6 +200,7 @@ fn control_commands(command: Command) -> Command {
                 "Следить за событиями демона до Ctrl+C: смена узла, обновления подписок, предупреждения",
                 "raycat events [ПАРАМЕТРЫ]",
             )
+            .after_help("Примеры:\n  raycat events\n  raycat events --json")
             .arg(json_flag()),
         )
         .subcommand(subcommand(
@@ -202,6 +219,7 @@ fn control_commands(command: Command) -> Command {
                     .value_name("ОБОЛОЧКА")
                     .required(true)
                     .value_parser(["bash", "zsh", "fish"])
+                    .hide_possible_values(true)
                     .help("bash, zsh или fish")
                     .help_heading(ARGUMENTS),
             ),
@@ -214,21 +232,152 @@ fn control_commands(command: Command) -> Command {
             )
             .hide(true),
         )
+        .subcommand(
+            subcommand(
+                "help",
+                "Показать справку: общую или по одной команде",
+                "raycat help [КОМАНДА]",
+            )
+            .arg(
+                Arg::new("command")
+                    .value_name("КОМАНДА")
+                    .help("Команда, справку по которой показать")
+                    .help_heading(ARGUMENTS),
+            ),
+        )
 }
 
-/// Значение `--config` из подкоманды или из общих параметров.
-pub(crate) fn config_path<'a>(matches: &'a ArgMatches, sub: &'a ArgMatches) -> Option<&'a PathBuf> {
-    sub.try_get_one::<PathBuf>("config")
-        .ok()
-        .flatten()
-        .or_else(|| matches.try_get_one::<PathBuf>("config").ok().flatten())
+/// Значение `--config`; есть только у команд, которые читают настройки.
+pub(crate) fn config_path(sub: &ArgMatches) -> Option<&PathBuf> {
+    sub.try_get_one::<PathBuf>("config").ok().flatten()
+}
+
+/// `raycat help [команда]`: общая справка или справка по одной команде.
+pub(crate) fn show_help(sub: &ArgMatches) -> Result<()> {
+    let mut root = command();
+    match sub.get_one::<String>("command") {
+        None => root.print_help()?,
+        Some(name) => match root.find_subcommand_mut(name) {
+            Some(found) => found.print_help()?,
+            None => bail!("неизвестная команда «{name}»"),
+        },
+    }
+    Ok(())
+}
+
+/// Текст ошибки разбора по-русски. Справку, версию и редкие виды ошибок отдаёт clap (`None`).
+pub(crate) fn parse_error_text(error: &clap::Error, args: &[String]) -> Option<String> {
+    let problem = match error.kind() {
+        ErrorKind::InvalidSubcommand => {
+            let name = joined(error, ContextKind::InvalidSubcommand);
+            let similar = list(error, ContextKind::SuggestedSubcommand);
+            with_similar(format!("неизвестная команда «{name}»"), &similar)
+        }
+        ErrorKind::UnknownArgument => {
+            let arg = joined(error, ContextKind::InvalidArg);
+            if arg.starts_with('-') {
+                let similar = list(error, ContextKind::SuggestedArg);
+                with_similar(format!("неизвестный параметр «{arg}»"), &similar)
+            } else {
+                format!("лишний аргумент «{arg}»")
+            }
+        }
+        ErrorKind::TooManyValues => {
+            format!("лишний аргумент «{}»", joined(error, ContextKind::InvalidValue))
+        }
+        ErrorKind::InvalidValue => {
+            let arg = joined(error, ContextKind::InvalidArg);
+            let value = joined(error, ContextKind::InvalidValue);
+            let valid = list(error, ContextKind::ValidValue);
+            if value.is_empty() {
+                format!("не указано значение для «{arg}»")
+            } else if valid.is_empty() {
+                format!("недопустимое значение «{value}» для «{arg}»")
+            } else {
+                format!(
+                    "недопустимое значение «{value}» для «{arg}»: допустимо {}",
+                    join_alternatives(&valid)
+                )
+            }
+        }
+        ErrorKind::MissingRequiredArgument => {
+            let missing = list(error, ContextKind::InvalidArg);
+            let (verb, noun) = if missing.len() > 1 {
+                ("указаны", "обязательные аргументы")
+            } else {
+                ("указан", "обязательный аргумент")
+            };
+            format!("не {verb} {noun} {}", missing.join(", "))
+        }
+        ErrorKind::MissingSubcommand => "не указана команда".to_owned(),
+        _ => return None,
+    };
+    Some(format!("ошибка: {problem}\nСправка: {}", help_hint(args)))
+}
+
+fn with_similar(problem: String, similar: &[String]) -> String {
+    // clap отдаёт подсказки от менее похожих к более похожим.
+    match similar.last() {
+        Some(name) => format!("{problem}\n  может быть, «{name}»?"),
+        None => problem,
+    }
+}
+
+fn list(error: &clap::Error, kind: ContextKind) -> Vec<String> {
+    match error.get(kind) {
+        Some(ContextValue::String(text)) => vec![text.clone()],
+        Some(ContextValue::Strings(texts)) => texts.clone(),
+        _ => Vec::new(),
+    }
+}
+
+fn joined(error: &clap::Error, kind: ContextKind) -> String {
+    list(error, kind).join(", ")
+}
+
+/// `bash, zsh или fish`
+fn join_alternatives(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [only] => only.clone(),
+        [rest @ .., last] => format!("{} или {last}", rest.join(", ")),
+    }
+}
+
+fn help_hint(args: &[String]) -> String {
+    match command_from_args(args) {
+        Some(name) => format!("raycat {name} --help"),
+        None => "raycat --help".to_owned(),
+    }
+}
+
+/// Команда, к которой относится ошибка: первое слово, которое не параметр и не значение `--config`.
+fn command_from_args(args: &[String]) -> Option<String> {
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        if word == "--config" {
+            words.next();
+        } else if !word.starts_with('-') {
+            return command()
+                .get_subcommands()
+                .map(|sub| sub.get_name().to_owned())
+                .find(|name| name == word);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
-    use clap::error::ErrorKind;
-
     use super::*;
+
+    fn parse_error(args: &[&str]) -> String {
+        let error = command()
+            .try_get_matches_from(args.iter().copied())
+            .unwrap_err();
+        let words: Vec<String> = args.iter().skip(1).map(|word| (*word).to_owned()).collect();
+        parse_error_text(&error, &words).unwrap()
+    }
 
     #[test]
     fn cli_definition_is_consistent() {
@@ -332,22 +481,52 @@ mod tests {
     }
 
     #[test]
-    fn config_can_come_before_or_after_the_command() {
+    fn config_is_read_only_by_the_commands_that_load_settings() {
+        let root = command();
+        let takes_config = |name: &str| {
+            root.find_subcommand(name)
+                .unwrap()
+                .get_arguments()
+                .any(|arg| arg.get_long() == Some("config"))
+        };
+        for name in ["daemon", "check", "fetch", "identity"] {
+            assert!(takes_config(name), "{name}");
+        }
+        for name in [
+            "status", "health", "nodes", "use", "update", "events", "tui", "completions", "man",
+            "help",
+        ] {
+            assert!(!takes_config(name), "{name}");
+        }
+
         let after = command()
             .try_get_matches_from(["raycat", "daemon", "--config", "/a.toml"])
             .unwrap();
         let (_, sub) = after.subcommand().unwrap();
-        assert_eq!(config_path(&after, sub), Some(&PathBuf::from("/a.toml")));
-
-        let before = command()
-            .try_get_matches_from(["raycat", "--config", "/b.toml", "check"])
-            .unwrap();
-        let (_, sub) = before.subcommand().unwrap();
-        assert_eq!(config_path(&before, sub), Some(&PathBuf::from("/b.toml")));
+        assert_eq!(config_path(sub), Some(&PathBuf::from("/a.toml")));
 
         let none = command().try_get_matches_from(["raycat", "check"]).unwrap();
         let (_, sub) = none.subcommand().unwrap();
-        assert_eq!(config_path(&none, sub), None);
+        assert_eq!(config_path(sub), None);
+    }
+
+    #[test]
+    fn help_subcommand_takes_a_command_name() {
+        let matches = command()
+            .try_get_matches_from(["raycat", "help", "use"])
+            .unwrap();
+        let (name, sub) = matches.subcommand().unwrap();
+        assert_eq!(name, "help");
+        assert_eq!(
+            sub.get_one::<String>("command").map(String::as_str),
+            Some("use")
+        );
+
+        let matches = command()
+            .try_get_matches_from(["raycat", "help", "nope"])
+            .unwrap();
+        let (_, sub) = matches.subcommand().unwrap();
+        assert!(show_help(sub).is_err());
     }
 
     #[test]
@@ -364,6 +543,9 @@ mod tests {
             vec!["raycat", "nodes", "--all", "лишний"],
             vec!["raycat", "tui", "--nope"],
             vec!["raycat", "tui", "лишний"],
+            vec!["raycat", "status", "--config", "/x.toml"],
+            vec!["raycat", "tui", "--config", "/x.toml"],
+            vec!["raycat", "--config", "/b.toml", "check"],
         ] {
             assert!(command().try_get_matches_from(args).is_err());
         }
@@ -380,6 +562,7 @@ mod tests {
                 error.kind(),
                 ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
             ));
+            assert_eq!(parse_error_text(&error, &[]), None, "{flag}");
         }
         let error = command()
             .try_get_matches_from(["raycat", "daemon", "--help"])
@@ -406,6 +589,7 @@ mod tests {
             "events",
             "tui",
             "completions",
+            "help",
         ] {
             assert!(help.contains(word), "{word}: {help}");
         }
@@ -413,15 +597,74 @@ mod tests {
     }
 
     #[test]
-    fn the_version_starts_with_the_package_version() {
-        let version = command().render_version();
+    fn commands_with_examples_show_them() {
+        let mut root = command();
+        let help = root
+            .find_subcommand_mut("use")
+            .unwrap()
+            .render_help()
+            .to_string();
         assert!(
-            version.starts_with(&format!("raycat {}", env!("CARGO_PKG_VERSION"))),
-            "{version}"
+            help.contains(
+                "Примеры:\n  raycat use Финляндия\n  raycat use основная/NL-1\n  raycat use auto"
+            ),
+            "{help}"
+        );
+        for name in ["status", "nodes", "update", "events"] {
+            let help = root
+                .find_subcommand_mut(name)
+                .unwrap()
+                .render_help()
+                .to_string();
+            assert!(help.contains("Примеры:\n  raycat "), "{name}: {help}");
+        }
+    }
+
+    #[test]
+    fn option_and_shell_help_are_short() {
+        let mut root = command();
+        let status = root
+            .find_subcommand_mut("status")
+            .unwrap()
+            .render_help()
+            .to_string();
+        assert!(status.contains("Вывод в JSON для скриптов"), "{status}");
+        let completions = root
+            .find_subcommand_mut("completions")
+            .unwrap()
+            .render_help()
+            .to_string();
+        assert!(!completions.contains("possible values"), "{completions}");
+    }
+
+    #[test]
+    fn parse_errors_are_in_russian() {
+        assert_eq!(
+            parse_error(&["raycat", "completions", "powershell"]),
+            "ошибка: недопустимое значение «powershell» для «<ОБОЛОЧКА>»: допустимо bash, zsh или fish\nСправка: raycat completions --help"
         );
         assert_eq!(
-            version.trim_end(),
-            format!("raycat {}", env!("RAYCAT_VERSION"))
+            parse_error(&["raycat", "use"]),
+            "ошибка: не указан обязательный аргумент <УЗЕЛ>\nСправка: raycat use --help"
         );
+        assert_eq!(
+            parse_error(&["raycat", "health", "лишний"]),
+            "ошибка: лишний аргумент «лишний»\nСправка: raycat health --help"
+        );
+        assert_eq!(
+            parse_error(&["raycat", "statu"]),
+            "ошибка: неизвестная команда «statu»\n  может быть, «status»?\nСправка: raycat --help"
+        );
+
+        let json = parse_error(&["raycat", "health", "--json"]);
+        assert!(
+            json.starts_with("ошибка: неизвестный параметр «--json»"),
+            "{json}"
+        );
+        assert!(json.ends_with("\nСправка: raycat health --help"), "{json}");
+
+        let config = parse_error(&["raycat", "--config", "/b.toml", "check"]);
+        assert!(config.contains("неизвестный параметр «--config»"), "{config}");
+        assert!(config.ends_with("\nСправка: raycat check --help"), "{config}");
     }
 }

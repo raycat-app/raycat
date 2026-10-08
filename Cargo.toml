@@ -24,6 +24,7 @@ clap = { version = "4.6", default-features = false, features = [
   "error-context",
   "color",
   "wrap_help",
+  "suggestions",
 ] }
 clap_complete = { version = "4.6", default-features = false }
 clap_mangen = { version = "0.3", default-features = false }
