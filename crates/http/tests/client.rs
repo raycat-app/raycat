@@ -406,7 +406,7 @@ fn streams_pieces_and_stops_when_asked() {
         })
         .unwrap();
     assert_eq!(response.status, 200);
-    assert!(response.body.is_empty());
+    assert_eq!(response.body, Vec::<u8>::new());
     assert_eq!(all, b"hello world");
 
     let mut seen = 0;
