@@ -401,11 +401,10 @@ fn demo_app() -> App {
             },
         ),
         (
-            NOW - 2_100,
-            Event::NodeChanged {
-                from: Some("main/🇩🇪 Германия 1".to_owned()),
-                to: Some(SELECTED.to_owned()),
-                reason: "быстрее всех живых: 31 мс".to_owned(),
+            NOW - 2_400,
+            Event::SubscriptionUpdated {
+                subscription: "main".to_owned(),
+                nodes: 5,
             },
         ),
         (
@@ -415,17 +414,18 @@ fn demo_app() -> App {
             },
         ),
         (
-            NOW - 900,
-            Event::SubscriptionUpdated {
-                subscription: "main".to_owned(),
-                nodes: 5,
+            NOW - 1_499,
+            Event::NodeChanged {
+                from: Some("main/🇩🇪 Германия 1".to_owned()),
+                to: Some(SELECTED.to_owned()),
+                reason: "закреплён вручную: «🇳🇱 Нидерланды 2»".to_owned(),
             },
         ),
         (
             NOW - 240,
             Event::Warning {
                 level: "warn".to_owned(),
-                message: "трафик подписки «backup» превысил 80%".to_owned(),
+                message: "узлов, которые xray не поддерживает, пропущено: 1".to_owned(),
             },
         ),
     ];
