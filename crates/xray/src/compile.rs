@@ -27,6 +27,7 @@ const API_SERVICES: [&str; 4] = [
 ];
 
 const BALANCER_TAG: &str = "auto";
+const SPEEDTEST_TAG: &str = "speedtest-in";
 const FAKE_IP_POOL_SIZE: u32 = 65_535;
 
 /// Подписка: идентификатор и узлы. Порядок подписок в списке — их приоритет.
@@ -177,7 +178,7 @@ pub fn compile(
             }],
             "rules": rules(&settings.mode, &settings.rules),
         },
-        "inbounds": inbounds(&settings.mode, route_only(&settings.rules)),
+        "inbounds": inbound_list(settings),
         "outbounds": outbounds,
     });
 
@@ -284,6 +285,24 @@ fn route(field: &str, value: Value, action: Action) -> Value {
         Action::Proxy => rule["balancerTag"] = json!(BALANCER_TAG),
     }
     rule
+}
+
+fn inbound_list(settings: &Settings) -> Vec<Value> {
+    let mut list = inbounds(&settings.mode, route_only(&settings.rules));
+    list.extend(settings.speedtest_port.map(speedtest_inbound));
+    list
+}
+
+/// Служебный вход теста скорости: только петля и без пароля. Трафик от него уходит по тому же
+/// правилу по умолчанию, что и весь остальной, то есть на выбранный узел.
+fn speedtest_inbound(port: u16) -> Value {
+    json!({
+        "tag": SPEEDTEST_TAG,
+        "protocol": "mixed",
+        "listen": "127.0.0.1",
+        "port": port,
+        "settings": {"auth": "noauth"},
+    })
 }
 
 fn inbounds(mode: &Mode, by_domain: bool) -> Vec<Value> {

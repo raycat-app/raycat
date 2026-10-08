@@ -7,6 +7,8 @@ use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 
+use crate::speedtest;
+
 const HELP_TEMPLATE: &str = "{about}\n\nИспользование: {usage}\n\n{all-args}{after-help}";
 const OPTIONS: &str = "Параметры";
 const ARGUMENTS: &str = "Аргументы";
@@ -123,6 +125,48 @@ fn base_command() -> Command {
             .arg(config_option()),
         )
         .subcommand(init_command())
+}
+
+fn speedtest_command() -> Command {
+    subcommand(
+        "speedtest",
+        "Тест скорости через VPN: замеры через текущий узел или через узел из аргумента",
+        "raycat speedtest [ПАРАМЕТРЫ] [УЗЕЛ]",
+    )
+    .after_help(
+        "Примеры:\n  raycat speedtest\n  raycat speedtest Финляндия --streams 8\n  raycat speedtest --size 100MB --json",
+    )
+    .arg(
+        Arg::new("node")
+            .value_name("УЗЕЛ")
+            .help("Узел, как в raycat use: на время теста закрепляется; без него тест идёт через текущий")
+            .help_heading(ARGUMENTS),
+    )
+    .arg(
+        Arg::new("size")
+            .long("size")
+            .value_name("РАЗМЕР")
+            .value_parser(speedtest::parse_size)
+            .help("Объём замера: 25MB (по умолчанию) или 25MiB, от 1 МБ до 200 МБ")
+            .help_heading(OPTIONS),
+    )
+    .arg(
+        Arg::new("streams")
+            .long("streams")
+            .value_name("N")
+            .value_parser(value_parser!(u8).range(1..=8))
+            .help("Один замер с N потоками (1–8); без параметра — замеры с 1 и 4 потоками")
+            .help_heading(OPTIONS),
+    )
+    .arg(
+        Arg::new("url")
+            .long("url")
+            .value_name("АДРЕС")
+            .value_parser(speedtest::check_url)
+            .help("Свой адрес https вместо тестового сервера: качается до --size или до конца ответа")
+            .help_heading(OPTIONS),
+    )
+    .arg(json_flag())
 }
 
 fn init_command() -> Command {
@@ -280,6 +324,7 @@ fn client_commands(command: Command) -> Command {
             )
             .arg(json_flag()),
         )
+        .subcommand(speedtest_command())
         .subcommand(
             subcommand(
                 "events",
@@ -573,6 +618,50 @@ mod tests {
                 .map(String::as_str),
             Some("main")
         );
+    }
+
+    #[test]
+    fn speedtest_takes_its_arguments() {
+        let matches = command()
+            .try_get_matches_from([
+                "raycat",
+                "speedtest",
+                "Финляндия",
+                "--size",
+                "100MB",
+                "--streams",
+                "8",
+                "--url",
+                "https://speed.example.com/file.bin",
+                "--json",
+            ])
+            .unwrap();
+        let (name, sub) = matches.subcommand().unwrap();
+        assert_eq!(name, "speedtest");
+        assert_eq!(
+            sub.get_one::<String>("node").map(String::as_str),
+            Some("Финляндия")
+        );
+        assert_eq!(sub.get_one::<u64>("size"), Some(&100_000_000));
+        assert_eq!(sub.get_one::<u8>("streams"), Some(&8));
+        assert_eq!(
+            sub.get_one::<String>("url").map(String::as_str),
+            Some("https://speed.example.com/file.bin")
+        );
+        assert!(sub.get_flag("json"));
+    }
+
+    #[test]
+    fn speedtest_refuses_bad_arguments() {
+        for args in [
+            vec!["raycat", "speedtest", "--size", "10"],
+            vec!["raycat", "speedtest", "--size", "300MB"],
+            vec!["raycat", "speedtest", "--streams", "9"],
+            vec!["raycat", "speedtest", "--streams", "0"],
+            vec!["raycat", "speedtest", "--url", "http://example.com/file"],
+        ] {
+            assert!(command().try_get_matches_from(args).is_err());
+        }
     }
 
     #[test]

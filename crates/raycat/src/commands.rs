@@ -95,7 +95,13 @@ pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
         .map(|((subscription, nodes), routing)| (subscription, nodes.as_slice(), routing.as_ref()))
         .collect();
     let congestion = tuning::congestion(&config.xray.tcp_congestion);
-    let plan = plan::compile_config(config, &inputs, free_port()?, congestion.algorithm())?;
+    let plan = plan::compile_config(
+        config,
+        &inputs,
+        free_port()?,
+        free_port()?,
+        congestion.algorithm(),
+    )?;
     say!(
         "Конфиг xray собран: узлов {}, пропущено (xray не поддерживает): {}",
         plan.nodes,

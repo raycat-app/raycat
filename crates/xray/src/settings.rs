@@ -75,6 +75,9 @@ pub struct Settings {
     pub probe: ProbeSettings,
     /// Порт API xray; слушается только `127.0.0.1`.
     pub api_port: u16,
+    /// Порт служебного входа `speedtest-in` на `127.0.0.1` без пароля для теста скорости.
+    /// `None` — входа нет.
+    pub speedtest_port: Option<u16>,
     /// Алгоритм управления перегрузкой для TCP-соединений к узлам. Компилятор не
     /// проверяет, поддерживает ли его хост: это решает вызывающий.
     pub tcp_congestion: Option<String>,
@@ -134,6 +137,7 @@ impl Settings {
             dns: DnsSettings::default(),
             probe: ProbeSettings::default(),
             api_port,
+            speedtest_port: None,
             tcp_congestion: None,
             xhttp_connections: None,
             rules: Vec::new(),

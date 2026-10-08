@@ -2,18 +2,19 @@
 //! `update`, `events`. Настройки и каталог состояния им не нужны: только сокет.
 
 use std::fmt;
-use std::io::{self, Write as _};
+use std::io::{self, IsTerminal as _, Write as _};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use raycat_config::Env;
-use raycat_proto::{Node, NodeStatus};
+use raycat_proto::{Node, NodeStatus, SpeedtestRequest, SpeedtestResult};
 use serde::Serialize;
 
 use crate::client::Client;
 use crate::paths;
 use crate::render;
+use crate::speedtest;
 use crate::term::{Term, Tone};
 use crate::util::{local_zone, now_unix, sanitize};
 
@@ -154,6 +155,7 @@ async fn dispatch(
             let subscription = sub.get_one::<String>("subscription").map(String::as_str);
             update(client, term, json, subscription).await
         }
+        "speedtest" => speedtest_command(client, term, json, sub).await,
         "events" => events(client, term, json).await,
         other => bail!("неизвестная команда {other}"),
     }
@@ -289,6 +291,75 @@ fn not_updated(failed: usize, total: usize) -> String {
         "не {verb} {failed} {} из {total}",
         subscriptions_word(failed)
     )
+}
+
+/// `raycat speedtest`: тест скорости через VPN. Демон ведёт замеры, клиент ждёт результата
+/// и показывает ход, если вывод идёт в терминал.
+async fn speedtest_command(
+    client: &Client,
+    term: Term,
+    json: bool,
+    sub: &ArgMatches,
+) -> Result<()> {
+    let node = match sub.get_one::<String>("node") {
+        Some(query) => {
+            let nodes = client.nodes().await?;
+            let id = resolve(&nodes.nodes, query)?.id.clone();
+            if !json {
+                let _ = writeln!(
+                    io::stderr(),
+                    "На время теста весь трафик пойдёт через «{}»",
+                    sanitize(&id)
+                );
+            }
+            Some(id)
+        }
+        None => None,
+    };
+    let request = SpeedtestRequest {
+        node,
+        size: sub
+            .get_one::<u64>("size")
+            .copied()
+            .unwrap_or(speedtest::DEFAULT_SIZE),
+        streams: sub.get_one::<u8>("streams").copied(),
+        url: sub.get_one::<String>("url").cloned(),
+    };
+    let show_progress = !json && io::stderr().is_terminal();
+    let result = await_speedtest(client, &request, show_progress).await?;
+    if json {
+        out(&to_json(&result)?);
+    } else {
+        out(&render::speedtest(term, &result));
+    }
+    Ok(())
+}
+
+async fn await_speedtest(
+    client: &Client,
+    request: &SpeedtestRequest,
+    show_progress: bool,
+) -> Result<SpeedtestResult> {
+    let test = client.speedtest(request);
+    tokio::pin!(test);
+    let mut tick = tokio::time::interval(speedtest::PROGRESS_STEP);
+    loop {
+        tokio::select! {
+            result = &mut test => {
+                if show_progress {
+                    let _ = write!(io::stderr(), "\r\x1b[2K");
+                }
+                return Ok(result?);
+            }
+            _ = tick.tick(), if show_progress => {
+                if let Ok(Some(progress)) = client.speedtest_progress().await {
+                    let mut err = io::stderr().lock();
+                    let _ = write!(err, "\r\x1b[2K{}", render::speedtest_progress(&progress));
+                    let _ = err.flush();
+                }
+            }
+        }
+    }
 }
 
 async fn events(client: &Client, term: Term, json: bool) -> Result<()> {

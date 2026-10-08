@@ -3,6 +3,7 @@
 //! `spawn_blocking`.
 
 mod control;
+mod measure;
 mod report;
 
 use std::fs;
@@ -15,7 +16,7 @@ use anyhow::{Context, Result};
 use raycat_config::{Config, Mode, ProxyAuth, Subscription};
 use raycat_netfilter::Rules;
 use raycat_proto::{Event, Mode as ApiMode, Status, UpdateResult, Updates, XrayState, XrayStatus};
-use raycat_select::Selector;
+use raycat_select::{PinTarget, Selector};
 use raycat_subscription::{Routing, Usage, redact_in};
 use raycat_xray::Node;
 use raycat_xray_api::XrayApi;
@@ -102,6 +103,7 @@ async fn serve(config: Config, store: Store, socket: PathBuf) -> Result<()> {
         config,
         store,
         &machine_id,
+        free_port()?,
         free_port()?,
         Arc::clone(&shared),
     )?;
@@ -235,6 +237,10 @@ struct Daemon {
     config: Config,
     store: Store,
     api_port: u16,
+    /// Порт служебного входа xray для теста скорости.
+    speedtest_port: u16,
+    /// Тест скорости идёт: закрепление узла меняется только им и не записывается на диск.
+    speedtest_active: bool,
     subs: Vec<Sub>,
     process: Process,
     /// Конфиг, который записан для xray, и число узлов в нём.
@@ -279,15 +285,12 @@ impl Daemon {
         store: Store,
         machine_id: &str,
         api_port: u16,
+        speedtest_port: u16,
         shared: Arc<Shared>,
     ) -> Result<Self> {
         let now = Instant::now();
         let gateway = plan::gateway_rules(&config)?;
-        let pin = match store.load_pin() {
-            StoredPin::Node(id) => selection::parse_pin(&id),
-            StoredPin::Off => None,
-            StoredPin::Absent => selection::config_pin(&config),
-        };
+        let pin = stored_pin(&store, &config);
         let selector = Selector::new(selection::settings(&config, pin), Vec::new());
         let subs = config
             .subscriptions
@@ -321,6 +324,8 @@ impl Daemon {
             config,
             store,
             api_port,
+            speedtest_port,
+            speedtest_active: false,
             subs,
             process,
             applied: None,
@@ -402,6 +407,7 @@ impl Daemon {
             &self.config,
             &inputs,
             self.api_port,
+            self.speedtest_port,
             self.tcp_congestion.as_deref(),
         ) {
             Ok(plan) => plan,
@@ -688,6 +694,15 @@ impl Daemon {
     }
 }
 
+/// Закрепление из сохранённого файла; без него — из настроек.
+fn stored_pin(store: &Store, config: &Config) -> Option<PinTarget> {
+    match store.load_pin() {
+        StoredPin::Node(id) => selection::parse_pin(&id),
+        StoredPin::Off => None,
+        StoredPin::Absent => selection::config_pin(config),
+    }
+}
+
 /// Текст о профиле провайдера, если он появился или изменился с прошлого раза; иначе `None`.
 fn provider_news(
     last: &mut Option<u64>,
@@ -741,6 +756,7 @@ mod tests {
             store,
             "0d0af05ee8fd4dc29275718f2ce4dff1",
             10_085,
+            10_086,
             shared,
         )
         .unwrap()

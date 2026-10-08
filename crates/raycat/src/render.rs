@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use jiff::tz::TimeZone;
 use raycat_proto::{
-    CurrentNode, Event, Mode, Node, NodeStatus, Nodes, Status, SubscriptionStatus, Updates,
-    XrayState, XrayStatus,
+    CurrentNode, Event, Mode, Node, NodeStatus, Nodes, SpeedtestProgress, SpeedtestResult, Status,
+    SubscriptionStatus, Updates, XrayState, XrayStatus,
 };
 
 use crate::term::{Align, Cell, Column, Term, Tone, display_width, pad, table, truncate};
@@ -519,6 +519,71 @@ pub(crate) fn updates(term: Term, updates: &Updates) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Итог теста: строка узла, адрес, таблица замеров и подсказка.
+pub(crate) fn speedtest(term: Term, result: &SpeedtestResult) -> String {
+    let columns = [
+        Column {
+            title: "Поток(и)",
+            align: Align::Left,
+            shrink: 0,
+            min: 0,
+        },
+        Column {
+            title: "Скорость",
+            align: Align::Right,
+            shrink: 0,
+            min: 0,
+        },
+        Column {
+            title: "До первого байта",
+            align: Align::Right,
+            shrink: 0,
+            min: 0,
+        },
+        Column {
+            title: "Объём",
+            align: Align::Right,
+            shrink: 0,
+            min: 0,
+        },
+    ];
+    let rows: Vec<Vec<Cell>> = result
+        .runs
+        .iter()
+        .map(|run| {
+            vec![
+                Cell::new(run.streams.to_string(), Tone::Plain),
+                Cell::new(format!("{:.1} Мбит/с", run.mbps), Tone::Plain),
+                Cell::new(format!("{} мс", run.ttfb_ms), Tone::Plain),
+                Cell::new(format_bytes(run.bytes), Tone::Plain),
+            ]
+        })
+        .collect();
+    let mut lines = vec![
+        format!("Тест скорости через «{}»", sanitize(&result.node)),
+        format!("Сервер: {}", sanitize(&result.url)),
+        String::new(),
+        table(term, &columns, &rows),
+    ];
+    if let Some(hint) = &result.hint {
+        lines.push(String::new());
+        lines.push(term.paint(Tone::Yellow, hint));
+    }
+    lines.join("\n")
+}
+
+/// Ход теста для строки в терминале, пока идёт замер.
+pub(crate) fn speedtest_progress(progress: &SpeedtestProgress) -> String {
+    if progress.run == 0 {
+        "Подготовка: xray применяет выбранный узел…".to_owned()
+    } else {
+        format!(
+            "Замер {} из {}: {}% …",
+            progress.run, progress.runs, progress.percent
+        )
+    }
 }
 
 fn node_or_dash(node: Option<&str>) -> String {

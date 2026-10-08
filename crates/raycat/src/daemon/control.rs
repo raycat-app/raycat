@@ -36,12 +36,19 @@ impl Daemon {
                 subscription,
                 reply,
             } => self.start_update(subscription.as_deref(), reply),
+            Command::Speedtest { request, reply } => self.start_speedtest(request, reply),
+            Command::SpeedtestRestore { pin, ack } => self.finish_speedtest(pin, ack),
         }
     }
 
     /// Закрепляет узел «подписка/имя» или снимает закрепление. Выбор сохраняется в
     /// каталоге состояния и переживает перезапуск.
     pub(super) fn set_pin(&mut self, node: Option<&str>) -> Result<Pinned, Refusal> {
+        if self.speedtest_active {
+            return Err(Refusal::Unavailable(
+                "идёт тест скорости: закрепление можно изменить после него".to_owned(),
+            ));
+        }
         let target = match node {
             Some(text) => {
                 let target = selection::parse_pin(text).ok_or_else(|| {
@@ -186,6 +193,7 @@ impl Daemon {
         self.xray_api = None;
         self.pinned_in_xray = None;
         self.shared.set_xray(None);
+        self.shared.set_xray_pin(None);
     }
 
     async fn apply_decision(&mut self, api: &XrayApi, decision: Decision) {
@@ -217,6 +225,7 @@ impl Daemon {
                 if self.pinned_in_xray.as_deref() != Some(tag.as_str()) {
                     match api.pin(plan::BALANCER, &tag).await {
                         Ok(()) => {
+                            self.shared.set_xray_pin(Some(tag.clone()));
                             self.pinned_in_xray = Some(tag);
                             self.pin_problem.clear();
                         }
@@ -230,6 +239,7 @@ impl Daemon {
             }
             None => {
                 if self.pinned_in_xray.is_some() && api.unpin(plan::BALANCER).await.is_ok() {
+                    self.shared.set_xray_pin(None);
                     self.pinned_in_xray = None;
                 }
             }
