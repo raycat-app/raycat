@@ -133,12 +133,10 @@ mod tests {
     fn data_date_is_iso_date() {
         let date = data_date().unwrap();
         assert_eq!(date.len(), 10);
-        assert!(
-            date.bytes().enumerate().all(|(i, b)| match i {
-                4 | 7 => b == b'-',
-                _ => b.is_ascii_digit(),
-            })
-        );
+        assert!(date.bytes().enumerate().all(|(i, b)| match i {
+            4 | 7 => b == b'-',
+            _ => b.is_ascii_digit(),
+        }));
     }
 
     #[test]
