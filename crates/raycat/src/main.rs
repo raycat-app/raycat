@@ -33,8 +33,10 @@ use raycat_config::Config;
 use store::Store;
 
 fn main() -> ExitCode {
-    // Ошибки использования clap завершают процесс кодом 2, справка и версия — кодом 0.
-    let matches = cli::command().get_matches();
+    let matches = match cli::command().try_get_matches() {
+        Ok(matches) => matches,
+        Err(error) => return parse_failed(&error),
+    };
     let result = run(&matches);
     log::flush();
     match result {
@@ -43,6 +45,22 @@ fn main() -> ExitCode {
             let _ = writeln!(io::stderr(), "ошибка: {error:#}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Ошибки разбора аргументов выходят с кодом 2, как у clap. Частые виды печатаются по-русски,
+/// справка и версия (и редкие виды ошибок) остаются за clap.
+fn parse_failed(error: &clap::Error) -> ExitCode {
+    let args: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    match cli::parse_error_text(error, &args) {
+        Some(text) => {
+            let _ = writeln!(io::stderr(), "{text}");
+            ExitCode::from(2)
+        }
+        None => error.exit(),
     }
 }
 
@@ -55,10 +73,11 @@ fn run(matches: &ArgMatches) -> Result<()> {
         "tui" => return tui::run(&env),
         "completions" => return manual::completions(sub),
         "man" => return manual::man(),
+        "help" => return cli::show_help(sub),
         _ => {}
     }
     let file = paths::config_file(
-        cli::config_path(matches, sub).map(std::path::PathBuf::as_path),
+        cli::config_path(sub).map(std::path::PathBuf::as_path),
         &env,
         Path::exists,
     );
