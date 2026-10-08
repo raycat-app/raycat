@@ -91,7 +91,7 @@ fn initial_status(config: &Config) -> Status {
 async fn serve(config: Config, store: Store, socket: PathBuf) -> Result<()> {
     match (config.mode, &config.proxy_auth) {
         (Mode::Proxy { listen }, ProxyAuth::Off) if !listen.ip().is_loopback() => {
-            warn!("прокси {listen} открыт без пароля (mode.auth = \"off\")")
+            warn!("прокси {listen} открыт без пароля (mode.auth = \"off\")");
         }
         (Mode::Proxy { .. }, _) => {}
         (Mode::Gateway { .. }, _) => gateway::preflight()?,
