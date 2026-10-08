@@ -130,6 +130,11 @@ pub(crate) fn command() -> Command {
 
 /// Команды, которые работают с запущенным демоном, и служебные.
 fn control_commands(command: Command) -> Command {
+    utility_commands(client_commands(command))
+}
+
+/// Команды, которые работают с запущенным демоном.
+fn client_commands(command: Command) -> Command {
     command
         .subcommand(
             subcommand(
@@ -208,6 +213,11 @@ fn control_commands(command: Command) -> Command {
             "Полноэкранный интерфейс: состояние, узлы, журнал событий; закрепление узла и обновление подписок",
             "raycat tui [ПАРАМЕТРЫ]",
         ))
+}
+
+/// Автодополнение, man-страница и справка.
+fn utility_commands(command: Command) -> Command {
+    command
         .subcommand(
             subcommand(
                 "completions",
