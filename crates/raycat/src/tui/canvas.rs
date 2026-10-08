@@ -41,6 +41,14 @@ impl Palette {
             Tone::Red => self.tint(bold, Color::LightRed),
         }
     }
+
+    fn border(self) -> Style {
+        if self.color {
+            Style::new().fg(Color::DarkGray)
+        } else {
+            Style::new().add_modifier(Modifier::DIM)
+        }
+    }
 }
 
 /// Стиль выделенной строки: цвета тонов в ней не нужны, читаемость важнее.
@@ -67,9 +75,10 @@ impl Seg {
     }
 }
 
-/// Оставляет куски, которые помещаются в `width`: обязательные (приоритет 0) всегда,
-/// остальные по возрастанию приоритета, пока есть место. Порядок кусков сохраняется.
-pub(super) fn fit(segs: Vec<Seg>, width: usize) -> Vec<Seg> {
+/// Оставляет куски, которые помещаются в `width` с разделителем шириной `gap`:
+/// обязательные (приоритет 0) всегда, остальные по возрастанию приоритета, пока есть
+/// место. Порядок кусков сохраняется.
+pub(super) fn fit(segs: Vec<Seg>, width: usize, gap: usize) -> Vec<Seg> {
     let mut order: Vec<(u8, usize)> = segs
         .iter()
         .enumerate()
@@ -83,7 +92,7 @@ pub(super) fn fit(segs: Vec<Seg>, width: usize) -> Vec<Seg> {
         let Some(seg) = segs.get(index) else {
             continue;
         };
-        let need = display_width(&seg.text) + if count > 0 { GAP } else { 0 };
+        let need = display_width(&seg.text) + if count > 0 { gap } else { 0 };
         if priority > 0 && used + need > width {
             break;
         }
@@ -199,6 +208,67 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    fn chrome(&self) -> Style {
+        let style = self.palette.border();
+        if self.dim {
+            style.add_modifier(Modifier::DIM)
+        } else {
+            style
+        }
+    }
+
+    /// Прямоугольник внутри текущей области; размер обрезается по ней.
+    pub(super) fn sub(&mut self, x: usize, y: usize, width: usize, height: usize) -> Canvas<'_> {
+        let x = x.min(self.width);
+        let y = y.min(self.height);
+        let width = width.min(self.width - x);
+        let height = height.min(self.height - y);
+        let area = Rect::new(
+            self.area
+                .x
+                .saturating_add(u16::try_from(x).unwrap_or_default()),
+            self.area
+                .y
+                .saturating_add(u16::try_from(y).unwrap_or_default()),
+            u16::try_from(width).unwrap_or_default(),
+            u16::try_from(height).unwrap_or_default(),
+        );
+        Canvas {
+            buf: &mut *self.buf,
+            area,
+            width,
+            height,
+            palette: self.palette,
+            dim: self.dim,
+        }
+    }
+
+    /// Рамка на всю ширину строк `y..y + height` с заголовком в верхней линии. Возвращает
+    /// область внутри рамки с отступом в одну ячейку с каждой стороны.
+    pub(super) fn framed(&mut self, y: usize, height: usize, title: Vec<Seg>) -> Canvas<'_> {
+        let width = self.width;
+        if height >= 2 && width >= 8 {
+            let border = self.chrome();
+            let edge = "─".repeat(width - 2);
+            if title.is_empty() {
+                self.put_style(0, y, &format!("╭{edge}╮"), width, border);
+            } else {
+                self.put_style(0, y, "╭─", 2, border);
+                let end = self.chain(y, 3, " · ", title, width - 4);
+                self.put_style(end, y, " ", 1, border);
+                let fill = (width - 2).saturating_sub(end);
+                self.put_style(end + 1, y, &"─".repeat(fill), fill, border);
+                self.put_style(width - 1, y, "╮", 1, border);
+            }
+            for row in y + 1..y + height - 1 {
+                self.put_style(0, row, "│", 1, border);
+                self.put_style(width - 1, row, "│", 1, border);
+            }
+            self.put_style(0, y + height - 1, &format!("╰{edge}╯"), width, border);
+        }
+        self.sub(2, y + 1, width.saturating_sub(4), height.saturating_sub(2))
+    }
+
     pub(super) fn put_style(&mut self, x: usize, y: usize, text: &str, max: usize, style: Style) {
         if y >= self.height || x >= self.width || max == 0 {
             return;
@@ -229,13 +299,29 @@ impl<'a> Canvas<'a> {
 
     /// Строка из кусков с отступом; лишние куски убираются, последний обрезается.
     pub(super) fn line(&mut self, y: usize, indent: usize, segs: Vec<Seg>) {
-        let kept = fit(segs, self.width.saturating_sub(indent));
+        let gap = " ".repeat(GAP);
+        self.chain(y, indent, &gap, segs, self.width);
+    }
+
+    /// Куски через `sep` (рисуется тусклым) от `indent` до `max` не включительно.
+    /// Лишние куски убираются, последний обрезается. Возвращает x, где кончилась строка.
+    pub(super) fn chain(
+        &mut self,
+        y: usize,
+        indent: usize,
+        sep: &str,
+        segs: Vec<Seg>,
+        max: usize,
+    ) -> usize {
+        let limit = max.min(self.width);
+        let kept = fit(segs, limit.saturating_sub(indent), display_width(sep));
         let mut x = indent;
         for (index, seg) in kept.iter().enumerate() {
             if index > 0 {
-                x += GAP;
+                self.put(x, y, sep, limit.saturating_sub(x), Tone::Dim);
+                x += display_width(sep);
             }
-            let room = self.width.saturating_sub(x);
+            let room = limit.saturating_sub(x);
             if room == 0 {
                 break;
             }
@@ -243,6 +329,7 @@ impl<'a> Canvas<'a> {
             self.put(x, y, &text, room, seg.tone);
             x += display_width(&text);
         }
+        x.min(limit)
     }
 }
 
@@ -272,18 +359,68 @@ mod tests {
             seg("первое", 1),
             seg("третье", 3),
         ];
-        let all = fit(segs.clone(), 100);
+        let all = fit(segs.clone(), 100, GAP);
         assert_eq!(texts(&all), ["главное", "второе", "первое", "третье"]);
-        let some = fit(segs.clone(), 7 + 2 + 6);
+        let some = fit(segs.clone(), 7 + 2 + 6, GAP);
         assert_eq!(texts(&some), ["главное", "первое"]);
-        let must = fit(segs, 3);
+        let must = fit(segs, 3, GAP);
         assert_eq!(texts(&must), ["главное"]);
     }
 
     #[test]
     fn fit_stops_at_the_first_piece_that_does_not_fit() {
         let segs = vec![seg("а", 0), seg("длинный кусок", 1), seg("б", 2)];
-        assert_eq!(texts(&fit(segs, 6)), ["а"]);
+        assert_eq!(texts(&fit(segs, 6, GAP)), ["а"]);
+    }
+
+    #[test]
+    fn a_frame_puts_its_title_into_the_top_line() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 22, 3));
+        {
+            let mut canvas = Canvas::new(&mut buffer, Palette::new(false));
+            let title = vec![
+                Seg::new("Узлы", Tone::Bold, 0),
+                Seg::new("всего 3", Tone::Dim, 2),
+            ];
+            let mut inner = canvas.framed(0, 3, title);
+            inner.line(0, 0, vec![seg("ab", 0)]);
+        }
+        assert_eq!(row(&buffer, 0), "╭─ Узлы · всего 3 ───╮");
+        assert_eq!(row(&buffer, 1), format!("│ ab{}│", " ".repeat(17)));
+        assert_eq!(row(&buffer, 2), format!("╰{}╯", "─".repeat(20)));
+    }
+
+    #[test]
+    fn a_frame_without_a_title_is_a_plain_box() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 8, 3));
+        {
+            let mut canvas = Canvas::new(&mut buffer, Palette::new(false));
+            let _inner = canvas.framed(0, 3, Vec::new());
+        }
+        assert_eq!(row(&buffer, 0), "╭──────╮");
+        assert_eq!(row(&buffer, 1), "│      │");
+        assert_eq!(row(&buffer, 2), "╰──────╯");
+    }
+
+    #[test]
+    fn chain_joins_pieces_with_a_separator_and_reports_the_end() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 12, 1));
+        let mut canvas = Canvas::new(&mut buffer, Palette::new(false));
+        let end = canvas.chain(0, 0, " · ", vec![seg("a", 0), seg("bc", 0)], 12);
+        assert_eq!(end, 6);
+        assert_eq!(row(&buffer, 0), "a · bc      ");
+    }
+
+    #[test]
+    fn borders_are_grey_with_color_and_dim_without() {
+        assert_eq!(Palette::new(true).border().fg, Some(Color::DarkGray));
+        assert_eq!(Palette::new(false).border().fg, None);
+        assert!(
+            Palette::new(false)
+                .border()
+                .add_modifier
+                .contains(Modifier::DIM)
+        );
     }
 
     #[test]
