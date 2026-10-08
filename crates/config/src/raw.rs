@@ -38,7 +38,7 @@ pub(crate) struct Raw {
 
 #[derive(Default, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RawDevice {
     /// Слово, по которому провайдер узнаёт устройство на любом сервере. Не задано: raycat создаёт машинный идентификатор сам. Непустая строка до 256 символов; нельзя вместе с `machine_id`.
     pub(crate) seed: Option<String>,
@@ -58,7 +58,7 @@ pub(crate) struct RawDevice {
 
 #[derive(Default, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RawSubscription {
     /// Имя подписки для команд и `selection.pin`: от 1 до 64 символов, без `/` и управляющих символов. Имена не повторяются. Обязательно.
     pub(crate) name: Option<String>,
@@ -79,16 +79,19 @@ pub(crate) struct RawSubscription {
     /// Как часто обновлять подписку, например `12h`: от `10m` до `30d`. Не задано: интервал из ответа провайдера, а если его нет, `12h`.
     pub(crate) update_interval: Option<String>,
     /// Белый список масок имён узлов: `*` — любое число символов, `?` — один символ, регистр не важен. Пусто — все узлы. До 256 масок.
+    #[serde(default)]
     pub(crate) allow: Vec<String>,
     /// Чёрный список масок: узлы, подходящие под маску, не используются. До 256 масок.
+    #[serde(default)]
     pub(crate) deny: Vec<String>,
     /// Предпочтительные маски узлов по порядку: чем раньше маска, тем выше приоритет. До 256 масок.
+    #[serde(default)]
     pub(crate) priority: Vec<String>,
 }
 
 #[derive(Default, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RawSelection {
     /// Адрес для проверки доступности узлов: `https://` или `http://`. По умолчанию `https://www.gstatic.com/generate_204`.
     pub(crate) check_url: Option<String>,
@@ -107,7 +110,7 @@ pub(crate) struct RawSelection {
 
 #[derive(Default, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RawMode {
     /// Режим работы: `proxy` — прокси для программ на сервере, `gateway` — шлюз, через который идёт весь трафик сервера. По умолчанию `proxy`.
     #[cfg_attr(feature = "schema", schemars(extend("enum" = ["proxy", "gateway"])))]
@@ -129,7 +132,7 @@ pub(crate) struct RawMode {
 
 #[derive(Default, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RawDns {
     /// IP-адреса DNS-серверов: от 1 до 8. По умолчанию `1.1.1.1` и `8.8.8.8`.
     pub(crate) resolvers: Option<Vec<String>>,
@@ -137,7 +140,7 @@ pub(crate) struct RawDns {
 
 #[derive(Default, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RawRouting {
     /// Применять маршрутизацию, которую присылает провайдер. По умолчанию `false`.
     pub(crate) provider: Option<bool>,
@@ -145,7 +148,7 @@ pub(crate) struct RawRouting {
 
 #[derive(Default, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RawXray {
     /// Путь к исполняемому файлу xray. По умолчанию `/usr/libexec/raycat/xray`.
     pub(crate) path: Option<String>,
@@ -161,7 +164,7 @@ pub(crate) struct RawXray {
 
 #[derive(Default, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RawLog {
     /// Уровень журнала: `error`, `warn`, `info` или `debug`. По умолчанию `info`.
     #[cfg_attr(feature = "schema", schemars(extend("enum" = ["error", "warn", "info", "debug"])))]
