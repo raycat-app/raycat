@@ -80,6 +80,30 @@ fn traffic(term: Term, used: u64, total: Option<u64>) -> String {
     term.paint(tone, &text)
 }
 
+/// Скорость в битах в секунду с одной цифрой после точки. Единица — самая крупная,
+/// в которой значение не меньше 0.1: 300 000 бит/с — `0.3 Мбит/с`.
+pub(crate) fn speed_text(bits_per_sec: u64) -> String {
+    if bits_per_sec == 0 {
+        return "0".to_owned();
+    }
+    let (divisor, unit): (u128, &str) = if bits_per_sec >= 100_000_000 {
+        (1_000_000_000, "Гбит/с")
+    } else if bits_per_sec >= 100_000 {
+        (1_000_000, "Мбит/с")
+    } else if bits_per_sec >= 100 {
+        (1_000, "Кбит/с")
+    } else {
+        (1, "бит/с")
+    };
+    let tenths = (u128::from(bits_per_sec) * 10 + divisor / 2) / divisor;
+    format!("{}.{} {unit}", tenths / 10, tenths % 10)
+}
+
+/// Приём и отдача в шапке и таблице: `↓ 5.2 Мбит/с ↑ 0.3 Мбит/с`.
+pub(crate) fn speed_line(down: u64, up: u64) -> String {
+    format!("↓ {} ↑ {}", speed_text(down), speed_text(up))
+}
+
 pub(crate) fn expiry_text(expire: u64, now: u64, zone: &TimeZone) -> (String, Tone) {
     if expire == 0 {
         return ("бессрочно".to_owned(), Tone::Plain);
@@ -752,6 +776,21 @@ mod tests {
         assert_eq!(ago(NOW, NOW - 5 * DAY - 3 * 3_600), "5 дн 3 ч назад");
         assert_eq!(ahead(NOW, NOW + 7_200), "через 2 ч");
         assert_eq!(ahead(NOW, NOW - 1), "скоро");
+    }
+
+    #[test]
+    fn speed_is_written_in_the_largest_unit_from_a_tenth() {
+        assert_eq!(speed_text(0), "0");
+        assert_eq!(speed_text(1), "1.0 бит/с");
+        assert_eq!(speed_text(99), "99.0 бит/с");
+        assert_eq!(speed_text(100), "0.1 Кбит/с");
+        assert_eq!(speed_text(99_900), "99.9 Кбит/с");
+        assert_eq!(speed_text(300_000), "0.3 Мбит/с");
+        assert_eq!(speed_text(5_200_000), "5.2 Мбит/с");
+        assert_eq!(speed_text(5_250_000), "5.3 Мбит/с");
+        assert_eq!(speed_text(1_500_000_000), "1.5 Гбит/с");
+        assert_eq!(speed_line(0, 0), "↓ 0 ↑ 0");
+        assert_eq!(speed_line(5_200_000, 300_000), "↓ 5.2 Мбит/с ↑ 0.3 Мбит/с");
     }
 
     #[test]
