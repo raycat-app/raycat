@@ -330,14 +330,6 @@ pub(crate) fn node_marker(node: &Node) -> (&'static str, Tone) {
     }
 }
 
-pub(crate) fn node_status(status: NodeStatus) -> (&'static str, Tone) {
-    match status {
-        NodeStatus::Alive => ("жив", Tone::Green),
-        NodeStatus::Dead => ("не отвечает", Tone::Red),
-        NodeStatus::Unknown => ("не проверен", Tone::Dim),
-    }
-}
-
 pub(crate) fn latency_text(latency_ms: Option<u64>) -> String {
     latency_ms.map_or_else(|| "—".to_owned(), |ms| format!("{ms} мс"))
 }
