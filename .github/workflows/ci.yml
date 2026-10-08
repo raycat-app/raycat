@@ -303,7 +303,7 @@ jobs:
   # main, а сборки main идут профилем release и кэш ci не создают.
   warm-ci:
     name: Кэш сборки ${{ matrix.target }}
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     permissions:
