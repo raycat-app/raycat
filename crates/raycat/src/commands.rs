@@ -45,16 +45,8 @@ pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
     if let Some(lan) = rules.as_ref().and_then(|rules| rules.lan.as_ref()) {
         say!("{}", plan::describe_lan(lan));
     }
-    say!(
-        "{}",
-        routing_line(
-            &config.routing,
-            raycat_routing::ru_zones().len(),
-            raycat_routing::ru_ipv4().count(),
-            raycat_routing::data_date(),
-        )
-    );
     let mut cached: Vec<Vec<Node>> = Vec::new();
+    let mut answers: Vec<Option<raycat_subscription::Routing>> = Vec::new();
     for subscription in &config.subscriptions {
         let source = Source::new(config, subscription, &machine_id)?;
         let name = &subscription.name;
@@ -65,19 +57,40 @@ pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
                 found.nodes.len()
             );
             cached.push(found.nodes);
+            answers.push(found.info.routing);
         } else {
             say!("Подписка «{name}»: кэша нет");
             cached.push(Vec::new());
+            answers.push(None);
         }
     }
+    let provider = plan::provider_profile(config, answers.iter().map(Option::as_ref))
+        .map(plan::translate);
+    let provider_text = config.routing.provider.then(|| match &provider {
+        Some((provider, _)) => plan::provider_summary(provider),
+        None => "провайдер: профиля нет".to_owned(),
+    });
+    say!(
+        "{}",
+        routing_line(
+            &config.routing,
+            raycat_routing::ru_zones().len(),
+            raycat_routing::ru_ipv4().count(),
+            raycat_routing::data_date(),
+            provider_text.as_deref(),
+        )
+    );
     if cached.iter().all(Vec::is_empty) {
         bail!("кэша подписок нет: запустите демон (raycat daemon), он получит подписки");
     }
-    let inputs: Vec<(&Subscription, &[Node])> = config
+    let inputs: Vec<(&Subscription, &[Node], Option<&raycat_subscription::Routing>)> = config
         .subscriptions
         .iter()
         .zip(&cached)
-        .map(|(subscription, nodes)| (subscription, nodes.as_slice()))
+        .zip(&answers)
+        .map(|((subscription, nodes), routing)| {
+            (subscription, nodes.as_slice(), routing.as_ref())
+        })
         .collect();
     let congestion = tuning::congestion(&config.xray.tcp_congestion);
     let plan = plan::compile_config(config, &inputs, free_port()?, congestion.algorithm())?;
@@ -98,8 +111,14 @@ pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
     Ok(())
 }
 
-/// Итог маршрутизации: пресет «Россия напрямую» и число своих правил.
-fn routing_line(routing: &Routing, zones: usize, subnets: usize, date: Option<&str>) -> String {
+/// Итог маршрутизации: пресет «Россия напрямую», свои правила и профиль провайдера.
+fn routing_line(
+    routing: &Routing,
+    zones: usize,
+    subnets: usize,
+    date: Option<&str>,
+    provider: Option<&str>,
+) -> String {
     let mut parts = Vec::new();
     if routing.ru_direct {
         let stamp = date.map_or_else(String::new, |date| format!(", данные от {}", ru_date(date)));
@@ -109,6 +128,9 @@ fn routing_line(routing: &Routing, zones: usize, subnets: usize, date: Option<&s
     }
     if !routing.rules.is_empty() {
         parts.push(format!("своих правил {}", routing.rules.len()));
+    }
+    if let Some(provider) = provider {
+        parts.push(provider.to_owned());
     }
     if parts.is_empty() {
         "Маршрутизация: всё через VPN".to_owned()
@@ -401,23 +423,46 @@ mod tests {
         };
         let stamp = Some("2026-10-07");
         assert_eq!(
-            routing_line(&routing, 8, 8655, stamp),
+            routing_line(&routing, 8, 8655, stamp, None),
             "Маршрутизация: всё через VPN"
         );
         routing.rules = vec![rule(), rule(), rule()];
         assert_eq!(
-            routing_line(&routing, 8, 8655, stamp),
+            routing_line(&routing, 8, 8655, stamp, None),
             "Маршрутизация: своих правил 3"
         );
         routing.ru_direct = true;
         assert_eq!(
-            routing_line(&routing, 8, 8655, stamp),
+            routing_line(&routing, 8, 8655, stamp, None),
             "Маршрутизация: Россия напрямую (зон 8, подсетей 8655, данные от 07.10.2026); своих правил 3"
         );
         routing.rules.clear();
         assert_eq!(
-            routing_line(&routing, 8, 8655, None),
+            routing_line(&routing, 8, 8655, None, None),
             "Маршрутизация: Россия напрямую (зон 8, подсетей 8655)"
+        );
+    }
+
+    #[test]
+    fn routing_line_names_the_provider_profile() {
+        let routing = Routing {
+            provider: true,
+            ru_direct: false,
+            rules: Vec::new(),
+        };
+        assert_eq!(
+            routing_line(
+                &routing,
+                8,
+                8655,
+                None,
+                Some("провайдер: «Тест», правил 3, пропущено 1")
+            ),
+            "Маршрутизация: провайдер: «Тест», правил 3, пропущено 1"
+        );
+        assert_eq!(
+            routing_line(&routing, 8, 8655, None, Some("провайдер: профиля нет")),
+            "Маршрутизация: провайдер: профиля нет"
         );
     }
 

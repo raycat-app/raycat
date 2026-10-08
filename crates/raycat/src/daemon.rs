@@ -16,7 +16,7 @@ use raycat_config::{Config, Mode, ProxyAuth, Subscription};
 use raycat_netfilter::Rules;
 use raycat_proto::{Event, Mode as ApiMode, Status, UpdateResult, Updates, XrayState, XrayStatus};
 use raycat_select::Selector;
-use raycat_subscription::{Usage, redact_in};
+use raycat_subscription::{Routing, Usage, redact_in};
 use raycat_xray::Node;
 use raycat_xray_api::XrayApi;
 use tokio::signal::unix::{SignalKind, signal};
@@ -210,6 +210,8 @@ struct Sub {
     /// Сведения провайдера для `GET /v1/status`.
     title: Option<String>,
     usage: Option<Usage>,
+    /// Профиль маршрутизации из последнего рабочего ответа: из него собирается конфиг.
+    routing: Option<Routing>,
     updated_at: Option<u64>,
     next_update: Option<u64>,
     last_error: Option<String>,
@@ -261,6 +263,8 @@ struct Daemon {
     next_select: Instant,
     last_reason: Option<String>,
     pending_updates: Vec<PendingUpdate>,
+    /// Отпечаток последнего применённого профиля провайдера: в журнал идёт только при изменении.
+    provider_digest: Option<u64>,
     /// Повторяющиеся предупреждения: каждое пишется при появлении или смене текста.
     plan_problem: Latch,
     api_problem: Latch,
@@ -301,6 +305,7 @@ impl Daemon {
                     first_done: false,
                     title: None,
                     usage: None,
+                    routing: None,
                     updated_at: None,
                     next_update: None,
                     last_error: None,
@@ -337,6 +342,7 @@ impl Daemon {
             next_select: now,
             last_reason: None,
             pending_updates: Vec::new(),
+            provider_digest: None,
             plan_problem: Latch::default(),
             api_problem: Latch::default(),
             pin_problem: Latch::default(),
@@ -360,6 +366,7 @@ impl Daemon {
                 sub.nodes = cached.nodes;
                 sub.title = cached.info.title;
                 sub.usage = cached.info.usage;
+                sub.routing = cached.info.routing;
                 sub.updated_at = Some(cached.fetched_at);
             } else {
                 info!("подписка «{name}»: кэша нет, получаю с сервера");
@@ -380,10 +387,16 @@ impl Daemon {
     /// Собирает конфиг из текущих узлов; если он изменился, записывает его и
     /// планирует перезапуск xray.
     fn reconcile(&mut self) {
-        let inputs: Vec<(&Subscription, &[Node])> = self
+        let inputs: Vec<(&Subscription, &[Node], Option<&Routing>)> = self
             .subs
             .iter()
-            .map(|sub| (sub.source.config(), sub.nodes.as_slice()))
+            .map(|sub| {
+                (
+                    sub.source.config(),
+                    sub.nodes.as_slice(),
+                    sub.routing.as_ref(),
+                )
+            })
             .collect();
         let plan = match plan::compile_config(
             &self.config,
@@ -399,6 +412,13 @@ impl Daemon {
             }
         };
         self.plan_problem.clear();
+        if let Some(text) = provider_news(&mut self.provider_digest, plan.provider.as_ref()) {
+            if plan.provider.as_ref().is_some_and(|provider| provider.skipped.is_empty()) {
+                info!("{text}");
+            } else {
+                warn!("{text}");
+            }
+        }
         if plan.quic && !self.udp_buffers_checked {
             self.udp_buffers_checked = true;
             if let Some(message) = tuning::udp_buffers_warning() {
@@ -615,6 +635,7 @@ impl Daemon {
                 sub.updated_at = Some(now_unix());
                 sub.title.clone_from(&analysis.info.title);
                 sub.usage.clone_from(&analysis.info.usage);
+                sub.routing.clone_from(&analysis.info.routing);
                 let url = sub.source.config().url.expose();
                 let summary = redact_in(
                     &updater::summary(&analysis.info, analysis.nodes.len(), local_zone()),
@@ -663,9 +684,24 @@ impl Daemon {
     }
 }
 
+/// Текст о профиле провайдера, если он появился или изменился с прошлого раза; иначе `None`.
+fn provider_news(
+    last: &mut Option<u64>,
+    provider: Option<&plan::ProviderRouting>,
+) -> Option<String> {
+    let digest = provider.map(|provider| provider.digest);
+    if digest == *last {
+        return None;
+    }
+    *last = digest;
+    provider.map(plan::provider_note)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fmt::Write as _;
+
+    use raycat_subscription::RoutingProfile;
 
     use raycat_config::Env;
     use raycat_select::Health;
@@ -1083,5 +1119,29 @@ mod tests {
                 error: "нет связи".to_owned()
             }
         );
+    }
+
+    fn provider(site: &str) -> plan::ProviderRouting {
+        let profile = RoutingProfile {
+            name: "Тест".to_owned(),
+            direct_sites: vec![site.to_owned()],
+            ..RoutingProfile::default()
+        };
+        plan::translate(&profile).0
+    }
+
+    #[test]
+    fn a_provider_profile_is_announced_when_it_appears_or_changes() {
+        let mut last = None;
+        let first = provider("example.ru");
+        assert!(provider_news(&mut last, Some(&first)).is_some());
+        assert_eq!(provider_news(&mut last, Some(&first)), None);
+
+        let same_counts = provider("example.org");
+        assert!(provider_news(&mut last, Some(&same_counts)).is_some());
+        assert_eq!(provider_news(&mut last, Some(&same_counts)), None);
+
+        assert_eq!(provider_news(&mut last, None), None);
+        assert!(provider_news(&mut last, Some(&first)).is_some());
     }
 }

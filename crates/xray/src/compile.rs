@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use crate::nodes::compile_node;
 use crate::tuning::{self, Tuning};
-use crate::{Action, Domain, Mode, Node, Rule, Settings, Subnet};
+use crate::{Action, Domain, DomainKind, Mode, Node, Rule, Settings, Subnet};
 
 const PRIVATE_NETWORKS: [&str; 7] = [
     "10.0.0.0/8",
@@ -234,7 +234,11 @@ fn route_only(rules: &[Rule]) -> bool {
 }
 
 fn domain_text(domain: &Domain) -> String {
-    let kind = if domain.subdomains { "domain" } else { "full" };
+    let kind = match domain.kind {
+        DomainKind::Full => "full",
+        DomainKind::Subdomains => "domain",
+        DomainKind::Keyword => "keyword",
+    };
     format!("{kind}:{}", domain.name)
 }
 
