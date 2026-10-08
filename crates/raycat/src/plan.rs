@@ -1,9 +1,9 @@
 //! Узлы подписок и настройки → конфиг xray.
 
 use anyhow::{Context, Result};
-use raycat_config::{Config, Mode, Subscription};
+use raycat_config::{Config, Mode, ProxyAuth, Subscription};
 use raycat_netfilter::{DEFAULT_OWN_MARK, Lan, Rules};
-use raycat_xray::{Node, Settings, TagTable, compile};
+use raycat_xray::{Credentials, Node, Settings, TagTable, compile};
 
 /// Правила перехвата для режима шлюза; `None` в режиме прокси. Для шлюза локальной
 /// сети здесь определяются интерфейс и подсети, которых нет в настройках.
@@ -35,7 +35,10 @@ pub(crate) fn gateway_rules(config: &Config) -> Result<Option<Rules>> {
 /// Режим для строки лога и вывода `check`.
 pub(crate) fn describe_mode(config: &Config) -> String {
     match config.mode {
-        Mode::Proxy { listen } => format!("режим прокси, адрес {listen}"),
+        Mode::Proxy { listen } => format!(
+            "режим прокси, адрес {listen}{}",
+            proxy_auth_note(&config.proxy_auth)
+        ),
         Mode::Gateway { kill_switch, lan } => format!(
             "режим шлюза, kill switch {}{}",
             if kill_switch {
@@ -71,9 +74,30 @@ pub(crate) fn own_mark(config: &Config) -> Option<u32> {
     }
 }
 
+fn proxy_auth_note(auth: &ProxyAuth) -> &'static str {
+    match auth {
+        ProxyAuth::NotSet => "",
+        ProxyAuth::Off => ", без пароля",
+        ProxyAuth::Password { .. } => ", вход по логину и паролю",
+    }
+}
+
+fn credentials(auth: &ProxyAuth) -> Option<Credentials> {
+    match auth {
+        ProxyAuth::Password { user, password } => Some(Credentials {
+            user: user.clone(),
+            password: password.expose().to_owned(),
+        }),
+        ProxyAuth::NotSet | ProxyAuth::Off => None,
+    }
+}
+
 fn xray_mode(config: &Config) -> raycat_xray::Mode {
     match config.mode {
-        Mode::Proxy { listen } => raycat_xray::Mode::Proxy { listen },
+        Mode::Proxy { listen } => raycat_xray::Mode::Proxy {
+            listen,
+            auth: credentials(&config.proxy_auth),
+        },
         Mode::Gateway { .. } => {
             let rules = Rules::default();
             raycat_xray::Mode::Gateway {
@@ -198,6 +222,26 @@ mod tests {
         assert_eq!(describe_mode(&gateway), "режим шлюза, kill switch включён");
         let open = config("type = \"gateway\"\nkill_switch = false", "");
         assert_eq!(describe_mode(&open), "режим шлюза, kill switch выключен");
+    }
+
+    #[test]
+    fn the_proxy_password_reaches_xray_but_not_the_description() {
+        let config = config(
+            "type = \"proxy\"\nlisten = \"127.0.0.1:7891\"\nauth = \"alice:s3cret-pass\"",
+            "",
+        );
+        let description = describe_mode(&config);
+        assert_eq!(
+            description,
+            "режим прокси, адрес 127.0.0.1:7891, вход по логину и паролю"
+        );
+        let plan = plan(&config, &nodes()).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&plan.json).unwrap();
+        assert_eq!(json["inbounds"][0]["settings"]["auth"], "password");
+        assert_eq!(
+            json["inbounds"][0]["settings"]["accounts"],
+            serde_json::json!([{"user": "alice", "pass": "s3cret-pass"}])
+        );
     }
 
     #[test]

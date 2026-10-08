@@ -38,6 +38,8 @@ pub struct Config {
     pub selection: Selection,
     pub mode: Mode,
     pub lan: Lan,
+    /// Вход в прокси; в режиме gateway не задан.
+    pub proxy_auth: ProxyAuth,
     pub dns: Dns,
     pub routing: Routing,
     pub xray: Xray,
@@ -148,6 +150,17 @@ pub struct Lan {
     pub interface: Option<String>,
     /// Подсети устройств (IPv4); пусто — подсети интерфейса.
     pub subnets: Vec<Cidr>,
+}
+
+/// Вход в прокси, который задаёт `[mode] auth` или `auth_file`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ProxyAuth {
+    /// Ключи не заданы: прокси без пароля, только на петлевом адресе.
+    #[default]
+    NotSet,
+    /// `auth = "off"`: без пароля и на нелокальном адресе.
+    Off,
+    Password { user: String, password: Secret },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

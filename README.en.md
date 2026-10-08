@@ -120,15 +120,70 @@ sudo raycat status
 
 ### Proxy for apps
 
-In `proxy` mode (the default) raycat listens on `127.0.0.1:7890` and accepts HTTP and SOCKS5
-without a password. Set up the subscription as in the example above, but without the `[mode]`
-block, and start the service (`sudo systemctl start raycat`) or `raycat daemon`. Then point the
-program at the proxy:
+In `proxy` mode (the default) raycat listens on `127.0.0.1:7890` and accepts HTTP and SOCKS5.
+No password is needed on this server. To let others in, set a login and a password (see below).
+Set up the subscription as in the example above, but without the `[mode]` block, and start the
+service (`sudo systemctl start raycat`) or `raycat daemon`. Then point the program at the proxy:
 
 ```sh
 curl -x socks5h://127.0.0.1:7890 https://example.com
 export HTTPS_PROXY=http://127.0.0.1:7890   # for programs that read environment variables
 ```
+
+#### Proxy with a password
+
+To let others (containers, computers on the network) use the proxy, set a login and a password
+in `[mode]`:
+
+```toml
+[mode]
+listen = "0.0.0.0:7890"
+auth_file = "/run/secrets/raycat_proxy"   # or auth = "login:password"
+```
+
+The file holds one line `login:password`; spaces and line breaks at the edges do not matter, and
+the size is at most 1 KiB. The login is up to 128 characters, the password 8 to 128 characters,
+with no control characters. Set only one of the keys: `auth` or `auth_file`. Variables:
+`RAYCAT_PROXY_AUTH`, `RAYCAT_PROXY_AUTH_FILE`. The password works for both HTTP and SOCKS5:
+
+```sh
+curl -x http://login:password@192.168.1.10:7890 https://example.com
+curl -x socks5h://login:password@192.168.1.10:7890 https://example.com
+```
+
+Docker example: raycat serves the proxy to other containers of the compose network. The password
+lies in a secret, and both the gateway and the app read it. The permissions of the secret file are
+the same as for `config.toml` in the container (see "Permissions of the settings file" in the Docker section):
+
+```yaml
+# compose.yml
+services:
+  raycat:
+    image: ghcr.io/raycat-app/raycat
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ./config.toml:/etc/raycat/config.toml:ro
+      - raycat-state:/var/lib/raycat
+    secrets: [raycat_proxy]
+
+  app:
+    image: your-app
+    secrets: [raycat_proxy]
+    depends_on: [raycat]
+    # Proxy: http://raycat:7890 with the login and the password from the secret, for example:
+    # sh -c 'export HTTPS_PROXY="http://$(cat /run/secrets/raycat_proxy)@raycat:7890"; exec your-program'
+
+volumes:
+  raycat-state:
+
+secrets:
+  raycat_proxy:
+    file: ./raycat_proxy.txt    # one line: login:password
+```
+
+In `config.toml` for this example, set `listen` and `auth_file` in the `[mode]` block, as above.
 
 ## How it works
 
@@ -290,6 +345,8 @@ return_delay = "5m"
 | --- | --- | --- | --- |
 | `type` | `proxy` | `proxy`, `gateway` | `proxy` is a proxy for programs; `gateway` is a gateway for the traffic of the host, the containers and the devices. Variable: `RAYCAT_MODE` |
 | `listen` | `127.0.0.1:7890` | `address:port` (IPv4 or `[IPv6]:port`), port not 0 | The proxy address. Applies only in `proxy`. Variable: `RAYCAT_LISTEN` |
+| `auth` | not set | `login:password` or `off` | The login and the password for the proxy (HTTP and SOCKS5). The login has no `:`, up to 128 characters; the password 8 to 128 characters, no control characters. `off` means no password, including on a non-loopback address. Applies only in `proxy`. Variable: `RAYCAT_PROXY_AUTH` |
+| `auth_file` | not set | a path to a file with the same line, at most 1 KiB | The same from a file, for example a Docker secret. Not set together with `auth`. Variable: `RAYCAT_PROXY_AUTH_FILE` |
 | `kill_switch` | `true` | `true`, `false` | In `gateway` mode, does not let traffic go around the tunnel. Has no effect in `proxy`. Variable: `RAYCAT_KILL_SWITCH` |
 | `lan` | `false` | `true`, `false` | A gateway for local network devices. Only in `gateway`. Variable: `RAYCAT_LAN` |
 | `lan_interface` | the interface of the default route | up to 15 characters: Latin letters, digits, `-`, `_`, `.` | The interface from which the packets of the devices arrive. Used when `lan = true` |
@@ -297,6 +354,10 @@ return_delay = "5m"
 
 Keys that are set but do not apply to the selected mode are ignored. `raycat check` prints a
 warning for each such key.
+
+A proxy on an address that is not loopback (not `127.0.0.0/8` and not `::1`) does not start without
+`auth` or `auth_file`, and reports an error. The exception is `auth = "off"`: then there is no
+password, and the daemon writes a warning at start.
 
 ```toml
 [mode]
@@ -378,7 +439,7 @@ not set. The `RAYCAT_INSTALL_*` variables are needed only by the installer's tes
 | `RAYCAT_SUBSCRIPTION_FILE` | The path to a file with the link of the first subscription (up to 4 KiB) |
 | `RAYCAT_APP`, `RAYCAT_PLATFORM` | The app and the platform of the first subscription |
 | `RAYCAT_SEED` | `device.seed`. Cannot be used together with `device.machine_id` from the file |
-| `RAYCAT_MODE`, `RAYCAT_LISTEN`, `RAYCAT_KILL_SWITCH`, `RAYCAT_LAN`, `RAYCAT_LOG` | The corresponding keys of `[mode]` and `[log]` |
+| `RAYCAT_MODE`, `RAYCAT_LISTEN`, `RAYCAT_KILL_SWITCH`, `RAYCAT_LAN`, `RAYCAT_PROXY_AUTH`, `RAYCAT_PROXY_AUTH_FILE`, `RAYCAT_LOG` | The corresponding keys of `[mode]` and `[log]` |
 | `RAYCAT_STATE_DIR` | The state directory: machine identifier, subscription cache, pin. For root the default is `/var/lib/raycat`; for others, `$XDG_STATE_HOME/raycat` or `~/.local/state/raycat` |
 | `RAYCAT_SOCKET` | The path of the API socket. For root the default is `/run/raycat/raycat.sock`; for others, `$XDG_RUNTIME_DIR/raycat.sock`, otherwise a file in the state directory |
 
@@ -714,8 +775,9 @@ xhttp_connections = 4       # 1 to 16; not set means the provider's setting
   of the path. The state directory `/var/lib/raycat` is accessible only to its owner (0700).
 - **Device identifier.** `raycat identity` prints the HWID in full, while `raycat fetch` hides it. Do not
   publish the output of `identity` in public places.
-- **Proxy without a password.** The default address `127.0.0.1` is reachable only from this server. If you
-  change the address to an external one, anyone who can reach it will be able to exit through your VPN.
+- **Proxy without a password.** The default address `127.0.0.1` is reachable only from this server. An
+  address that is not loopback does not start without `auth` or `auth_file`: otherwise anyone who can
+  reach it exits through your VPN. `auth = "off"` lifts this requirement, at your own risk.
 - Report vulnerabilities privately: [SECURITY.md](.github/SECURITY.md).
 
 ## Versions and channels

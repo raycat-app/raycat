@@ -81,8 +81,23 @@ expect_site() {
   [ "$body" = "raycat-e2e-ok" ] || fail "прокси ($how) вернул чужой ответ: $body"
 }
 
+expect_refused() {
+  local how=$1
+  shift
+  if curl -fsS --max-time 5 "$@" "http://$site_ip:$site_port/index.html" >/dev/null 2>&1; then
+    fail "прокси пустил без верного пароля ($how)"
+  fi
+}
+
+expect_authorized() {
+  local how=$1 body
+  shift
+  body=$(curl -fsS --max-time 5 "$@" "http://$site_ip:$site_port/index.html") || fail "прокси с паролем ($how) не отвечает"
+  [ "$body" = "raycat-e2e-ok" ] || fail "прокси с паролем ($how) вернул чужой ответ: $body"
+}
+
 start_daemon() {
-  "$raycat" daemon --config "$work/config.toml" >>"$work/raycat.log" 2>&1 &
+  "$raycat" daemon --config "${1:-$work/config.toml}" >>"$work/raycat.log" 2>&1 &
   daemon_pid=$!
 }
 
@@ -297,5 +312,42 @@ wait_for "закрепление пережило перезапуск" status_i
 wait_for "закрепление снято" status_is '.node.pinned == false'
 status_is '.subscriptions[0].last_error | type == "string"' || fail "status: нет ошибки обновления подписки"
 stop_daemon
+
+echo "== прокси с паролем: без пароля не пускает, с паролем пускает"
+auth_proxy=127.0.0.1:7891
+auth_user=e2e-user
+auth_pass=e2e-proxy-pass
+cat >"$work/auth.toml" <<EOF
+[[subscription]]
+name = "e2e"
+url = "http://127.0.0.1:$panel_port/sub/e2etoken1234"
+allow_http = true
+app = "happ"
+platform = "windows"
+
+[mode]
+type = "proxy"
+listen = "$auth_proxy"
+auth = "$auth_user:$auth_pass"
+
+[xray]
+path = "$xray"
+
+[log]
+level = "debug"
+EOF
+start_daemon "$work/auth.toml"
+wait_for "прокси с паролем отвечает" curl -fsS --max-time 5 -x "http://$auth_user:$auth_pass@$auth_proxy" "http://$site_ip:$site_port/index.html"
+expect_refused http -x "http://$auth_proxy"
+expect_refused socks -x "socks5h://$auth_proxy"
+expect_refused "неверный пароль" -x "http://$auth_user:wrong-$auth_pass@$auth_proxy"
+expect_authorized http -x "http://$auth_user:$auth_pass@$auth_proxy"
+expect_authorized socks -x "socks5h://$auth_user:$auth_pass@$auth_proxy"
+if grep -q -- "$auth_pass" "$work/raycat.log"; then fail "пароль прокси попал в лог демона"; fi
+stop_daemon
+
+"$raycat" check --config "$work/auth.toml" >"$work/auth-check.log" 2>&1 || fail "check с паролем завершился ошибкой: $(cat "$work/auth-check.log")"
+grep -q 'вход по логину и паролю' "$work/auth-check.log" || fail "check не сообщил о входе по паролю"
+if grep -q -- "$auth_pass" "$work/auth-check.log"; then fail "check показал пароль прокси"; fi
 
 echo "e2e прокси: успех"

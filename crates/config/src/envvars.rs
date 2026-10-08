@@ -16,6 +16,8 @@ const MODE: &str = "RAYCAT_MODE";
 pub(crate) const LISTEN: &str = "RAYCAT_LISTEN";
 pub(crate) const KILL_SWITCH: &str = "RAYCAT_KILL_SWITCH";
 pub(crate) const LAN: &str = "RAYCAT_LAN";
+pub(crate) const PROXY_AUTH: &str = "RAYCAT_PROXY_AUTH";
+pub(crate) const PROXY_AUTH_FILE: &str = "RAYCAT_PROXY_AUTH_FILE";
 const LOG: &str = "RAYCAT_LOG";
 
 const ENV_SUBSCRIPTION_NAME: &str = "основная";
@@ -41,6 +43,8 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
         LISTEN,
         KILL_SWITCH,
         LAN,
+        PROXY_AUTH,
+        PROXY_AUTH_FILE,
         LOG,
     ] {
         if get(key).is_some() {
@@ -117,8 +121,25 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
             None => p.add(LAN, BOOL_HINT),
         }
     }
+    apply_proxy_auth(raw, env, p);
     if let Some(level) = get(LOG) {
         set_text(&mut raw.log.level, LOG, level, parse_level, LEVEL_HINT, p);
+    }
+}
+
+/// Переменная перекрывает ключ из файла; вместе заданы `RAYCAT_PROXY_AUTH` и `RAYCAT_PROXY_AUTH_FILE`
+/// — ошибка.
+fn apply_proxy_auth(raw: &mut Raw, env: &Env, p: &mut Problems) {
+    let (auth, auth_file) = (value(env, PROXY_AUTH), value(env, PROXY_AUTH_FILE));
+    if auth.is_some() && auth_file.is_some() {
+        p.add(PROXY_AUTH_FILE, "нельзя задавать вместе с RAYCAT_PROXY_AUTH");
+    }
+    if let Some(auth) = auth {
+        raw.mode.auth = Some(auth.to_owned());
+        raw.mode.auth_file = None;
+    } else if let Some(path) = auth_file {
+        raw.mode.auth_file = Some(path.to_owned());
+        raw.mode.auth = None;
     }
 }
 

@@ -1,3 +1,4 @@
+use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
@@ -5,10 +6,30 @@ use std::time::Duration;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
     /// Один inbound `mixed` (HTTP и SOCKS на одном порту) для контейнеров и LAN.
-    Proxy { listen: SocketAddr },
+    /// С `auth` вход возможен только по логину и паролю.
+    Proxy {
+        listen: SocketAddr,
+        auth: Option<Credentials>,
+    },
     /// Прозрачный перехват: inbound TPROXY и метка собственных сокетов xray,
     /// по которой правила перехвата пропускают его трафик.
     Gateway { tproxy_port: u16, mark: u32 },
+}
+
+/// Логин и пароль входа в прокси. В `Debug` пароль не выводится.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Credentials {
+    pub user: String,
+    pub password: String,
+}
+
+impl fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Credentials")
+            .field("user", &self.user)
+            .field("password", &"***")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

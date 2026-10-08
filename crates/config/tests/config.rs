@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use raycat_config::{
-    App, Config, DEFAULT_UPDATE_INTERVAL, Env, Error, Lan, LogLevel, Mode, Platform, TcpCongestion,
+    App, Config, DEFAULT_UPDATE_INTERVAL, Env, Error, Lan, LogLevel, Mode, Platform, ProxyAuth,
+    TcpCongestion,
 };
 
 const FULL: &str = r#"
@@ -1349,4 +1350,247 @@ fn subscription_file_environment_conflicts_with_subscription() {
         problems_with_env("", &vars),
         ["RAYCAT_SUBSCRIPTION_FILE: нельзя задавать вместе с RAYCAT_SUBSCRIPTION"]
     );
+}
+
+const PASSWORD: &str = "s3cret-pass";
+
+fn proxy_on(listen: &str, auth: &str) -> String {
+    format!("{OK_SUB}\n[mode]\nlisten = \"{listen}\"\n{auth}\n")
+}
+
+fn credentials(config: &Config) -> (String, String) {
+    match &config.proxy_auth {
+        ProxyAuth::Password { user, password } => (user.clone(), password.expose().to_owned()),
+        other => panic!("ожидался логин и пароль, получено {other:?}"),
+    }
+}
+
+#[test]
+fn proxy_password_is_read_from_the_key() {
+    let config = parse(&proxy_on("0.0.0.0:1080", &format!("auth = \"alice:{PASSWORD}\"")));
+    assert_eq!(
+        credentials(&config),
+        ("alice".to_owned(), PASSWORD.to_owned())
+    );
+    let config = parse(&proxy_on("0.0.0.0:1080", "auth = \"alice:pa:ss-word\""));
+    assert_eq!(
+        credentials(&config),
+        ("alice".to_owned(), "pa:ss-word".to_owned())
+    );
+}
+
+#[test]
+fn proxy_password_file_is_read_and_trimmed() {
+    let path = temp_file("proxy-auth-file", "  alice:file-pass-1\r\n\n".as_bytes());
+    let text = proxy_on(
+        "0.0.0.0:1080",
+        &format!("auth_file = '{}'", path.display()),
+    );
+    assert_eq!(
+        credentials(&parse(&text)),
+        ("alice".to_owned(), "file-pass-1".to_owned())
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn proxy_password_from_environment() {
+    let file = proxy_on("0.0.0.0:1080", "");
+    let config = Config::from_toml_str(&file, &env(&[("RAYCAT_PROXY_AUTH", "bob:env-pass-2")]))
+        .unwrap();
+    assert_eq!(
+        credentials(&config),
+        ("bob".to_owned(), "env-pass-2".to_owned())
+    );
+
+    let path = temp_file("proxy-auth-env", b"carol:file-pass-3\n");
+    let vars = env(&[("RAYCAT_PROXY_AUTH_FILE", path.to_str().unwrap())]);
+    let config = Config::from_toml_str(&file, &vars).unwrap();
+    assert_eq!(
+        credentials(&config),
+        ("carol".to_owned(), "file-pass-3".to_owned())
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn proxy_password_environment_overrides_the_file() {
+    let file = proxy_on("0.0.0.0:1080", "auth = \"alice:file-pass-4\"");
+    let vars = env(&[("RAYCAT_PROXY_AUTH", "dave:env-pass-5")]);
+    let config = Config::from_toml_str(&file, &vars).unwrap();
+    assert_eq!(
+        credentials(&config),
+        ("dave".to_owned(), "env-pass-5".to_owned())
+    );
+
+    let path = temp_file("proxy-auth-override", b"erin:file-pass-6\n");
+    let vars = env(&[("RAYCAT_PROXY_AUTH_FILE", path.to_str().unwrap())]);
+    let config = Config::from_toml_str(&file, &vars).unwrap();
+    assert_eq!(
+        credentials(&config),
+        ("erin".to_owned(), "file-pass-6".to_owned())
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn proxy_password_variables_conflict() {
+    let vars = env(&[
+        ("RAYCAT_PROXY_AUTH", "alice:s3cret-pass"),
+        ("RAYCAT_PROXY_AUTH_FILE", "/run/secrets/raycat_proxy"),
+    ]);
+    assert_eq!(
+        problems_with_env(&proxy_on("127.0.0.1:1080", ""), &vars),
+        ["RAYCAT_PROXY_AUTH_FILE: нельзя задавать вместе с RAYCAT_PROXY_AUTH"]
+    );
+}
+
+#[test]
+fn key_and_file_for_the_password_conflict() {
+    let text = proxy_on(
+        "127.0.0.1:1080",
+        "auth = \"alice:s3cret-pass\"\nauth_file = '/run/secrets/raycat_proxy'",
+    );
+    assert_eq!(
+        problems(&text),
+        ["mode.auth_file: нельзя задавать вместе с mode.auth"]
+    );
+}
+
+#[test]
+fn public_proxy_needs_a_password() {
+    for listen in ["0.0.0.0:1080", "[::]:1080", "192.0.2.1:1080"] {
+        let list = problems(&proxy_on(listen, ""));
+        assert!(has(&list, "mode.auth"), "{list:?}");
+        assert_eq!(list.len(), 1, "{list:?}");
+    }
+    assert_eq!(
+        problems(&proxy_on("0.0.0.0:1080", "")),
+        ["mode.auth: прокси слушает 0.0.0.0:1080 без пароля — любой в сети сможет пользоваться вашим VPN. Задайте mode.auth = \"логин:пароль\" (или auth_file), либо mode.auth = \"off\", если сеть полностью доверенная"]
+    );
+}
+
+#[test]
+fn loopback_proxy_needs_no_password() {
+    for listen in ["127.0.0.1:1080", "127.0.0.2:1080", "[::1]:1080"] {
+        let config = parse(&proxy_on(listen, ""));
+        assert_eq!(config.proxy_auth, ProxyAuth::NotSet, "{listen}");
+        assert_eq!(config.warnings, Vec::<String>::new(), "{listen}");
+    }
+}
+
+#[test]
+fn auth_off_allows_a_public_address_without_a_password() {
+    let config = parse(&proxy_on("0.0.0.0:1080", "auth = \"off\""));
+    assert_eq!(config.proxy_auth, ProxyAuth::Off);
+    assert_eq!(config.warnings, Vec::<String>::new());
+    let config = parse(&proxy_on("127.0.0.1:1080", "auth = \"OFF\""));
+    assert_eq!(config.proxy_auth, ProxyAuth::Off);
+}
+
+#[test]
+fn password_outside_the_proxy_is_ignored_with_a_warning() {
+    let text = format!("{OK_SUB}\n[mode]\ntype = \"gateway\"\nauth = \"alice:s3cret-pass\"\n");
+    let config = parse(&text);
+    assert_eq!(config.proxy_auth, ProxyAuth::NotSet);
+    assert_eq!(
+        config.warnings,
+        ["mode.auth действует только в режиме proxy"]
+    );
+
+    let gateway = format!("{OK_SUB}\n[mode]\ntype = \"gateway\"\n");
+    let vars = env(&[("RAYCAT_PROXY_AUTH_FILE", "/run/secrets/raycat_proxy")]);
+    let config = Config::from_toml_str(&gateway, &vars).unwrap();
+    assert_eq!(
+        config.warnings,
+        ["RAYCAT_PROXY_AUTH_FILE действует только в режиме proxy"]
+    );
+}
+
+#[test]
+fn password_errors_do_not_show_the_password() {
+    for (value, reason) in [
+        ("alice-secret-value", "ожидается «логин:пароль» или off"),
+        (":hunter2hunter2", "логин не может быть пустым"),
+        ("alice:", "пароль не может быть пустым"),
+        ("alice:hunter2", "пароль короче 8 символов"),
+    ] {
+        let list = problems(&proxy_on("127.0.0.1:1080", &format!("auth = \"{value}\"")));
+        assert_eq!(list, [format!("mode.auth: {reason}")], "{value}");
+        assert!(!list[0].contains("hunter2"), "{list:?}");
+    }
+}
+
+#[test]
+fn password_length_and_characters_are_checked() {
+    let long_user = format!("{}:s3cret-pass", "a".repeat(129));
+    let long_password = format!("alice:{}", "p".repeat(129));
+    for (value, reason) in [
+        (long_user.as_str(), "логин длиннее 128 символов"),
+        (long_password.as_str(), "пароль длиннее 128 символов"),
+    ] {
+        let list = problems(&proxy_on("127.0.0.1:1080", &format!("auth = \"{value}\"")));
+        assert_eq!(list, [format!("mode.auth: {reason}")]);
+    }
+    let vars = env(&[("RAYCAT_PROXY_AUTH", "alice:s3cr\tt-pass")]);
+    assert_eq!(
+        problems_with_env(&proxy_on("127.0.0.1:1080", ""), &vars),
+        ["RAYCAT_PROXY_AUTH: логин и пароль не должны содержать управляющих символов"]
+    );
+}
+
+#[test]
+fn password_length_bounds_are_inclusive() {
+    let user = "u".repeat(128);
+    let password = "p".repeat(128);
+    let config = parse(&proxy_on(
+        "0.0.0.0:1080",
+        &format!("auth = \"{user}:{password}\""),
+    ));
+    assert_eq!(credentials(&config), (user, password));
+    let config = parse(&proxy_on("0.0.0.0:1080", "auth = \"u:12345678\""));
+    assert_eq!(
+        credentials(&config),
+        ("u".to_owned(), "12345678".to_owned())
+    );
+}
+
+#[test]
+fn password_file_errors_name_the_file() {
+    let path = temp_file("proxy-auth-empty", " \n".as_bytes());
+    let list = problems(&proxy_on(
+        "127.0.0.1:1080",
+        &format!("auth_file = '{}'", path.display()),
+    ));
+    assert!(has(&list, "mode.auth_file"), "{list:?}");
+    assert!(list[0].ends_with("пустой"), "{list:?}");
+    std::fs::remove_file(path).unwrap();
+
+    let path = temp_file("proxy-auth-big", "a".repeat(1025).as_bytes());
+    let list = problems(&proxy_on(
+        "127.0.0.1:1080",
+        &format!("auth_file = '{}'", path.display()),
+    ));
+    assert!(has(&list, "mode.auth_file"), "{list:?}");
+    assert!(list[0].ends_with("больше 1 КиБ"), "{list:?}");
+    std::fs::remove_file(path).unwrap();
+
+    let list = problems(&proxy_on(
+        "127.0.0.1:1080",
+        "auth_file = '/nonexistent/raycat-proxy-auth'",
+    ));
+    assert!(
+        list[0].starts_with("mode.auth_file: не удалось прочитать "),
+        "{list:?}"
+    );
+}
+
+#[test]
+fn password_is_hidden_in_debug() {
+    let config = parse(&proxy_on(
+        "0.0.0.0:1080",
+        &format!("auth = \"alice:{PASSWORD}\""),
+    ));
+    let debug = format!("{config:?}");
+    assert!(!debug.contains(PASSWORD), "пароль попал в Debug");
 }
