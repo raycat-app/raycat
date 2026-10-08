@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn ipv4_list_excludes_private_and_special_ranges() {
         const RESERVED: [(Ipv4Addr, u8); 7] = [
-            (Ipv4Addr::new(0, 0, 0, 0), 8),
+            (Ipv4Addr::UNSPECIFIED, 8),
             (Ipv4Addr::new(10, 0, 0, 0), 8),
             (Ipv4Addr::new(100, 64, 0, 0), 10),
             (Ipv4Addr::new(127, 0, 0, 0), 8),
