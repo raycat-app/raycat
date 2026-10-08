@@ -1,24 +1,23 @@
 /*
 !/.cargo/
+!/.clippy.toml
 !/.dockerignore
 !/.editorconfig
 !/.gitattributes
 !/.github/
 !/.gitignore
+!/.rustfmt.toml
+!/.typos.toml
 !/assets/
 !/Cargo.lock
 !/Cargo.toml
-!/clippy.toml
 !/crates/
-!/deny.toml
 !/deploy/
 !/Dockerfile
 !/LICENSE
 !/README.en.md
 !/README.md
 !/rust-toolchain.toml
-!/rustfmt.toml
-!/typos.toml
 !/versions.toml
 
 target/

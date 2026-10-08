@@ -177,7 +177,7 @@ jobs:
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-deny
-      - run: cargo deny --log-level warn --manifest-path ./Cargo.toml --all-features check
+      - run: cargo deny --config .cargo/deny.toml --log-level warn --manifest-path ./Cargo.toml --all-features check
 
   workflows:
     name: Проверка workflow
