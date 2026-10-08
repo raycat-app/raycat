@@ -598,10 +598,12 @@ jobs:
           shared-key: dev
           save-if: false
           add-rust-environment-hash-key: false
-      - name: nftables
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends nftables
-      - name: Сборка
-        run: cargo build --locked -p raycat-netfilter --example ctl
+      - name: Сборка и nftables
+        run: |
+          { sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends nftables; } > /dev/null &
+          apt=$!
+          cargo build --locked -p raycat-netfilter --example ctl
+          wait "$apt"
       - name: Стенд
         run: bash .github/e2e/netfilter.sh
 

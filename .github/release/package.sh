@@ -15,7 +15,10 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 mkdir -p "$out"
 
+# Архивы сжимаются одновременно: каждый собирается в своём каталоге и пишется в свой файл.
+pids=()
 for suffix in "${ARCHIVE_SUFFIXES[@]}"; do
+  (
   case $suffix in
     x86_64-linux-musl) binary=raycat-x86_64 xray=xray-x86_64 ;;
     aarch64-linux-musl) binary=raycat-aarch64 xray=xray-aarch64 ;;
@@ -37,6 +40,11 @@ for suffix in "${ARCHIVE_SUFFIXES[@]}"; do
   install -m 644 "$inputs/raycat.1" "$root/man/raycat.1"
   install -m 644 "$inputs/raycat.service" "$root/systemd/raycat.service"
   pack "$stage" "$name" "$out/$name.tar.gz"
+  ) &
+  pids+=($!)
+done
+for pid in "${pids[@]}"; do
+  wait "$pid"
 done
 
 (cd "$out" && sha256sum raycat-*.tar.gz >SHA256SUMS)
