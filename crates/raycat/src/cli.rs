@@ -283,7 +283,10 @@ pub(crate) fn parse_error_text(error: &clap::Error, args: &[String]) -> Option<S
             }
         }
         ErrorKind::TooManyValues => {
-            format!("лишний аргумент «{}»", joined(error, ContextKind::InvalidValue))
+            format!(
+                "лишний аргумент «{}»",
+                joined(error, ContextKind::InvalidValue)
+            )
         }
         ErrorKind::InvalidValue => {
             let arg = joined(error, ContextKind::InvalidArg);
@@ -493,7 +496,15 @@ mod tests {
             assert!(takes_config(name), "{name}");
         }
         for name in [
-            "status", "health", "nodes", "use", "update", "events", "tui", "completions", "man",
+            "status",
+            "health",
+            "nodes",
+            "use",
+            "update",
+            "events",
+            "tui",
+            "completions",
+            "man",
             "help",
         ] {
             assert!(!takes_config(name), "{name}");
@@ -664,7 +675,13 @@ mod tests {
         assert!(json.ends_with("\nСправка: raycat health --help"), "{json}");
 
         let config = parse_error(&["raycat", "--config", "/b.toml", "check"]);
-        assert!(config.contains("неизвестный параметр «--config»"), "{config}");
-        assert!(config.ends_with("\nСправка: raycat check --help"), "{config}");
+        assert!(
+            config.contains("неизвестный параметр «--config»"),
+            "{config}"
+        );
+        assert!(
+            config.ends_with("\nСправка: raycat check --help"),
+            "{config}"
+        );
     }
 }
