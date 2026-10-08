@@ -608,12 +608,16 @@ jobs:
         run: bash .github/e2e/netfilter.sh
 
   e2e-gateway:
-    name: "e2e: шлюз"
+    name: "e2e: шлюз${{ matrix.mode == 'guard' && ' (возврат правил)' || '' }}"
     needs: image-amd64
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [main, guard]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -631,7 +635,9 @@ jobs:
           gunzip -c "$IMAGE_DIR/image-amd64.tar.gz" | docker load
           wait
       - name: Стенд
-        run: bash .github/e2e/gateway.sh
+        env:
+          MODE: ${{ matrix.mode }}
+        run: bash .github/e2e/gateway.sh "$MODE"
 
   installer-lint:
     name: "Установщик: shellcheck"

@@ -3,10 +3,18 @@
 # через узел; kill switch, DNS, IPv6, восстановление правил и их снятие.
 #
 #   docker load < образ   # тег raycat:ci
-#   bash .github/e2e/gateway.sh
+#   bash .github/e2e/gateway.sh [all|main|guard]
 #
+# main — всё, кроме возврата сброшенных правил, guard — только он (демон проверяет правила
+# раз в 30 с, и ожидание идёт в отдельном запуске параллельно с остальными проверками).
 # Стенд описан в .github/e2e/gateway/compose.yml. Нужен Docker с compose v2.
 set -euo pipefail
+
+mode=${1:-all}
+case "$mode" in
+  all | main | guard) ;;
+  *) echo "режим: all, main или guard" >&2; exit 2 ;;
+esac
 
 here=$(cd "$(dirname "$0")" && pwd)
 compose=(docker compose -f "$here/gateway/compose.yml")
@@ -165,15 +173,22 @@ if app_run ping -6 -c 1 -W 2 2606:4700:4700::1111 >/dev/null 2>&1; then
   fail "IPv6 ping вышел наружу"
 fi
 
-echo "== правила возвращаются, если их сбросили"
-gateway_run ip -4 rule del fwmark 0x52540000 lookup 7263 priority 7263
-if rule_present docker exec "$gateway"; then
-  fail "правило маршрутизации не удалилось"
+if [ "$mode" != main ]; then
+  echo "== правила возвращаются, если их сбросили"
+  gateway_run ip -4 rule del fwmark 0x52540000 lookup 7263 priority 7263
+  if rule_present docker exec "$gateway"; then
+    fail "правило маршрутизации не удалилось"
+  fi
+  # Демон проверяет правила раз в 30 с: ожидание вынесено в отдельный запуск.
+  wait_for "правило маршрутизации вернулось" 50 rule_present docker exec "$gateway"
+  log_has "$gateway" "правила перехвата пропали" || fail "в журнале нет предупреждения о пропаже правил"
+  log_has "$gateway" "правила перехвата восстановлены" || fail "в журнале нет строки о восстановлении"
+  expect_via_node "$site" "${nodes_inet[@]}"
 fi
-wait_for "правило маршрутизации вернулось" 50 rule_present docker exec "$gateway"
-log_has "$gateway" "правила перехвата пропали" || fail "в журнале нет предупреждения о пропаже правил"
-log_has "$gateway" "правила перехвата восстановлены" || fail "в журнале нет строки о восстановлении"
-expect_via_node "$site" "${nodes_inet[@]}"
+if [ "$mode" = guard ]; then
+  echo "e2e шлюза (восстановление правил): успех"
+  exit 0
+fi
 
 echo "== kill switch: xray убит, демон заморожен"
 docker kill --signal STOP "$gateway" >/dev/null

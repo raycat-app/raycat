@@ -287,13 +287,10 @@ expect_seen_as http://10.77.0.20/ 10.77.0.10
 echo "== ip_forward=1 и NAT на хосте: наружу напрямую устройство не выходит"
 set_forward 1
 expect_via_node "$canary" "${nodes_wan[@]}"
-if client_run ping -c 1 -W 2 11.60.0.50 >/dev/null 2>&1; then
-  fail "ICMP устройства вышел наружу напрямую"
-fi
-if client_run wget -q -T 4 -O - http://10.77.0.2:12345/ >/dev/null 2>&1; then
-  fail "устройство дошло до порта xray напрямую"
-fi
+refuse "ICMP устройства вышел наружу напрямую" client_run ping -c 1 -W 2 11.60.0.50
+refuse "устройство дошло до порта xray напрямую" client_run wget -q -T 4 -O - http://10.77.0.2:12345/
 alive "пересылка включена" wan lan wan-new
+refused_all
 
 echo "== kill switch: xray убит, демон заморожен"
 docker kill --signal STOP "$daemon" >/dev/null
@@ -338,10 +335,9 @@ docker kill --signal KILL "$daemon" >/dev/null
 sleep 1
 tables_present >/dev/null || fail "после аварии исчезла таблица nftables"
 rule_present || fail "после аварии исчезло правило маршрутизации"
-if leaked=$(client_run wget -q -T 4 -O - "$canary" 2>&1); then
-  fail "после аварии трафик устройства ушёл напрямую: $leaked"
-fi
+refuse "после аварии трафик устройства ушёл напрямую" client_run wget -q -T 4 -O - "$canary"
 alive "демон убит" wan lan wan-new
+refused_all
 docker start "$daemon" >/dev/null
 wait_for "трафик через узел после аварии" 90 via_node "$canary"
 [ "$(router_run ip -4 rule show | grep -c 7263)" = 1 ] || fail "после перезапуска не одно правило маршрутизации"
