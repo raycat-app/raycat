@@ -32,6 +32,9 @@ macro_rules! say {
 pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
     let rules = plan::gateway_rules(config)?;
     let machine_id = store.machine_id()?;
+    for warning in &config.warnings {
+        say!("Предупреждение: {warning}");
+    }
     say!(
         "Настройки в порядке: подписок {}, {}",
         config.subscriptions.len(),

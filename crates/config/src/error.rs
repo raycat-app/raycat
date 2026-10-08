@@ -26,13 +26,20 @@ impl fmt::Display for Problem {
 
 /// В контейнере с `cap_drop: [ALL]` у root нет `CAP_DAC_OVERRIDE` и он не читает чужие
 /// файлы с правами 0600.
-const PERMISSION_HINT: &str = "\nПодсказка: в контейнере с cap_drop: [ALL] root читает файл только по обычным правам доступа. \
+const ROOT_HINT: &str = "\nПодсказка: в контейнере с cap_drop: [ALL] root читает файл только по обычным правам доступа. \
 Сделайте файл читаемым для всех (chmod 644, а каталог закройте от посторонних) \
 или передайте его root (chown 0:0, права 600).";
+const USER_HINT: &str =
+    "\nНет прав на чтение. Запустите через sudo или задайте свой файл: --config путь";
 
 #[derive(Debug)]
 pub enum Error {
-    Read { path: PathBuf, source: io::Error },
+    Read {
+        path: PathBuf,
+        source: io::Error,
+        /// Процесс работает от root.
+        root: bool,
+    },
     Parse(String),
     Invalid(Vec<Problem>),
 }
@@ -40,14 +47,14 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Read { path, source } => {
+            Self::Read { path, source, root } => {
                 write!(
                     f,
                     "не удалось прочитать файл настроек {}: {source}",
                     path.display()
                 )?;
                 if source.kind() == io::ErrorKind::PermissionDenied {
-                    f.write_str(PERMISSION_HINT)?;
+                    f.write_str(if *root { ROOT_HINT } else { USER_HINT })?;
                 }
                 Ok(())
             }
@@ -96,25 +103,42 @@ impl Problems {
 mod tests {
     use super::*;
 
-    fn read_error(kind: io::ErrorKind) -> String {
+    fn read_error(kind: io::ErrorKind, root: bool) -> String {
         Error::Read {
             path: PathBuf::from("/etc/raycat/config.toml"),
             source: io::Error::from(kind),
+            root,
         }
         .to_string()
     }
 
     #[test]
-    fn a_denied_read_tells_what_to_do() {
-        let text = read_error(io::ErrorKind::PermissionDenied);
+    fn a_denied_read_as_root_describes_the_container_rules() {
+        let text = read_error(io::ErrorKind::PermissionDenied, true);
         assert!(text.starts_with("не удалось прочитать файл настроек /etc/raycat/config.toml"));
         assert!(text.contains("chmod 644"), "{text}");
         assert!(text.contains("chown 0:0"), "{text}");
+        assert!(!text.contains("sudo"), "{text}");
+    }
+
+    #[test]
+    fn a_denied_read_as_a_user_suggests_sudo_or_own_file() {
+        let text = read_error(io::ErrorKind::PermissionDenied, false);
+        assert!(
+            text.ends_with(
+                "Нет прав на чтение. Запустите через sudo или задайте свой файл: --config путь"
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("cap_drop"), "{text}");
     }
 
     #[test]
     fn other_read_errors_have_no_hint() {
-        let text = read_error(io::ErrorKind::NotFound);
-        assert!(!text.contains("Подсказка"), "{text}");
+        for root in [false, true] {
+            let text = read_error(io::ErrorKind::NotFound, root);
+            assert!(!text.contains("Подсказка"), "{text}");
+            assert!(!text.contains("sudo"), "{text}");
+        }
     }
 }

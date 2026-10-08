@@ -16,13 +16,14 @@ const MAX_FILE_BYTES: u64 = 1 << 20;
 
 impl Config {
     /// Файл: явный путь, иначе `RAYCAT_CONFIG`; без файла настройки берутся
-    /// из окружения. Ошибки проверки собираются списком.
-    pub fn load(path: Option<&Path>, env: &Env) -> Result<Self, Error> {
+    /// из окружения. Ошибки проверки собираются списком. `root` — процесс работает
+    /// от root: от этого зависит подсказка, если файл не читается.
+    pub fn load(path: Option<&Path>, env: &Env, root: bool) -> Result<Self, Error> {
         let path = path
             .map(Path::to_path_buf)
             .or_else(|| envvars::value(env, envvars::CONFIG).map(PathBuf::from));
         let text = match path {
-            Some(path) => read(&path)?,
+            Some(path) => read(&path, root)?,
             None => String::new(),
         };
         Self::from_toml_str(&text, env)
@@ -39,10 +40,11 @@ impl Config {
     }
 }
 
-fn read(path: &Path) -> Result<String, Error> {
+fn read(path: &Path, root: bool) -> Result<String, Error> {
     let fail = |source: io::Error| Error::Read {
         path: path.to_path_buf(),
         source,
+        root,
     };
     let file = File::open(path).map_err(fail)?;
     let mut text = String::new();

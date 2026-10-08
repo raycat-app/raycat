@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use raycat_config::{
-    App, Config, DEFAULT_UPDATE_INTERVAL, Env, Error, LogLevel, Mode, Platform, TcpCongestion,
+    App, Config, DEFAULT_UPDATE_INTERVAL, Env, Error, Lan, LogLevel, Mode, Platform, TcpCongestion,
 };
 
 const FULL: &str = r#"
@@ -361,8 +361,91 @@ fn lan_details_do_not_turn_the_lan_gateway_on() {
             lan: false
         }
     );
-    assert_eq!(config.lan.interface.as_deref(), Some("eth0"));
-    assert_eq!(config.lan.subnets.len(), 1);
+    assert_eq!(config.lan, Lan::default());
+    assert_eq!(
+        config.warnings,
+        [
+            "mode.lan_interface действует только при mode.lan = true",
+            "mode.lan_subnets действует только при mode.lan = true",
+        ]
+    );
+}
+
+#[test]
+fn lan_details_are_not_checked_without_the_lan_gateway() {
+    let text = format!(
+        "{OK_SUB}\n[mode]\ntype = \"gateway\"\nlan_interface = \"eth0; drop\"\nlan_subnets = [\"mars\"]\n"
+    );
+    let config = parse(&text);
+    assert_eq!(config.lan, Lan::default());
+    assert_eq!(config.warnings.len(), 2, "{:?}", config.warnings);
+    let proxy = format!("{OK_SUB}\n[mode]\nlan_subnets = [\"mars\"]\n");
+    assert_eq!(parse(&proxy).lan, Lan::default());
+}
+
+#[test]
+fn proxy_warns_about_gateway_keys() {
+    let text = format!("{OK_SUB}\n[mode]\nkill_switch = false\nlan = true\n");
+    let config = parse(&text);
+    assert!(matches!(config.mode, Mode::Proxy { .. }));
+    assert_eq!(
+        config.warnings,
+        [
+            "mode.kill_switch действует только в режиме gateway — в режиме proxy он не применяется",
+            "mode.lan действует только в режиме gateway — в режиме proxy он не применяется",
+        ]
+    );
+}
+
+#[test]
+fn gateway_warns_about_listen_and_ignores_its_value() {
+    let text = format!("{OK_SUB}\n[mode]\ntype = \"gateway\"\nlisten = \"nope\"\n");
+    let config = parse(&text);
+    assert_eq!(
+        config.warnings,
+        ["mode.listen действует только в режиме proxy"]
+    );
+    let config = Config::from_toml_str(
+        &format!("{OK_SUB}\n[mode]\ntype = \"gateway\"\n"),
+        &env(&[("RAYCAT_LISTEN", "nowhere")]),
+    )
+    .unwrap();
+    assert_eq!(
+        config.warnings,
+        ["RAYCAT_LISTEN действует только в режиме proxy"]
+    );
+}
+
+#[test]
+fn environment_names_the_variable_in_warnings() {
+    let vars = env(&[("RAYCAT_KILL_SWITCH", "true"), ("RAYCAT_LAN", "1")]);
+    let config = Config::from_toml_str(&format!("{OK_SUB}\n[mode]\n"), &vars).unwrap();
+    assert_eq!(
+        config.warnings,
+        [
+            "RAYCAT_KILL_SWITCH действует только в режиме gateway — в режиме proxy он не применяется",
+            "RAYCAT_LAN действует только в режиме gateway — в режиме proxy он не применяется",
+        ]
+    );
+}
+
+#[test]
+fn listen_is_checked_only_for_the_proxy() {
+    let text = format!("{OK_SUB}\n[mode]\nlisten = \"nope\"\n");
+    let list = problems(&text);
+    assert!(has(&list, "mode.listen"), "{list:?}");
+    let vars = env(&[("RAYCAT_LISTEN", "nowhere")]);
+    let list = problems_with_env(OK_SUB, &vars);
+    assert!(has(&list, "RAYCAT_LISTEN"), "{list:?}");
+}
+
+#[test]
+fn applicable_keys_give_no_warnings() {
+    let none = Vec::<String>::new();
+    assert_eq!(parse(FULL).warnings, none);
+    assert_eq!(parse(OK_SUB).warnings, none);
+    let text = format!("{OK_SUB}\n[mode]\nlisten = \"127.0.0.1:1080\"\n");
+    assert_eq!(parse(&text).warnings, none);
 }
 
 #[test]
@@ -831,7 +914,7 @@ fn environment_without_a_file() {
     ]);
     for config in [
         Config::from_toml_str("", &vars).unwrap(),
-        Config::load(None, &vars).unwrap(),
+        Config::load(None, &vars, false).unwrap(),
     ] {
         assert_eq!(config.subscriptions.len(), 1);
         let sub = &config.subscriptions[0];
@@ -921,11 +1004,21 @@ fn environment_kill_switch_over_the_file() {
 }
 
 #[test]
-fn environment_seed_replaces_the_file_machine_id() {
+fn environment_seed_conflicts_with_the_file_machine_id() {
     let file = format!("[device]\nmachine_id = \"00000000000000000000000000000000\"\n{OK_SUB}");
-    let config = Config::from_toml_str(&file, &env(&[("RAYCAT_SEED", "env seed")])).unwrap();
-    assert!(config.device.machine_id.is_none());
-    assert_eq!(config.device.seed.unwrap().expose(), "env seed");
+    let list = problems_with_env(&file, &env(&[("RAYCAT_SEED", "env seed")]));
+    assert_eq!(
+        list,
+        ["device: RAYCAT_SEED нельзя задавать вместе с device.machine_id из файла настроек"]
+    );
+}
+
+#[test]
+fn file_machine_id_is_kept_without_environment_seed() {
+    let file = format!("[device]\nmachine_id = \"00000000000000000000000000000000\"\n{OK_SUB}");
+    let config = Config::from_toml_str(&file, &env(&[("RAYCAT_LOG", "debug")])).unwrap();
+    assert!(config.device.machine_id.is_some());
+    assert!(config.device.seed.is_none());
 }
 
 #[test]
@@ -1012,19 +1105,19 @@ fn environment_without_app_and_platform_asks_for_them() {
 #[test]
 fn loads_a_file() {
     let path = temp_file("explicit", FULL.as_bytes());
-    let config = Config::load(Some(&path), &Env::new()).unwrap();
+    let config = Config::load(Some(&path), &Env::new(), false).unwrap();
     assert_eq!(config.subscriptions.len(), 2);
 
     let vars = env(&[
         ("RAYCAT_CONFIG", path.to_str().unwrap()),
         ("RAYCAT_LOG", "warn"),
     ]);
-    let config = Config::load(None, &vars).unwrap();
+    let config = Config::load(None, &vars, false).unwrap();
     assert_eq!(config.subscriptions.len(), 2);
     assert_eq!(config.log.level, LogLevel::Warn);
 
     let missing = env(&[("RAYCAT_CONFIG", "/nonexistent/raycat.toml")]);
-    let config = Config::load(Some(&path), &missing).unwrap();
+    let config = Config::load(Some(&path), &missing, false).unwrap();
     assert_eq!(config.subscriptions.len(), 2);
 
     std::fs::remove_file(path).unwrap();
@@ -1033,21 +1126,25 @@ fn loads_a_file() {
 #[test]
 fn file_errors() {
     let missing = std::env::temp_dir().join("raycat-config-test-missing-file.toml");
-    let error = Config::load(Some(&missing), &Env::new()).unwrap_err();
+    let error = Config::load(Some(&missing), &Env::new(), false).unwrap_err();
     assert!(matches!(error, Error::Read { .. }), "{error:?}");
     assert!(error.to_string().contains("не удалось прочитать"));
 
-    let error =
-        Config::load(None, &env(&[("RAYCAT_CONFIG", "/nonexistent/raycat.toml")])).unwrap_err();
+    let error = Config::load(
+        None,
+        &env(&[("RAYCAT_CONFIG", "/nonexistent/raycat.toml")]),
+        true,
+    )
+    .unwrap_err();
     assert!(matches!(error, Error::Read { .. }), "{error:?}");
 
     let binary = temp_file("binary", &[0xff, 0xfe, 0x00, 0x80]);
-    let error = Config::load(Some(&binary), &Env::new()).unwrap_err();
+    let error = Config::load(Some(&binary), &Env::new(), false).unwrap_err();
     assert!(matches!(error, Error::Read { .. }), "{error:?}");
     std::fs::remove_file(binary).unwrap();
 
     let broken = temp_file("broken", b"[[subscription]\n");
-    let error = Config::load(Some(&broken), &Env::new()).unwrap_err();
+    let error = Config::load(Some(&broken), &Env::new(), false).unwrap_err();
     assert!(matches!(error, Error::Parse(_)), "{error:?}");
     std::fs::remove_file(broken).unwrap();
 }

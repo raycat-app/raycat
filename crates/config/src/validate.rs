@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use raycat_netfilter::{Cidr, MAX_LAN_SUBNETS, interface_name_problem, lan_subnet_problem};
 
+use crate::envvars;
 use crate::error::{Error, Problems};
 use crate::link::{self, Scheme};
 use crate::model::{
@@ -13,7 +14,7 @@ use crate::model::{
     Selection, Subscription, TcpCongestion, Xray,
 };
 use crate::pattern::Pattern;
-use crate::raw::{Raw, RawDevice, RawDns, RawLog, RawMode, RawSelection, RawSubscription, RawXray};
+use crate::raw::{Raw, RawDevice, RawDns, RawLog, RawSelection, RawSubscription, RawXray};
 use crate::units::{format_duration, format_size, parse_duration, parse_size};
 
 const MAX_NAME_CHARS: usize = 64;
@@ -132,12 +133,13 @@ fn parse_ip(value: &str) -> Option<IpAddr> {
 
 pub(crate) fn build(raw: &Raw, mut problems: Problems) -> Result<Config, Error> {
     let p = &mut problems;
-    let device = device(&raw.device, p);
+    let device = device(&raw.device, raw.from_env.contains(envvars::SEED), p);
     let mut names = HashSet::new();
     let subscriptions = subscriptions(&raw.subscription, &mut names, p);
     let selection = selection(&raw.selection, &names, p);
-    let mode = mode(&raw.mode, p);
-    let lan = lan(&raw.mode, p);
+    let mode = mode(raw, p);
+    let lan = lan(raw, &mode, p);
+    let warnings = warnings(raw, &mode);
     let dns = dns(&raw.dns, p);
     let routing = Routing {
         provider: raw.routing.provider.unwrap_or(false),
@@ -155,15 +157,32 @@ pub(crate) fn build(raw: &Raw, mut problems: Problems) -> Result<Config, Error> 
             routing,
             xray,
             log,
+            warnings,
         })
     } else {
         Err(problems.into_error())
     }
 }
 
-fn device(raw: &RawDevice, p: &mut Problems) -> Device {
+/// Название ключа в сообщении: переменная окружения, если значение задано ею.
+fn origin(raw: &Raw, field: &str, variable: &'static str) -> String {
+    if raw.from_env.contains(variable) {
+        variable.to_owned()
+    } else {
+        field.to_owned()
+    }
+}
+
+fn device(raw: &RawDevice, seed_from_env: bool, p: &mut Problems) -> Device {
     if raw.seed.is_some() && raw.machine_id.is_some() {
-        p.add("device", "seed и machine_id нельзя задавать вместе");
+        if seed_from_env {
+            p.add(
+                "device",
+                "RAYCAT_SEED нельзя задавать вместе с device.machine_id из файла настроек",
+            );
+        } else {
+            p.add("device", "seed и machine_id нельзя задавать вместе");
+        }
     }
     Device {
         seed: secret_text("device.seed", raw.seed.as_deref(), p),
@@ -512,28 +531,37 @@ fn pin(value: &str, names: &HashSet<String>, p: &mut Problems) -> Option<Pin> {
     })
 }
 
-fn mode(raw: &RawMode, p: &mut Problems) -> Mode {
-    let kind = match raw.kind.as_deref() {
+fn mode(raw: &Raw, p: &mut Problems) -> Mode {
+    let kind = match raw.mode.kind.as_deref() {
         None => Some(ModeKind::Proxy),
         Some(value) => parsed("mode.type", value, parse_mode_kind, MODE_HINT, p),
     };
-    let listen = match raw.listen.as_deref() {
-        None => DEFAULT_LISTEN,
-        Some(value) => {
-            parsed("mode.listen", value, parse_listen, LISTEN_HINT, p).unwrap_or(DEFAULT_LISTEN)
-        }
-    };
     match kind {
         Some(ModeKind::Gateway) => Mode::Gateway {
-            kill_switch: raw.kill_switch.unwrap_or(true),
-            lan: raw.lan.unwrap_or(false),
+            kill_switch: raw.mode.kill_switch.unwrap_or(true),
+            lan: raw.mode.lan.unwrap_or(false),
         },
-        Some(ModeKind::Proxy) | None => Mode::Proxy { listen },
+        Some(ModeKind::Proxy) | None => Mode::Proxy {
+            listen: listen(raw, p),
+        },
     }
 }
 
-fn lan(raw: &RawMode, p: &mut Problems) -> Lan {
-    let interface = match raw.lan_interface.as_deref() {
+/// Адрес прокси нужен только в режиме proxy: в шлюзе ошибка в нём не мешает запуску.
+fn listen(raw: &Raw, p: &mut Problems) -> SocketAddr {
+    let Some(value) = raw.mode.listen.as_deref() else {
+        return DEFAULT_LISTEN;
+    };
+    let field = origin(raw, "mode.listen", envvars::LISTEN);
+    parsed(&field, value, parse_listen, LISTEN_HINT, p).unwrap_or(DEFAULT_LISTEN)
+}
+
+/// Интерфейс и подсети проверяются и применяются только в шлюзе с `lan = true`.
+fn lan(raw: &Raw, mode: &Mode, p: &mut Problems) -> Lan {
+    if !matches!(mode, Mode::Gateway { lan: true, .. }) {
+        return Lan::default();
+    }
+    let interface = match raw.mode.lan_interface.as_deref() {
         None => None,
         Some(name) => match interface_name_problem(name) {
             Some(problem) => {
@@ -544,10 +572,49 @@ fn lan(raw: &RawMode, p: &mut Problems) -> Lan {
         },
     };
     let subnets = raw
+        .mode
         .lan_subnets
         .as_deref()
         .map_or_else(Vec::new, |list| lan_subnets(list, p));
     Lan { interface, subnets }
+}
+
+/// Ключи, которые заданы, но к выбранному режиму не относятся: они не применяются.
+fn warnings(raw: &Raw, mode: &Mode) -> Vec<String> {
+    let mut list = Vec::new();
+    match mode {
+        Mode::Proxy { .. } => {
+            if raw.mode.kill_switch.is_some() {
+                list.push(format!(
+                    "{} действует только в режиме gateway — в режиме proxy он не применяется",
+                    origin(raw, "mode.kill_switch", envvars::KILL_SWITCH)
+                ));
+            }
+            if raw.mode.lan.is_some() {
+                list.push(format!(
+                    "{} действует только в режиме gateway — в режиме proxy он не применяется",
+                    origin(raw, "mode.lan", envvars::LAN)
+                ));
+            }
+        }
+        Mode::Gateway { .. } => {
+            if raw.mode.listen.is_some() {
+                list.push(format!(
+                    "{} действует только в режиме proxy",
+                    origin(raw, "mode.listen", envvars::LISTEN)
+                ));
+            }
+        }
+    }
+    if !matches!(mode, Mode::Gateway { lan: true, .. }) {
+        if raw.mode.lan_interface.is_some() {
+            list.push("mode.lan_interface действует только при mode.lan = true".to_owned());
+        }
+        if raw.mode.lan_subnets.is_some() {
+            list.push("mode.lan_subnets действует только при mode.lan = true".to_owned());
+        }
+    }
+    list
 }
 
 fn lan_subnets(list: &[String], p: &mut Problems) -> Vec<Cidr> {

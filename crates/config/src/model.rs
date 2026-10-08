@@ -42,6 +42,8 @@ pub struct Config {
     pub routing: Routing,
     pub xray: Xray,
     pub log: Logging,
+    /// Заданные ключи, которые не действуют в выбранном режиме; текст для пользователя.
+    pub warnings: Vec<String>,
 }
 
 /// Что сообщается провайдеру об устройстве; `None` — решает демон.

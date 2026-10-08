@@ -2,19 +2,19 @@ use crate::error::Problems;
 use crate::load::Env;
 use crate::raw::{Raw, RawSubscription};
 use crate::validate::{
-    APP_HINT, BOOL_HINT, LEVEL_HINT, LISTEN_HINT, MODE_HINT, PLATFORM_HINT, parse_app, parse_bool,
-    parse_level, parse_listen, parse_mode_kind, parse_platform,
+    APP_HINT, BOOL_HINT, LEVEL_HINT, MODE_HINT, PLATFORM_HINT, parse_app, parse_bool, parse_level,
+    parse_mode_kind, parse_platform,
 };
 
 pub(crate) const CONFIG: &str = "RAYCAT_CONFIG";
 const SUBSCRIPTION: &str = "RAYCAT_SUBSCRIPTION";
 const APP: &str = "RAYCAT_APP";
 const PLATFORM: &str = "RAYCAT_PLATFORM";
-const SEED: &str = "RAYCAT_SEED";
+pub(crate) const SEED: &str = "RAYCAT_SEED";
 const MODE: &str = "RAYCAT_MODE";
-const LISTEN: &str = "RAYCAT_LISTEN";
-const KILL_SWITCH: &str = "RAYCAT_KILL_SWITCH";
-const LAN: &str = "RAYCAT_LAN";
+pub(crate) const LISTEN: &str = "RAYCAT_LISTEN";
+pub(crate) const KILL_SWITCH: &str = "RAYCAT_KILL_SWITCH";
+pub(crate) const LAN: &str = "RAYCAT_LAN";
 const LOG: &str = "RAYCAT_LOG";
 
 const ENV_SUBSCRIPTION_NAME: &str = "основная";
@@ -30,6 +30,21 @@ pub(crate) fn value<'a>(env: &'a Env, key: &str) -> Option<&'a str> {
 /// в файле нет, она создаётся.
 pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
     let get = |key: &str| value(env, key);
+    for key in [
+        SUBSCRIPTION,
+        APP,
+        PLATFORM,
+        SEED,
+        MODE,
+        LISTEN,
+        KILL_SWITCH,
+        LAN,
+        LOG,
+    ] {
+        if get(key).is_some() {
+            raw.from_env.insert(key);
+        }
+    }
     let (url, app, platform) = (get(SUBSCRIPTION), get(APP), get(PLATFORM));
     if url.is_some() || app.is_some() || platform.is_some() {
         if raw.subscription.is_empty() {
@@ -59,7 +74,6 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
     }
     if let Some(seed) = get(SEED) {
         raw.device.seed = Some(seed.to_owned());
-        raw.device.machine_id = None;
     }
     if let Some(mode) = get(MODE) {
         set_text(
@@ -72,14 +86,7 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
         );
     }
     if let Some(listen) = get(LISTEN) {
-        set_text(
-            &mut raw.mode.listen,
-            LISTEN,
-            listen,
-            parse_listen,
-            LISTEN_HINT,
-            p,
-        );
+        raw.mode.listen = Some(listen.to_owned());
     }
     if let Some(flag) = get(KILL_SWITCH) {
         match parse_bool(flag) {

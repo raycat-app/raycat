@@ -62,7 +62,7 @@ fn run(matches: &ArgMatches) -> Result<()> {
         &env,
         Path::exists,
     );
-    let config = Config::load(file.as_deref(), &env)?;
+    let config = Config::load(file.as_deref(), &env, paths::is_root())?;
     log::init(config.log.level.into());
     let store = Store::open(paths::state_dir(&env, paths::is_root())?)?;
     match name {
