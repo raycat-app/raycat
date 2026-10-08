@@ -441,10 +441,11 @@ fn listen_is_checked_only_for_the_proxy() {
 
 #[test]
 fn applicable_keys_give_no_warnings() {
-    assert!(parse(FULL).warnings.is_empty());
-    assert!(parse(OK_SUB).warnings.is_empty());
+    let none = Vec::<String>::new();
+    assert_eq!(parse(FULL).warnings, none);
+    assert_eq!(parse(OK_SUB).warnings, none);
     let text = format!("{OK_SUB}\n[mode]\nlisten = \"127.0.0.1:1080\"\n");
-    assert!(parse(&text).warnings.is_empty());
+    assert_eq!(parse(&text).warnings, none);
 }
 
 #[test]
