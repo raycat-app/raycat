@@ -476,8 +476,10 @@ fn the_tunnel_needs_the_proxy_credentials() {
                 read_request(&mut sock);
                 sock.write_all(OK).unwrap();
             } else {
-                sock.write_all(b"HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n")
-                    .unwrap();
+                sock.write_all(
+                    b"HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n",
+                )
+                .unwrap();
             }
             answers.push(connect);
         }
@@ -503,10 +505,7 @@ fn the_tunnel_needs_the_proxy_credentials() {
         proxy_authorization: Some("Basic dXNlcjpwYXNz".to_owned()),
         ..Client::default()
     };
-    assert_eq!(
-        authorized.send(&target, &request()).unwrap().body,
-        b"ok"
-    );
+    assert_eq!(authorized.send(&target, &request()).unwrap().body, b"ok");
     let answers = proxy.join().unwrap();
     assert!(!answers[0].contains("Proxy-Authorization"));
     assert!(answers[1].contains("Proxy-Authorization: Basic dXNlcjpwYXNz\r\n"));

@@ -430,7 +430,13 @@ mod tests {
         let first = new_inbound(1).unwrap();
         let second = new_inbound(1).unwrap();
         assert_eq!(first.credentials.password.len(), 64);
-        assert!(first.credentials.password.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert!(
+            first
+                .credentials
+                .password
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit())
+        );
         assert_ne!(first.credentials.password, second.credentials.password);
         assert_eq!(first.port, 1);
     }
