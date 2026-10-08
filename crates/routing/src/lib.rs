@@ -117,16 +117,53 @@ mod tests {
         assert!(parsed.iter().all(|(_, len)| (8..=32).contains(len)));
     }
 
+    fn range_of(net: Ipv4Addr, len: u8) -> (u64, u64) {
+        let start = u64::from(u32::from(net));
+        (start, start + (1u64 << (32 - u32::from(len))))
+    }
+
     #[test]
-    fn ipv4_prefixes_do_not_overlap() {
-        let mut ranges: Vec<(u64, u64)> = ru_ipv4()
-            .map(|(net, len)| {
-                let start = u64::from(u32::from(net));
-                (start, start + (1u64 << (32 - u32::from(len))))
-            })
-            .collect();
-        ranges.sort_unstable();
+    fn ipv4_prefixes_are_sorted_and_disjoint() {
+        let ranges: Vec<(u64, u64)> = ru_ipv4().map(|(net, len)| range_of(net, len)).collect();
+        assert!(ranges.windows(2).all(|pair| pair[0].0 < pair[1].0));
         assert!(ranges.windows(2).all(|pair| pair[0].1 <= pair[1].0));
+    }
+
+    #[test]
+    fn adjacent_prefixes_are_not_mergeable() {
+        let prefixes: Vec<(Ipv4Addr, u8)> = ru_ipv4().collect();
+        for pair in prefixes.windows(2) {
+            let (a, a_len) = pair[0];
+            let (b, b_len) = pair[1];
+            let (start, end) = range_of(a, a_len);
+            // Блоки /8 инструмент не объединяет дальше (см. MAX_BLOCK в update.rs).
+            let mergeable = a_len == b_len
+                && a_len > 8
+                && end == u64::from(u32::from(b))
+                && start.is_multiple_of(2 * (end - start));
+            assert!(!mergeable, "объединяются {a}/{a_len} и {b}/{b_len}");
+        }
+    }
+
+    #[test]
+    fn ipv4_list_excludes_private_and_special_ranges() {
+        const RESERVED: [(Ipv4Addr, u8); 7] = [
+            (Ipv4Addr::new(0, 0, 0, 0), 8),
+            (Ipv4Addr::new(10, 0, 0, 0), 8),
+            (Ipv4Addr::new(100, 64, 0, 0), 10),
+            (Ipv4Addr::new(127, 0, 0, 0), 8),
+            (Ipv4Addr::new(172, 16, 0, 0), 12),
+            (Ipv4Addr::new(192, 168, 0, 0), 16),
+            (Ipv4Addr::new(224, 0, 0, 0), 4),
+        ];
+        let ranges: Vec<(u64, u64)> = ru_ipv4().map(|(net, len)| range_of(net, len)).collect();
+        for (net, len) in RESERVED {
+            let (start, end) = range_of(net, len);
+            assert!(
+                ranges.iter().all(|&(s, e)| e <= start || s >= end),
+                "пересечение с {net}/{len}"
+            );
+        }
     }
 
     #[test]
@@ -140,23 +177,23 @@ mod tests {
     }
 
     #[test]
-    fn ipv4_list_has_snapshot_size() {
-        assert!(ru_ipv4().count() > 1000);
+    fn ipv4_list_has_plausible_size() {
+        let count = ru_ipv4().count();
+        assert!((3000..=50000).contains(&count), "подсетей: {count}");
     }
 
     #[test]
-    fn ru_blocks_from_snapshot_are_listed() {
-        for addr in [
-            Ipv4Addr::new(2, 56, 24, 1),
-            Ipv4Addr::new(109, 232, 248, 1),
-            Ipv4Addr::new(217, 199, 254, 1),
-        ] {
-            assert!(ru_contains(addr), "нет {addr}");
-        }
+    fn header_count_matches_lines() {
+        let declared = IPV4_TEXT
+            .lines()
+            .find_map(|line| line.strip_prefix("# Подсетей: "))
+            .unwrap();
+        assert_eq!(declared.parse::<usize>().unwrap(), ru_ipv4().count());
     }
 
     #[test]
-    fn foreign_address_is_not_listed() {
+    fn foreign_resolvers_are_not_listed() {
         assert!(!ru_contains(Ipv4Addr::new(8, 8, 8, 8)));
+        assert!(!ru_contains(Ipv4Addr::new(1, 1, 1, 1)));
     }
 }

@@ -275,4 +275,23 @@ ripencc|*|ipv4|*|4|summary
         assert!(snapshot_date("2026-01-01").is_err());
         assert_eq!(snapshot_date("20260101").unwrap(), "2026-01-01");
     }
+
+    fn covers(body: &str, addr: &str) -> bool {
+        let addr = ip(addr);
+        prefixes_of(body).iter().any(|line| {
+            let (net, len) = line.split_once('/').unwrap();
+            let len: u32 = len.parse().unwrap();
+            let start = ip(net);
+            (start..start + (1 << (32 - len))).contains(&addr)
+        })
+    }
+
+    #[test]
+    fn output_covers_fixture_addresses() {
+        let (body, _) = build(FIXTURE).unwrap();
+        assert!(covers(&body, "10.0.0.5"));
+        assert!(covers(&body, "10.0.1.200"));
+        assert!(!covers(&body, "192.0.2.1"));
+        assert!(!covers(&body, "8.8.8.8"));
+    }
 }
