@@ -125,10 +125,10 @@ pub(crate) fn health(env: &Env) -> Result<()> {
 async fn ready(client: &Client) -> Result<String> {
     let status = client.status().await?;
     if !status.xray.running {
-        bail!("xray не запущен");
+        bail!("xray не запущен; подробности: raycat status");
     }
     let Some(node) = &status.node else {
-        bail!("узел не выбран: подписки ещё не дали рабочих узлов");
+        bail!("узел не выбран: подписки ещё не дали рабочих узлов; подробности: raycat status");
     };
     Ok(format!("готов: xray работает, узел {}", sanitize(&node.id)))
 }
@@ -214,12 +214,31 @@ async fn update(client: &Client, term: Term, json: bool, subscription: Option<&s
     }
     let failed = render::failed(&updates);
     if failed > 0 {
-        bail!(
-            "не удалось обновить подписок: {failed} из {}",
-            updates.results.len()
-        );
+        bail!("{}", not_updated(failed, updates.results.len()));
     }
     Ok(())
+}
+
+/// «подписка» для 1, 21, 101; «подписки» для 2–4, 22–24; «подписок» в остальных случаях,
+/// включая 11–14.
+fn subscriptions_word(count: usize) -> &'static str {
+    let last = count % 10;
+    let tens = count % 100;
+    if last == 1 && tens != 11 {
+        "подписка"
+    } else if (2..=4).contains(&last) && !(12..=14).contains(&tens) {
+        "подписки"
+    } else {
+        "подписок"
+    }
+}
+
+fn not_updated(failed: usize, total: usize) -> String {
+    let verb = match subscriptions_word(failed) {
+        "подписка" => "обновилась",
+        _ => "обновились",
+    };
+    format!("не {verb} {failed} {} из {total}", subscriptions_word(failed))
 }
 
 async fn events(client: &Client, term: Term, json: bool) -> Result<()> {
@@ -357,6 +376,28 @@ mod tests {
         let error = resolve(&sample(), "\x1b[2J").unwrap_err();
         assert!(!error.to_string().contains('\x1b'));
     }
+
+    #[test]
+    fn the_word_for_subscriptions_follows_the_count() {
+        for count in [1, 21, 101] {
+            assert_eq!(subscriptions_word(count), "подписка", "{count}");
+        }
+        for count in [2, 3, 4, 22, 24, 102] {
+            assert_eq!(subscriptions_word(count), "подписки", "{count}");
+        }
+        for count in [0, 5, 11, 12, 14, 20, 25, 111, 112] {
+            assert_eq!(subscriptions_word(count), "подписок", "{count}");
+        }
+    }
+
+    #[test]
+    fn the_update_failure_agrees_with_the_count() {
+        assert_eq!(not_updated(1, 1), "не обновилась 1 подписка из 1");
+        assert_eq!(not_updated(2, 3), "не обновились 2 подписки из 3");
+        assert_eq!(not_updated(5, 7), "не обновились 5 подписок из 7");
+        assert_eq!(not_updated(11, 12), "не обновились 11 подписок из 12");
+        assert_eq!(not_updated(21, 22), "не обновилась 21 подписка из 22");
+    }
 }
 
 #[cfg(test)]
@@ -433,7 +474,7 @@ mod health_tests {
     async fn a_stopped_xray_is_not_ready() {
         let fake = fake(status_json(false, Some(NODE)));
         let error = ready(&Client::new(fake.socket.clone())).await.unwrap_err();
-        assert_eq!(error.to_string(), "xray не запущен");
+        assert_eq!(error.to_string(), "xray не запущен; подробности: raycat status");
     }
 
     #[tokio::test]
@@ -441,6 +482,7 @@ mod health_tests {
         let fake = fake(status_json(true, None));
         let error = ready(&Client::new(fake.socket.clone())).await.unwrap_err();
         assert!(error.to_string().starts_with("узел не выбран"), "{error}");
+        assert!(error.to_string().ends_with("подробности: raycat status"), "{error}");
     }
 
     #[tokio::test]
@@ -452,13 +494,13 @@ mod health_tests {
     }
 
     #[tokio::test]
-    async fn a_missing_daemon_is_one_line_about_the_socket() {
+    async fn a_missing_daemon_says_how_to_start_it() {
         let temp = TempDir::new("health-missing");
         let socket = temp.path().join("none.sock");
         let error = ready(&Client::new(socket)).await.unwrap_err();
         let text = error.to_string();
-        assert!(text.contains("демон не запущен"), "{text}");
-        assert!(!text.contains('\n'), "{text}");
+        assert!(text.starts_with("raycat не запущен\n"), "{text}");
+        assert!(text.contains("systemctl start raycat"), "{text}");
     }
 
     #[tokio::test]
@@ -473,6 +515,6 @@ mod health_tests {
         });
         let client = Client::with_timeout(socket, Duration::from_millis(100));
         let error = ready(&client).await.unwrap_err();
-        assert_eq!(error.to_string(), "демон не ответил вовремя");
+        assert!(error.to_string().starts_with("raycat не ответил вовремя\n"), "{error}");
     }
 }

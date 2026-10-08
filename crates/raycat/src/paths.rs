@@ -11,6 +11,9 @@ const DEFAULT_CONFIG: &str = "/etc/raycat/config.toml";
 const ROOT_STATE_DIR: &str = "/var/lib/raycat";
 const SOCKET_VAR: &str = "RAYCAT_SOCKET";
 const ROOT_SOCKET: &str = "/run/raycat/raycat.sock";
+const IMAGE_SOCKET: &str = "/var/lib/raycat/raycat.sock";
+/// Где клиент ищет демона, если его собственный путь не существует.
+const FALLBACK_SOCKETS: [&str; 2] = [ROOT_SOCKET, IMAGE_SOCKET];
 
 pub(crate) fn environment() -> Env {
     std::env::vars_os()
@@ -79,9 +82,35 @@ pub(crate) fn socket_path(env: &Env, root: bool, state: &Path) -> PathBuf {
     state.join("raycat.sock")
 }
 
-/// Сокет для клиентских команд: тот же путь, что выбирает демон, но каталог
-/// состояния нужен, только если сокет лежит в нём.
+/// Сокет для клиентских команд. `RAYCAT_SOCKET` задан: только он. Иначе первый
+/// существующий из: путь, который выбрал бы демон, затем служба от root, затем образ Docker.
 pub(crate) fn client_socket(env: &Env, root: bool) -> Result<PathBuf> {
+    client_socket_where(env, root, Path::exists)
+}
+
+fn client_socket_where(env: &Env, root: bool, exists: impl Fn(&Path) -> bool) -> Result<PathBuf> {
+    let own = own_socket(env, root);
+    if set(env, SOCKET_VAR).is_some() {
+        return own;
+    }
+    if let Ok(path) = own.as_ref()
+        && exists(path)
+    {
+        return Ok(path.clone());
+    }
+    match FALLBACK_SOCKETS
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|path| exists(path))
+    {
+        Some(path) => Ok(path),
+        None => own,
+    }
+}
+
+/// Путь, который выбрал бы демон. Без каталога состояния годится, только если
+/// сокет лежит вне него.
+fn own_socket(env: &Env, root: bool) -> Result<PathBuf> {
     match state_dir(env, root) {
         Ok(state) => Ok(socket_path(env, root, &state)),
         Err(error) => {
@@ -212,24 +241,79 @@ mod tests {
         );
     }
 
+    fn present(list: &'static [&'static str]) -> impl Fn(&Path) -> bool {
+        move |path| list.iter().any(|item| path == Path::new(*item))
+    }
+
     #[test]
     fn the_client_needs_a_state_dir_only_when_the_socket_is_there() {
+        let nothing = present(&[]);
         let explicit = env(&[("RAYCAT_SOCKET", "/tmp/x.sock")]);
         assert_eq!(
-            client_socket(&explicit, false).unwrap(),
+            client_socket_where(&explicit, false, nothing).unwrap(),
             PathBuf::from("/tmp/x.sock")
         );
         let xdg = env(&[("XDG_RUNTIME_DIR", "/run/user/1000")]);
         assert_eq!(
-            client_socket(&xdg, false).unwrap(),
+            client_socket_where(&xdg, false, nothing).unwrap(),
             PathBuf::from("/run/user/1000/raycat.sock")
         );
         assert_eq!(
-            client_socket(&env(&[]), true).unwrap(),
+            client_socket_where(&env(&[]), true, nothing).unwrap(),
             PathBuf::from("/run/raycat/raycat.sock")
         );
-        let error = client_socket(&env(&[]), false).unwrap_err();
+        let error = client_socket_where(&env(&[]), false, nothing).unwrap_err();
         assert!(error.to_string().contains("RAYCAT_STATE_DIR"));
+    }
+
+    #[test]
+    fn an_explicit_socket_is_the_only_one_tried() {
+        let explicit = env(&[("RAYCAT_SOCKET", "/tmp/x.sock")]);
+        let path = client_socket_where(&explicit, false, present(&[ROOT_SOCKET])).unwrap();
+        assert_eq!(path, PathBuf::from("/tmp/x.sock"));
+    }
+
+    #[test]
+    fn the_own_socket_wins_when_it_exists() {
+        let xdg = env(&[("XDG_RUNTIME_DIR", "/run/user/1000")]);
+        let all = &["/run/user/1000/raycat.sock", ROOT_SOCKET, IMAGE_SOCKET];
+        let path = client_socket_where(&xdg, false, present(all)).unwrap();
+        assert_eq!(path, PathBuf::from("/run/user/1000/raycat.sock"));
+    }
+
+    #[test]
+    fn a_user_finds_the_service_socket_when_its_own_is_missing() {
+        let xdg = env(&[("XDG_RUNTIME_DIR", "/run/user/1000")]);
+        let path = client_socket_where(&xdg, false, present(&[ROOT_SOCKET])).unwrap();
+        assert_eq!(path, PathBuf::from(ROOT_SOCKET));
+    }
+
+    #[test]
+    fn the_service_socket_beats_the_image_one() {
+        let xdg = env(&[("XDG_RUNTIME_DIR", "/run/user/1000")]);
+        let both = &[IMAGE_SOCKET, ROOT_SOCKET];
+        let path = client_socket_where(&xdg, false, present(both)).unwrap();
+        assert_eq!(path, PathBuf::from(ROOT_SOCKET));
+    }
+
+    #[test]
+    fn the_image_socket_is_the_last_resort() {
+        let xdg = env(&[("XDG_RUNTIME_DIR", "/run/user/1000")]);
+        let path = client_socket_where(&xdg, false, present(&[IMAGE_SOCKET])).unwrap();
+        assert_eq!(path, PathBuf::from(IMAGE_SOCKET));
+    }
+
+    #[test]
+    fn without_a_state_dir_the_service_socket_is_still_found() {
+        let path = client_socket_where(&env(&[]), false, present(&[ROOT_SOCKET])).unwrap();
+        assert_eq!(path, PathBuf::from(ROOT_SOCKET));
+    }
+
+    #[test]
+    fn without_any_socket_the_own_path_is_named() {
+        let xdg = env(&[("XDG_RUNTIME_DIR", "/run/user/1000")]);
+        let path = client_socket_where(&xdg, false, present(&[])).unwrap();
+        assert_eq!(path, PathBuf::from("/run/user/1000/raycat.sock"));
     }
 
     #[test]
