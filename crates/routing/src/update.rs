@@ -49,8 +49,9 @@ fn build(text: &str) -> Result<(String, Summary)> {
 fn parse(text: &str) -> Result<(String, Vec<(u64, u64)>)> {
     let mut lines = text.lines().filter(|line| !line.starts_with('#'));
     let header = lines.next().context("пустой файл статистики")?;
+    // Поле серийного номера в заголовке — Unix-время, дата снимка — конец периода (ГГГГММДД).
     let date = match header.split('|').collect::<Vec<_>>().as_slice() {
-        ["2", "ripencc", serial, ..] => snapshot_date(serial)?,
+        ["2", "ripencc", _, _, _, end, ..] => snapshot_date(end)?,
         _ => bail!("заголовок статистики не распознан: нужны версия 2 и ripencc"),
     };
 
