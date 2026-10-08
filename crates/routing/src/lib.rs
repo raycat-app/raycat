@@ -130,8 +130,31 @@ mod tests {
     }
 
     #[test]
-    fn data_date_is_absent_until_snapshot_is_built() {
-        assert_eq!(data_date(), None);
+    fn data_date_is_iso_date() {
+        let date = data_date().unwrap();
+        assert_eq!(date.len(), 10);
+        assert!(
+            date.bytes().enumerate().all(|(i, b)| match i {
+                4 | 7 => b == b'-',
+                _ => b.is_ascii_digit(),
+            })
+        );
+    }
+
+    #[test]
+    fn ipv4_list_has_snapshot_size() {
+        assert!(ru_ipv4().count() > 1000);
+    }
+
+    #[test]
+    fn ru_blocks_from_snapshot_are_listed() {
+        for addr in [
+            Ipv4Addr::new(2, 56, 24, 1),
+            Ipv4Addr::new(109, 232, 248, 1),
+            Ipv4Addr::new(217, 199, 254, 1),
+        ] {
+            assert!(ru_contains(addr), "нет {addr}");
+        }
     }
 
     #[test]
