@@ -7,7 +7,7 @@ use raycat_config::Env;
 
 const CONFIG_VAR: &str = "RAYCAT_CONFIG";
 const STATE_VAR: &str = "RAYCAT_STATE_DIR";
-const DEFAULT_CONFIG: &str = "/etc/raycat/config.toml";
+pub(crate) const DEFAULT_CONFIG: &str = "/etc/raycat/config.toml";
 const ROOT_STATE_DIR: &str = "/var/lib/raycat";
 const SOCKET_VAR: &str = "RAYCAT_SOCKET";
 const ROOT_SOCKET: &str = "/run/raycat/raycat.sock";

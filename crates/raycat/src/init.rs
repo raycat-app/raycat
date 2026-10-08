@@ -1,6 +1,7 @@
 //! `raycat init`: мастер файла настроек. Спрашивает то, что не задано флагами, пишет файл
 //! с правами 0600 и проверяет его той же загрузкой, что делает демон.
 
+use std::fmt;
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, BufRead, IsTerminal as _, Write};
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
@@ -14,13 +15,16 @@ use raycat_subscription::redact;
 use crate::cli;
 use crate::paths;
 
-const DEFAULT_CONFIG: &str = "/etc/raycat/config.toml";
 const SCHEMA_LINE: &str =
     "#:schema https://raw.githubusercontent.com/raycat-app/raycat/main/deploy/config.schema.json";
 const SYSTEMD_DIR: &str = "/run/systemd/system";
 const SUBSCRIPTION_NAME: &str = "main";
 const MAX_LINK_FILE_BYTES: usize = 4096;
-const INTERRUPT: char = '\u{3}';
+const CTRL_C: u8 = 0x03;
+const CTRL_D: u8 = 0x04;
+const BACKSPACE: u8 = 0x08;
+const DELETE: u8 = 0x7f;
+const INTERRUPTED_EXIT: i32 = 130;
 const APP_OPTIONS: [&str; 2] = ["Happ", "INCY"];
 const PLATFORM_OPTIONS: [&str; 2] = ["Windows", "Android"];
 const MODE_OPTIONS: [&str; 3] = [
@@ -176,11 +180,21 @@ fn link_problem(url: &str) -> Option<String> {
 }
 
 pub(crate) fn run(sub: &ArgMatches, env: &Env) -> Result<()> {
+    match wizard(sub, env) {
+        Err(error) if error.is::<Interrupted>() => {
+            let _ = writeln!(io::stderr(), "\n{error}");
+            std::process::exit(INTERRUPTED_EXIT);
+        }
+        other => other,
+    }
+}
+
+fn wizard(sub: &ArgMatches, env: &Env) -> Result<()> {
     let flags = Flags::from_matches(sub)?;
     // Тот же выбор, что у демона (`--config`, затем RAYCAT_CONFIG). Файл по умолчанию
     // берётся всегда: `|_| true` говорит, что он есть, и путь не зависит от наличия файла.
     let path = paths::config_file(flags.config.as_deref(), env, |_| true)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG));
+        .unwrap_or_else(|| PathBuf::from(paths::DEFAULT_CONFIG));
     check_overwrite(&path, flags.force)?;
     let link = flags.link()?;
     let answers = if io::stdin().is_terminal() && io::stdout().is_terminal() {
@@ -299,22 +313,40 @@ impl<R: BufRead, W: Write> Dialog<R, W> {
     fn ask(&mut self, prompt: &str, secret: bool) -> Result<String> {
         write!(self.output, "{prompt}")?;
         self.output.flush()?;
-        let hide = secret && self.terminal;
-        let mut line = String::new();
-        let read = {
-            let _echo = hide.then(SecretEcho::enable).transpose()?;
-            self.input.read_line(&mut line)?
-        };
-        if hide {
-            writeln!(self.output)?;
+        if secret {
+            let text = self.read_secret()?;
+            if self.terminal {
+                writeln!(self.output)?;
+            }
+            return Ok(text);
         }
-        if read == 0 {
+        let mut line = String::new();
+        if self.input.read_line(&mut line)? == 0 {
             bail!("ввод закончился до ответа, настройки не записаны");
         }
-        if line.contains(INTERRUPT) {
-            bail!("ввод прерван, настройки не записаны");
-        }
         Ok(line)
+    }
+
+    /// Ссылка читается по байтам: на экран ничего не выводится. На настоящем терминале на
+    /// время ввода выключаются построчный режим, эхо и сигналы; атрибуты вернутся при выходе.
+    fn read_secret(&mut self) -> Result<String> {
+        let _raw = if self.terminal {
+            Some(RawInput::enable()?)
+        } else {
+            None
+        };
+        let mut hidden = Hidden::default();
+        loop {
+            let Some(byte) = self.input.fill_buf()?.first().copied() else {
+                bail!("ввод закончился до ответа, настройки не записаны");
+            };
+            self.input.consume(1);
+            match hidden.push(byte) {
+                Step::Continue => {}
+                Step::Finish => return Ok(hidden.text()),
+                Step::Interrupt => return Err(Interrupted.into()),
+            }
+        }
     }
 
     fn ask_link(&mut self) -> Result<String> {
@@ -374,28 +406,85 @@ fn choice_index(answer: &str, count: usize, default: usize) -> Option<usize> {
     }
 }
 
-/// Выключает эхо и сигналы терминала на время ввода ссылки. Тогда Ctrl+C приходит
-/// символом и не убивает процесс, оставив терминал без эха. Прежние настройки
-/// возвращаются при выходе из области видимости.
-struct SecretEcho {
+/// Неканонический режим без эха и сигналов на время ввода ссылки. Ctrl+C приходит байтом,
+/// а не сигналом. Исходные атрибуты возвращаются в `Drop` при любом выходе из функции.
+struct RawInput {
     original: libc::termios,
 }
 
-impl SecretEcho {
+impl RawInput {
     fn enable() -> io::Result<Self> {
         let original = read_attributes()?;
-        let mut hidden = read_attributes()?;
-        hidden.c_lflag &= !(libc::ECHO | libc::ISIG);
-        write_attributes(&hidden)?;
+        let mut raw = read_attributes()?;
+        raw.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
+        raw.c_cc[libc::VMIN] = 1;
+        raw.c_cc[libc::VTIME] = 0;
+        write_attributes(&raw)?;
         Ok(Self { original })
     }
 }
 
-impl Drop for SecretEcho {
+impl Drop for RawInput {
     fn drop(&mut self) {
         let _ = write_attributes(&self.original);
     }
 }
+
+/// Что делает очередной байт ввода ссылки.
+#[derive(Debug, PartialEq, Eq)]
+enum Step {
+    Continue,
+    Finish,
+    Interrupt,
+}
+
+/// Ввод ссылки по байтам. Символы копятся как байты UTF-8, стирание удаляет целый символ.
+#[derive(Debug, Default)]
+struct Hidden {
+    bytes: Vec<u8>,
+}
+
+impl Hidden {
+    fn push(&mut self, byte: u8) -> Step {
+        match byte {
+            b'\r' | b'\n' => Step::Finish,
+            CTRL_C => Step::Interrupt,
+            CTRL_D if self.bytes.is_empty() => Step::Interrupt,
+            BACKSPACE | DELETE => {
+                self.delete_char();
+                Step::Continue
+            }
+            0x00..=0x1f => Step::Continue,
+            _ => {
+                self.bytes.push(byte);
+                Step::Continue
+            }
+        }
+    }
+
+    /// Начало последнего символа — последний байт, который не продолжение UTF-8.
+    fn delete_char(&mut self) {
+        if let Some(start) = self.bytes.iter().rposition(|byte| (byte & 0xC0) != 0x80) {
+            self.bytes.truncate(start);
+        }
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.bytes).into_owned()
+    }
+}
+
+/// Ввод прерван Ctrl+C или Ctrl+D на пустой строке.
+#[derive(Debug)]
+struct Interrupted;
+
+impl fmt::Display for Interrupted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("прервано")
+    }
+}
+
+impl std::error::Error for Interrupted {}
 
 #[allow(unsafe_code)]
 fn read_attributes() -> io::Result<libc::termios> {
@@ -865,6 +954,84 @@ mod tests {
         assert!(save(&path, "не TOML {", &Env::new()).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), text);
         assert!(!temp.path().join("config.toml.bak").exists());
+    }
+
+    fn feed(hidden: &mut Hidden, bytes: &[u8]) -> Step {
+        let mut last = Step::Continue;
+        for &byte in bytes {
+            last = hidden.push(byte);
+            if last != Step::Continue {
+                break;
+            }
+        }
+        last
+    }
+
+    #[test]
+    fn enter_ends_the_link_on_cr_or_lf() {
+        let mut hidden = Hidden::default();
+        assert_eq!(feed(&mut hidden, b"abc"), Step::Continue);
+        assert_eq!(hidden.text(), "abc");
+        assert_eq!(feed(&mut hidden, b"\r"), Step::Finish);
+        assert_eq!(feed(&mut Hidden::default(), b"\n"), Step::Finish);
+    }
+
+    #[test]
+    fn backspace_removes_a_whole_cyrillic_letter() {
+        let mut hidden = Hidden::default();
+        feed(&mut hidden, "аб".as_bytes());
+        feed(&mut hidden, &[DELETE]);
+        assert_eq!(hidden.text(), "а");
+        feed(&mut hidden, &[BACKSPACE]);
+        assert_eq!(hidden.text(), "");
+        feed(&mut hidden, &[DELETE]);
+        assert_eq!(hidden.text(), "");
+    }
+
+    #[test]
+    fn ctrl_c_interrupts_at_any_point() {
+        assert_eq!(feed(&mut Hidden::default(), &[CTRL_C]), Step::Interrupt);
+        let mut hidden = Hidden::default();
+        feed(&mut hidden, b"https://");
+        assert_eq!(feed(&mut hidden, &[CTRL_C]), Step::Interrupt);
+    }
+
+    #[test]
+    fn ctrl_d_interrupts_only_on_an_empty_line() {
+        assert_eq!(feed(&mut Hidden::default(), &[CTRL_D]), Step::Interrupt);
+        let mut hidden = Hidden::default();
+        feed(&mut hidden, b"a");
+        assert_eq!(feed(&mut hidden, &[CTRL_D]), Step::Continue);
+        assert_eq!(hidden.text(), "a");
+    }
+
+    #[test]
+    fn other_control_bytes_are_ignored() {
+        let mut hidden = Hidden::default();
+        assert_eq!(feed(&mut hidden, &[0x01, 0x07, 0x09, 0x1b]), Step::Continue);
+        feed(&mut hidden, b"x");
+        assert_eq!(hidden.text(), "x");
+    }
+
+    #[test]
+    fn utf8_text_comes_back_intact() {
+        let mut hidden = Hidden::default();
+        feed(&mut hidden, "ссылка/ü".as_bytes());
+        assert_eq!(hidden.text(), "ссылка/ü");
+    }
+
+    #[test]
+    fn backspace_in_the_link_question_edits_the_input() {
+        let input = format!("ab\u{7f}\u{7f}{URL}\n");
+        let mut dialog = scripted(&input);
+        assert_eq!(dialog.ask_link().unwrap(), URL);
+    }
+
+    #[test]
+    fn ctrl_c_in_the_link_question_is_an_interruption() {
+        let mut dialog = scripted("ab\u{3}\n");
+        let error = dialog.ask_link().unwrap_err();
+        assert!(error.is::<Interrupted>());
     }
 
     #[test]
