@@ -49,6 +49,20 @@ pub(crate) fn format_moment(unix: u64, now: u64, zone: &TimeZone) -> String {
     }
 }
 
+/// Полная дата и время для журнала: `2026-10-08 16:43:05`.
+pub(crate) fn format_stamp(unix: u64, zone: &TimeZone) -> String {
+    let at = local(unix, zone);
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        at.year(),
+        at.month(),
+        at.day(),
+        at.hour(),
+        at.minute(),
+        at.second()
+    )
+}
+
 /// Дата срока подписки: `08.10.2026`.
 pub(crate) fn format_date(unix: u64, zone: &TimeZone) -> String {
     let at = local(unix, zone);
@@ -162,6 +176,15 @@ mod tests {
         assert_eq!(format_moment(late, NOW, &moscow), "29.09 01:30");
         assert_eq!(format_date(late, &TimeZone::UTC), "28.09.2026");
         assert_eq!(format_date(late, &moscow), "29.09.2026");
+    }
+
+    #[test]
+    fn log_stamp_has_the_full_date_in_the_zone() {
+        let late = NOW + 37_800;
+        let moscow = TimeZone::fixed(offset(3));
+        assert_eq!(format_stamp(0, &TimeZone::UTC), "1970-01-01 00:00:00");
+        assert_eq!(format_stamp(NOW, &TimeZone::UTC), "2026-09-28 12:00:00");
+        assert_eq!(format_stamp(late, &moscow), "2026-09-29 01:30:00");
     }
 
     #[test]
