@@ -510,9 +510,8 @@ mod tests {
 
     #[test]
     fn proxy_rules_point_at_the_balancer() {
-        let config = with_routing(
-            "[[routing.rule]]\nips = [\"203.0.113.0/24\"]\naction = \"proxy\"\n",
-        );
+        let config =
+            with_routing("[[routing.rule]]\nips = [\"203.0.113.0/24\"]\naction = \"proxy\"\n");
         let json = routing_json(&config);
 
         assert_eq!(

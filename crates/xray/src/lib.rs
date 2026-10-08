@@ -9,5 +9,5 @@ pub use compile::{
 };
 pub use node::Node;
 pub use settings::{
-    Action, Credentials, Domain, DnsSettings, Mode, ProbeSettings, Rule, Settings, Subnet,
+    Action, Credentials, DnsSettings, Domain, Mode, ProbeSettings, Rule, Settings, Subnet,
 };

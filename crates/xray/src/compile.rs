@@ -283,8 +283,7 @@ fn route(field: &str, value: Value, action: Action) -> Value {
 }
 
 fn inbounds(mode: &Mode, by_domain: bool) -> Vec<Value> {
-    let mut sniffing =
-        json!({"enabled": true, "destOverride": ["http", "tls", "quic", "fakedns"]});
+    let mut sniffing = json!({"enabled": true, "destOverride": ["http", "tls", "quic", "fakedns"]});
     // Адрес соединения остаётся настоящим: fake-IP xray подменяет сам, поэтому
     // routeOnly безопасен рядом с fakedns.
     if by_domain {
