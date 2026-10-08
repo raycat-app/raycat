@@ -253,7 +253,11 @@ mod tests {
         assert!(parse_size("1.5MB").is_err());
         assert!(parse_size("MB").unwrap_err().contains("число"));
         assert!(parse_size("999KB").unwrap_err().contains("не меньше 1 МБ"));
-        assert!(parse_size("201MB").unwrap_err().contains("не больше 200 МБ"));
+        assert!(
+            parse_size("201MB")
+                .unwrap_err()
+                .contains("не больше 200 МБ")
+        );
         assert!(parse_size("99999999999999999999GB").is_err());
     }
 
@@ -362,10 +366,7 @@ mod tests {
                 }
                 raw.push(byte[0]);
             }
-            let head = format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
-                body.len()
-            );
+            let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
             sock.write_all(head.as_bytes()).unwrap();
             sock.write_all(body.as_bytes()).unwrap();
         });

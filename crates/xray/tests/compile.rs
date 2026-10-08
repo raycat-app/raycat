@@ -1020,7 +1020,11 @@ fn speedtest_inbound_exists_only_when_asked() {
             "settings": {"auth": "noauth"}
         })
     );
-    let balancer_rule = config["routing"]["rules"].as_array().unwrap().last().unwrap();
+    let balancer_rule = config["routing"]["rules"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
     assert_eq!(balancer_rule["balancerTag"], "auto");
     assert!(balancer_rule.get("inboundTag").is_none());
 }

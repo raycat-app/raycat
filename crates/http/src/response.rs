@@ -270,7 +270,9 @@ pub(crate) fn stream_response(
         if chunked {
             stream_chunked(&mut reader, sink)?;
         } else if let Some(len) = header_value(&head.headers, "content-length") {
-            let len: u64 = len.parse().map_err(|_| anyhow!("неверный Content-Length"))?;
+            let len: u64 = len
+                .parse()
+                .map_err(|_| anyhow!("неверный Content-Length"))?;
             pump(&mut reader, len, sink)?;
         } else {
             pump_to_close(&mut reader, sink)?;
@@ -294,7 +296,9 @@ fn pump(
     let mut buf = [0u8; COPY_BYTES];
     while left > 0 {
         let want = usize::try_from(left).map_or(COPY_BYTES, |n| n.min(COPY_BYTES));
-        let read = reader.read(&mut buf[..want]).context("чтение тела ответа")?;
+        let read = reader
+            .read(&mut buf[..want])
+            .context("чтение тела ответа")?;
         if read == 0 {
             bail!("соединение закрыто посреди тела ответа");
         }

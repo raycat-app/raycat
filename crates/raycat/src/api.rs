@@ -866,13 +866,7 @@ mod tests {
     #[tokio::test]
     async fn speedtest_is_checked_then_answered_by_the_daemon() {
         let fixture = fixture();
-        let (code, body) = json(
-            &fixture.socket,
-            "POST",
-            "/v1/speedtest",
-            r#"{"size":500}"#,
-        )
-        .await;
+        let (code, body) = json(&fixture.socket, "POST", "/v1/speedtest", r#"{"size":500}"#).await;
         assert_eq!(code, 400);
         assert!(body["error"].as_str().unwrap().contains("не меньше 1 МБ"));
 

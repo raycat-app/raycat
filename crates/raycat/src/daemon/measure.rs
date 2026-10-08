@@ -217,10 +217,7 @@ async fn wait_applied(shared: &Shared, tag: &str, timeout: Duration) -> Result<(
 /// Отправляет демону команду вернуть закрепление и ждёт подтверждения.
 async fn restore(shared: &Shared, previous: Option<PinTarget>) {
     let (ack, acked) = oneshot::channel();
-    if shared.command(Command::SpeedtestRestore {
-        pin: previous,
-        ack,
-    }) {
+    if shared.command(Command::SpeedtestRestore { pin: previous, ack }) {
         let _ = acked.await;
     }
 }
@@ -310,10 +307,7 @@ mod tests {
                 read_head(&mut sock);
                 let _ = sock.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n");
                 read_head(&mut sock);
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
-                    body.len()
-                );
+                let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
                 let _ = sock.write_all(head.as_bytes());
                 let _ = sock.write_all(body.as_bytes());
             }
