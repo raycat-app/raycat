@@ -154,7 +154,7 @@ jobs:
           save-if: ${{ env.CACHE_SAVE }}
           cache-on-failure: true
           add-rust-environment-hash-key: false
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         with:
           tool: cargo-nextest
       - run: cargo nextest run --workspace --all-features --locked
@@ -198,7 +198,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         with:
           tool: cargo-deny
       - run: cargo deny --config .cargo/deny.toml --log-level warn --manifest-path ./Cargo.toml --all-features check
@@ -219,7 +219,7 @@ jobs:
         with:
           persist-credentials: false
       # actionlint проверяет run-скрипты через shellcheck, если он есть.
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         with:
           tool: shellcheck
       - name: actionlint
@@ -706,7 +706,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         with:
           tool: shellcheck
       - name: shellcheck
