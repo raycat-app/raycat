@@ -38,12 +38,16 @@ jobs:
     name: Уязвимости зависимостей
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
         with:
-          command: check advisories
+          tool: cargo-deny
+      - run: cargo deny --config .cargo/deny.toml --log-level warn --manifest-path ./Cargo.toml --all-features check advisories
