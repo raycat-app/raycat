@@ -49,7 +49,7 @@ raycat-subscription = { path = "crates/subscription" }
 raycat-xray = { path = "crates/xray" }
 raycat-xray-api = { path = "crates/xray-api" }
 ring = "0.17"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 ruzstd = { version = "0.9.1", default-features = false, features = ["std"] }
 schemars = { version = "1.2", default-features = false, features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
