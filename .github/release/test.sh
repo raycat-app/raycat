@@ -124,9 +124,20 @@ check "auto: без dev-сборок продвигать нечего" false "$
 } >"$work/commits.jsonl"
 {
   bd v0.2.0-dev.1 c1 $((4 * DAY))
-  bd v0.2.0-dev.2 c2 $((2 * DAY))
+  bd v0.2.0-dev.2 c2 $((23 * 3600))
 } >"$work/builds.jsonl"
-check "auto: смена версии xray ждёт 3 суток" "true v0.2.0-dev.1 0.2.0" "$(plan --last 0.1.0 | summary)"
+check "auto: смена версии xray ждёт сутки" "true v0.2.0-dev.1 0.2.0" "$(plan --last 0.1.0 | summary)"
+{
+  bd v0.2.0-dev.1 c1 $((4 * DAY))
+  bd v0.2.0-dev.2 c2 $((25 * 3600))
+} >"$work/builds.jsonl"
+check "auto: смена версии xray выдержана за сутки" "true v0.2.0-dev.2 0.2.0" "$(plan --last 0.1.0 | summary)"
+{
+  cm c1 "chore: версия xray" '["versions.toml"]'
+  cm c2 "chore: версия и код" '["versions.toml","crates/raycat/src/main.rs"]'
+} >"$work/commits.jsonl"
+check "классы: версия xray отдельно, а с кодом — код" "xray,code" "$(plan --last 0.1.0 | jq -r '[.entries[].category] | join(",")')"
+check "сроки: версия xray 24 ч, с кодом 72 ч" "24,72" "$(plan --last 0.1.0 | jq -r '[.entries[].wait / 3600] | join(",")')"
 
 {
   cm c1 "feat: возможность" "$SRC"
@@ -205,7 +216,7 @@ check "нет изменений: продвигать нечего" false "$(pl
   cm c8 "chore: конфиг" "$SRC" '[]' true
 } >"$work/commits.jsonl"
 check "классы коммитов" "xray,emulation,emulation,code,code,breaking,hotfix,breaking" "$(plan --last 0.1.0 | jq -r '[.entries[].category] | join(",")')"
-check "сроки коммитов, ч" "72,24,24,72,72,72,0,72" "$(plan --last 0.1.0 | jq -r '[.entries[].wait / 3600] | join(",")')"
+check "сроки коммитов, ч" "24,24,24,72,72,72,0,72" "$(plan --last 0.1.0 | jq -r '[.entries[].wait / 3600] | join(",")')"
 
 # Заметки
 
