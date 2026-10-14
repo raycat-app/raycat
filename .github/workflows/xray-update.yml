@@ -1,0 +1,299 @@
+name: Обновление xray
+
+# Раз в сутки берёт самый новый релиз XTLS/Xray-core и, если он новее versions.toml, открывает
+# PR бота «build: xray <версия>»: версия, суммы архивов linux, коммит тега для сборки noaes и
+# директива go из go.mod upstream. Обязательные проверки бот запускает сам и сливает PR, если
+# они зелёные. Если что-то не вышло, заводится issue (одно на версию). Новая версия не
+# предлагается, пока открыт PR бота или уже был PR этой версии. Версия только вперёд.
+#
+# Ручной запуск: version — конкретная версия без v (пусто — последняя), dry_run — только
+# собрать versions.toml в артефакт xray-update, без ветки и PR.
+#
+# События GITHUB_TOKEN не запускают другие workflow, поэтому обязательные проверки ruleset
+# («Итог» из ci.yml и «Заголовок PR» из pr-title.yml) бот запускает сам через workflow_dispatch
+# на ветке PR и публикует их результат статусами коммита с теми же именами.
+
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Версия xray без v (пусто — последняя опубликованная)
+        type: string
+        default: ""
+      dry_run:
+        description: Только собрать versions.toml в артефакт, без ветки и PR
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: xray-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Версия и PR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      version: ${{ steps.target.outputs.version }}
+      pr: ${{ steps.pr.outputs.number }}
+      sha: ${{ steps.commit.outputs.sha }}
+      branch: ${{ steps.commit.outputs.branch }}
+    env:
+      REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Новая версия
+        id: target
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          current=$(sed -n 's/^version = "\(.*\)"$/\1/p' versions.toml | head -n 1)
+          [ -n "$current" ] || { echo "::error::версия xray в versions.toml не прочитана"; exit 1; }
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          gh api "repos/XTLS/Xray-core/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+          version=$(bash .github/xray/select.sh "$RUNNER_TEMP/releases.json" "$current" "$INPUT_VERSION")
+          if [ -n "$version" ] && [ "$DRY_RUN" != true ]; then
+            open=$(gh pr list -R "$REPO" --state open --json headRefName --jq '[.[] | select(.headRefName | startswith("bot/xray-"))] | length')
+            known=$(gh pr list -R "$REPO" --head "bot/xray-$version" --state all --json number --jq length)
+            if [ "$open" != 0 ]; then
+              echo "::notice::открыт PR бота xray, версия $version подождёт его слияния"
+              version=
+            elif [ "$known" != 0 ]; then
+              echo "::notice::PR для xray $version уже был, новый не открывается"
+              version=
+            fi
+          fi
+          [ -n "$version" ] || echo "::notice::новой версии xray нет (в versions.toml $current)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Архивы и .dgst
+        if: ${{ steps.target.outputs.version != '' }}
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/xray"
+          for archive in Xray-linux-64.zip Xray-linux-arm64-v8a.zip Xray-linux-arm32-v7a.zip; do
+            for file in "$archive" "$archive.dgst"; do
+              curl -fsSL --retry 3 -o "$RUNNER_TEMP/xray/$file" "https://github.com/XTLS/Xray-core/releases/download/v$VERSION/$file"
+            done
+          done
+      - name: Коммит тега и go.mod
+        id: tag
+        if: ${{ steps.target.outputs.version != '' }}
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          ref=$(gh api "repos/XTLS/Xray-core/git/ref/tags/v$VERSION" --jq '.object.type + " " + .object.sha')
+          read -r kind sha <<<"$ref"
+          while [ "$kind" = tag ]; do
+            ref=$(gh api "repos/XTLS/Xray-core/git/tags/$sha" --jq '.object.type + " " + .object.sha')
+            read -r kind sha <<<"$ref"
+          done
+          [ "$kind" = commit ] || { echo "::error::тег v$VERSION не ведёт на коммит"; exit 1; }
+          echo "commit=$sha" >> "$GITHUB_OUTPUT"
+          gh api "repos/XTLS/Xray-core/contents/go.mod?ref=$sha" --jq '.content | @base64d' > "$RUNNER_TEMP/xray/go.mod"
+      - name: versions.toml
+        id: update
+        if: ${{ steps.target.outputs.version != '' }}
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+          COMMIT: ${{ steps.tag.outputs.commit }}
+        run: |
+          old_go=$(sed -n 's/^upstream_go = "\(.*\)"$/\1/p' versions.toml)
+          bash .github/xray/update.sh "$VERSION" "$RUNNER_TEMP/xray" "$COMMIT" "$RUNNER_TEMP/xray/go.mod"
+          new_go=$(sed -n 's/^upstream_go = "\(.*\)"$/\1/p' versions.toml)
+          {
+            echo "old_go=$old_go"
+            echo "new_go=$new_go"
+          } >> "$GITHUB_OUTPUT"
+      - name: Описание
+        if: ${{ steps.target.outputs.version != '' }}
+        env:
+          OLD: ${{ steps.target.outputs.current }}
+          NEW: ${{ steps.target.outputs.version }}
+          OLD_GO: ${{ steps.update.outputs.old_go }}
+          NEW_GO: ${{ steps.update.outputs.new_go }}
+        run: |
+          go_version=$(sed -n 's/^go_version = "\(.*\)"$/\1/p' versions.toml)
+          {
+            echo "Xray-core обновлён с версии $OLD до $NEW."
+            echo
+            echo "- релиз: https://github.com/XTLS/Xray-core/releases/tag/v$NEW"
+            echo "- прогон: $RUN_URL"
+            echo
+            echo "В versions.toml меняются только значения: версия, sha256 архивов linux (x86_64, aarch64, armv7), коммит тега для сборки noaes и директива go."
+            echo
+            echo "Коммиты XTLS после v$OLD:"
+            echo
+            gh api "repos/XTLS/Xray-core/compare/v$OLD...v$NEW" --jq '"- всего коммитов: \(.total_commits)", (.commits[0:40][] | "- " + (.commit.message | split("\n")[0]))' || echo "- список коммитов не получен"
+            if [ "$OLD_GO" != "$NEW_GO" ]; then
+              echo
+              echo "Директива go в go.mod upstream изменилась: $OLD_GO -> $NEW_GO. Сборка noaes идёт на Go $go_version из versions.toml, и при несовпадении она может не собраться. Тогда проверки упадут, PR останется открытым, а issue покажет причину."
+            fi
+          } > "$RUNNER_TEMP/body.md"
+      - name: Артефакт (dry_run)
+        if: ${{ steps.target.outputs.version != '' && inputs.dry_run }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/dry-run"
+          cp versions.toml "$RUNNER_TEMP/dry-run/versions.toml"
+          cp "$RUNNER_TEMP/body.md" "$RUNNER_TEMP/dry-run/body.md"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ steps.target.outputs.version != '' && inputs.dry_run }}
+        with:
+          name: xray-update
+          path: ${{ runner.temp }}/dry-run
+          if-no-files-found: error
+          retention-days: 14
+      - name: Коммит и ветка бота
+        id: commit
+        if: ${{ steps.target.outputs.version != '' && !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          git diff --quiet -- versions.toml && { echo "::error::versions.toml не изменился"; exit 1; }
+          branch="bot/xray-$VERSION"
+          title="build: xray $VERSION"
+          { echo "$title"; echo; cat "$RUNNER_TEMP/body.md"; } > "$RUNNER_TEMP/message.txt"
+          git config user.name sleepyhead-dev
+          git config user.email 184401951+sleepyhead-dev@users.noreply.github.com
+          git switch -c "$branch"
+          git add versions.toml
+          git commit -q -F "$RUNNER_TEMP/message.txt"
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push --force origin "$branch"
+          {
+            echo "sha=$(git rev-parse HEAD)"
+            echo "branch=$branch"
+            echo "title=$title"
+          } >> "$GITHUB_OUTPUT"
+      - name: Pull request
+        id: pr
+        if: ${{ steps.target.outputs.version != '' && !inputs.dry_run }}
+        env:
+          BRANCH: ${{ steps.commit.outputs.branch }}
+          TITLE: ${{ steps.commit.outputs.title }}
+        run: |
+          base=$(gh api "repos/$REPO" --jq .default_branch)
+          output=$(gh pr create -R "$REPO" --base "$base" --head "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/body.md" --label зависимости)
+          number=$(printf '%s\n' "$output" | tail -n 1)
+          number=${number##*/}
+          [[ "$number" =~ ^[0-9]+$ ]] || { echo "::error::номер PR не определён"; exit 1; }
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: Проверки и слияние
+    needs: update
+    if: ${{ needs.update.outputs.pr != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ needs.update.outputs.pr }}
+      SHA: ${{ needs.update.outputs.sha }}
+      BRANCH: ${{ needs.update.outputs.branch }}
+    steps:
+      - name: Запуск обязательных проверок
+        run: |
+          gh workflow run ci.yml -R "$REPO" --ref "$BRANCH"
+          gh workflow run pr-title.yml -R "$REPO" --ref "$BRANCH" -f "pr=$PR"
+      - name: Ожидание проверок
+        run: |
+          find_run() {
+            local id
+            for _ in $(seq 1 30); do
+              id=$(gh run list -R "$REPO" --workflow "$1" --branch "$BRANCH" --event workflow_dispatch --limit 20 --json databaseId,headSha |
+                jq -r --arg sha "$SHA" '[.[] | select(.headSha == $sha)][0].databaseId // empty')
+              if [ -n "$id" ]; then
+                echo "$id"
+                return 0
+              fi
+              sleep 10
+            done
+            return 1
+          }
+          # Проверки ручных запусков к PR не привязываются, а ruleset ждёт проверки с
+          # именами «Итог» и «Заголовок PR»: результат прогона бот публикует статусом
+          # коммита с тем же именем.
+          publish() {
+            local url
+            url=$(gh run view "$2" -R "$REPO" --json url --jq .url)
+            gh api -X POST "repos/$REPO/statuses/$SHA" -f state="$3" -f context="$1" \
+              -f description="Результат ручного запуска workflow" -f target_url="$url" --jq .state
+          }
+          title_run=$(find_run pr-title.yml)
+          ci_run=$(find_run ci.yml)
+          echo "заголовок PR: прогон $title_run, CI: прогон $ci_run"
+          failed=0
+          title_state=success
+          ci_state=success
+          gh run watch "$title_run" -R "$REPO" --exit-status --interval 20 > /dev/null || title_state=failure
+          gh run watch "$ci_run" -R "$REPO" --exit-status --interval 30 > /dev/null || ci_state=failure
+          publish "Заголовок PR" "$title_run" "$title_state"
+          publish "Итог" "$ci_run" "$ci_state"
+          [ "$title_state" = success ] && [ "$ci_state" = success ] || failed=1
+          exit "$failed"
+      - name: Ruleset засчитывает проверки
+        run: |
+          for _ in $(seq 1 20); do
+            if gh pr checks "$PR" -R "$REPO" --required; then
+              exit 0
+            fi
+            sleep 15
+          done
+          exit 1
+      - name: Слияние
+        run: |
+          title=$(gh pr view "$PR" -R "$REPO" --json title --jq .title)
+          body=$(gh pr view "$PR" -R "$REPO" --json body --jq .body)
+          gh pr merge "$PR" -R "$REPO" --squash --match-head-commit "$SHA" --subject "$title (#$PR)" --body "$body"
+
+  report:
+    name: Отчёт об ошибке
+    needs: [update, verify]
+    if: ${{ failure() && needs.update.outputs.version != '' && !inputs.dry_run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      VERSION: ${{ needs.update.outputs.version }}
+      UPDATE: ${{ needs.update.result }}
+      VERIFY: ${{ needs.verify.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Issue
+        run: |
+          title="Не удалось обновить xray до $VERSION"
+          {
+            echo "Автоматическое обновление xray не дошло до слияния."
+            echo
+            echo "- версия и PR: $UPDATE"
+            echo "- проверки и слияние: $VERIFY"
+            echo "- прогон: $RUN_URL"
+          } > body.md
+          existing=$(gh issue list -R "$REPO" --state open --label зависимости --json number,title |
+            jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" -R "$REPO" --body-file body.md
+          else
+            gh issue create -R "$REPO" --title "$title" --body-file body.md --label зависимости --label ci
+          fi
