@@ -1,5 +1,7 @@
 //! Где лежат настройки и состояние.
 
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
@@ -82,30 +84,53 @@ pub(crate) fn socket_path(env: &Env, root: bool, state: &Path) -> PathBuf {
     state.join("raycat.sock")
 }
 
-/// Сокет для клиентских команд. `RAYCAT_SOCKET` задан: только он. Иначе первый
-/// существующий из: путь, который выбрал бы демон, затем служба от root, затем образ Docker.
-pub(crate) fn client_socket(env: &Env, root: bool) -> Result<PathBuf> {
-    client_socket_where(env, root, Path::exists)
+/// Что известно о пути сокета. `Denied`: путь внутри каталога, который этот пользователь
+/// открыть не может (служба от root держит `/run/raycat` с правами 0700).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Presence {
+    Present,
+    Absent,
+    Denied,
 }
 
-fn client_socket_where(env: &Env, root: bool, exists: impl Fn(&Path) -> bool) -> Result<PathBuf> {
+fn presence(path: &Path) -> Presence {
+    match fs::metadata(path) {
+        Ok(_) => Presence::Present,
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => Presence::Denied,
+        Err(_) => Presence::Absent,
+    }
+}
+
+/// Сокет для клиентских команд. `RAYCAT_SOCKET` задан: только он. Иначе первый
+/// существующий из: путь, который выбрал бы демон, затем служба от root, затем образ Docker.
+/// Если ни один не найден, но какой-то закрыт правами, возвращается он: подключение к нему
+/// скажет «нет доступа», а не «не запущен».
+pub(crate) fn client_socket(env: &Env, root: bool) -> Result<PathBuf> {
+    client_socket_where(env, root, presence)
+}
+
+fn client_socket_where(
+    env: &Env,
+    root: bool,
+    probe: impl Fn(&Path) -> Presence,
+) -> Result<PathBuf> {
     let own = own_socket(env, root);
     if set(env, SOCKET_VAR).is_some() {
         return own;
     }
-    if let Ok(path) = own.as_ref()
-        && exists(path)
-    {
-        return Ok(path.clone());
+    let candidates = own
+        .iter()
+        .cloned()
+        .chain(FALLBACK_SOCKETS.into_iter().map(PathBuf::from));
+    let mut denied = None;
+    for path in candidates {
+        match probe(&path) {
+            Presence::Present => return Ok(path),
+            Presence::Denied => denied = denied.or(Some(path)),
+            Presence::Absent => {}
+        }
     }
-    match FALLBACK_SOCKETS
-        .into_iter()
-        .map(PathBuf::from)
-        .find(|path| exists(path))
-    {
-        Some(path) => Ok(path),
-        None => own,
-    }
+    denied.map_or(own, Ok)
 }
 
 /// Путь, который выбрал бы демон. Без каталога состояния годится, только если
@@ -241,8 +266,18 @@ mod tests {
         );
     }
 
-    fn present(list: &'static [&'static str]) -> impl Fn(&Path) -> bool + Copy {
-        move |path| list.iter().any(|item| path == Path::new(*item))
+    fn at(state: Presence, list: &'static [&'static str]) -> impl Fn(&Path) -> Presence + Copy {
+        move |path| {
+            if list.iter().any(|item| path == Path::new(*item)) {
+                state
+            } else {
+                Presence::Absent
+            }
+        }
+    }
+
+    fn present(list: &'static [&'static str]) -> impl Fn(&Path) -> Presence + Copy {
+        at(Presence::Present, list)
     }
 
     #[test]
@@ -314,6 +349,34 @@ mod tests {
         let xdg = env(&[("XDG_RUNTIME_DIR", "/run/user/1000")]);
         let path = client_socket_where(&xdg, false, present(&[])).unwrap();
         assert_eq!(path, PathBuf::from("/run/user/1000/raycat.sock"));
+    }
+
+    #[test]
+    fn a_closed_service_directory_is_chosen_so_the_client_reports_no_access() {
+        let xdg = env(&[("XDG_RUNTIME_DIR", "/run/user/1000")]);
+        let closed = at(Presence::Denied, &[ROOT_SOCKET]);
+        let path = client_socket_where(&xdg, false, closed).unwrap();
+        assert_eq!(path, PathBuf::from(ROOT_SOCKET));
+    }
+
+    #[test]
+    fn a_closed_own_socket_is_kept_when_nothing_else_is_found() {
+        let xdg = env(&[("XDG_RUNTIME_DIR", "/run/user/1000")]);
+        let closed = at(Presence::Denied, &["/run/user/1000/raycat.sock"]);
+        let path = client_socket_where(&xdg, false, closed).unwrap();
+        assert_eq!(path, PathBuf::from("/run/user/1000/raycat.sock"));
+    }
+
+    #[test]
+    fn a_present_socket_beats_a_closed_one() {
+        let xdg = env(&[("XDG_RUNTIME_DIR", "/run/user/1000")]);
+        let probe = |path: &Path| match path.to_str() {
+            Some(ROOT_SOCKET) => Presence::Denied,
+            Some(IMAGE_SOCKET) => Presence::Present,
+            _ => Presence::Absent,
+        };
+        let path = client_socket_where(&xdg, false, probe).unwrap();
+        assert_eq!(path, PathBuf::from(IMAGE_SOCKET));
     }
 
     #[test]

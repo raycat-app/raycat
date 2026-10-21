@@ -208,7 +208,7 @@ echo "== raycat check без кэша сообщает об этом"
 if "$raycat" check --config "$work/config.toml" >"$work/check.log" 2>&1; then
   fail "check без кэша должен завершиться ошибкой"
 fi
-grep -q "кэша подписок нет" "$work/check.log" || fail "check не сообщил об отсутствии кэша"
+grep -q "кэша подписок ещё нет" "$work/check.log" || fail "check не сообщил об отсутствии кэша"
 
 echo "== старт: подписка, xray, прокси"
 start_daemon

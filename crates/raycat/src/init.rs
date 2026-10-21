@@ -514,7 +514,7 @@ fn render(answers: &Answers) -> String {
 # Настройки raycat, созданы командой raycat init.
 # После правки: sudo systemctl restart raycat
 # Проверка файла и подписок: sudo raycat check
-# Описание всех ключей: https://github.com/raycat-app/raycat
+# Описание всех ключей: https://github.com/raycat-app/raycat#настройки
 
 [[subscription]]
 name = \"{SUBSCRIPTION_NAME}\"

@@ -1,16 +1,17 @@
 # Служба systemd для raycat на голом хосте. Ставится deploy/install.sh.
 #
-# Работает от root с урезанным набором привилегий: нужна только CAP_NET_ADMIN
-# (правила nftables и маршруты режима шлюза, метки SO_MARK и прозрачный сокет xray,
-# BBR). Остальное запрещено, всё, кроме каталогов состояния и сокета, доступно
-# только для чтения. Пути по умолчанию для root совпадают с каталогами ниже, поэтому
-# `sudo raycat status` находит сокет демона без настроек.
+# Работает от root с урезанным набором привилегий: нужны CAP_NET_ADMIN (правила
+# nftables и маршруты режима шлюза, метки SO_MARK и прозрачный сокет xray, BBR) и
+# CAP_NET_BIND_SERVICE (ответы на перехваченный UDP с портов ниже 1024, например DNS
+# на 192.168.0.1:53: без неё шлюз молча не отвечает). Остальное запрещено, всё, кроме
+# каталогов состояния и сокета, доступно только для чтения. Пути по умолчанию для root
+# совпадают с каталогами ниже, поэтому `sudo raycat status` находит сокет демона без настроек.
 #
 # Менять этот файл не нужно: правки кладите в drop-in (`systemctl edit raycat`).
-# Режиму прокси привилегии не нужны: уберите их drop-in'ом
+# Режиму прокси привилегии не нужны: уберите их drop-in'ом (пустой список снимает обе)
 #   [Service]
 #   CapabilityBoundingSet=
-# Прослушивание порта ниже 1024 требует ещё CAP_NET_BIND_SERVICE.
+# Тогда порт прокси ниже 1024 не откроется: оставьте CAP_NET_BIND_SERVICE.
 
 [Unit]
 Description=raycat: клиент VPN-подписок
@@ -37,7 +38,7 @@ RuntimeDirectory=raycat
 RuntimeDirectoryMode=0700
 UMask=0077
 
-CapabilityBoundingSet=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
