@@ -82,7 +82,9 @@ pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
         )
     );
     if cached.iter().all(Vec::is_empty) {
-        bail!("кэша подписок нет: запустите демон (raycat daemon), он получит подписки");
+        bail!(
+            "кэша подписок ещё нет: подписки получает запущенный raycat. Запустите службу: sudo systemctl start raycat (в Docker: docker compose up -d raycat) или raycat daemon"
+        );
     }
     let inputs: Vec<(
         &Subscription,
