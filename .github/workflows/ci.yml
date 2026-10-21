@@ -570,6 +570,8 @@ jobs:
           echo "$version_output"
           go_version=$(sed -n 's/^go_version = "\(.*\)"/\1/p' versions.toml)
           grep -qF "(go${go_version} " <<<"$version_output"
+          noaes_version=$(sed -n '/^\[xray\.noaes\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' versions.toml)
+          grep -qF "Xray ${noaes_version} " <<<"$version_output"
           for config in crates/xray/tests/golden/*.json; do
             echo "::group::${config}"
             "$bin" run -test -c "$config"

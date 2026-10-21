@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# Записывает релиз Xray в versions.toml: версию, sha256 архивов linux (x86_64, aarch64, armv7),
-# коммит тега для сборки noaes и директиву go из go.mod upstream. Sha256 каждого архива должен
-# совпасть со строкой SHA2-256 его .dgst. Меняются только значения этих ключей, остальной файл
-# остаётся как был. Ошибка до записи не трогает файл.
-#   update.sh <версия без v> <каталог с архивами и .dgst> <коммит тега> <go.mod> [versions.toml]
+# Записывает релиз Xray в versions.toml: версию в секции [xray] и sha256 архивов linux (x86_64,
+# aarch64, armv7). Секция [xray.noaes] не трогается: её версию и коммит ведут отдельно. Sha256
+# каждого архива должен совпасть со строкой SHA2-256 его .dgst. Меняются только значения этих
+# ключей, остальной файл остаётся как был. Ошибка до записи не трогает файл.
+#   update.sh <версия без v> <каталог с архивами и .dgst> [versions.toml]
 set -euo pipefail
 
 version=${1:?не указана версия}
 dir=${2:?не указан каталог архивов}
-commit=${3:?не указан коммит тега}
-gomod=${4:?не указан go.mod}
-file=${5:-versions.toml}
+file=${3:-versions.toml}
 
 fail() {
   echo "ОШИБКА: $*" >&2
@@ -18,14 +16,9 @@ fail() {
 }
 
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "версия не вида X.Y.Z: $version"
-[[ $commit =~ ^[0-9a-f]{40}$ ]] || fail "коммит не SHA: $commit"
 [ -f "$file" ] || fail "нет файла $file"
-[ -f "$gomod" ] || fail "нет файла $gomod"
-
-go=$(sed -n 's/^go \([0-9][0-9.]*\)[[:space:]]*$/\1/p' "$gomod")
-[[ $go =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || fail "в go.mod нет ровно одной строки go X.Y"
-
-for key in version x86_64 aarch64 armv7 commit upstream_go; do
+[ "$(sed -n '/^\[xray\]$/,/^\[/p' "$file" | grep -c '^version = "')" -eq 1 ] || fail "в $file в секции [xray] ключ version должен встречаться ровно один раз"
+for key in x86_64 aarch64 armv7; do
   [ "$(grep -c "^$key = \"" "$file")" -eq 1 ] || fail "в $file ключ $key должен встречаться ровно один раз"
 done
 
@@ -49,9 +42,7 @@ set_value() {
   sed -i "s/^$1 = \".*\"\$/$1 = \"$2\"/" "$file"
 }
 
-set_value version "$version"
+sed -i "/^\[xray\]\$/,/^\[/ s/^version = \".*\"\$/version = \"$version\"/" "$file"
 set_value x86_64 "${sums[x86_64]}"
 set_value aarch64 "${sums[aarch64]}"
 set_value armv7 "${sums[armv7]}"
-set_value commit "$commit"
-set_value upstream_go "$go"

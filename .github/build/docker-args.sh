@@ -27,11 +27,26 @@ value() {
   printf '%s\n' "$found"
 }
 
+section() {
+  local found
+  found=$(sed -n "/^\[$1\]\$/,/^\[/ s/^$2 = \"\(.*\)\"\$/\1/p" versions.toml)
+  if [ -z "$found" ] || [ "$(printf '%s\n' "$found" | wc -l)" -ne 1 ]; then
+    fail "в versions.toml нет ровно одного ключа $2 в секции [$1]"
+  fi
+  printf '%s\n' "$found"
+}
+
 arg() {
   printf '%s\n%s=%s\n' --build-arg "$1" "$2"
 }
 
-arg XRAY_VERSION "$(value version)"
+case "$build" in
+  release) version=$(section xray version) ;;
+  noaes) version=$(section xray.noaes version) ;;
+  *) fail "неизвестная сборка xray: $build" ;;
+esac
+
+arg XRAY_VERSION "$version"
 arg XRAY_ARCHIVE "$archive"
 arg XRAY_SHA256 "$(value "$key")"
 arg XRAY_BUILD "$build"

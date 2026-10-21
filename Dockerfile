@@ -7,8 +7,8 @@
 #     --build-arg XRAY_SHA256=<sha256 архива> .
 #
 # XRAY_BUILD=noaes (только arm64 и armv7) собирает xray из исходников на Go 1.26 для
-# процессоров без аппаратного AES; XRAY_COMMIT, GO_VERSION, GO_IMAGE и XRAY_GO_DIRECTIVE
-# берутся из секции [xray.noaes] файла versions.toml. Только бинарник xray:
+# процессоров без аппаратного AES; XRAY_VERSION, XRAY_COMMIT, GO_VERSION, GO_IMAGE и
+# XRAY_GO_DIRECTIVE берутся из секции [xray.noaes] файла versions.toml. Только бинарник xray:
 #   docker build --platform linux/arm/v7 --target xray-noaes --output type=local,dest=out ...
 
 ARG ALPINE_IMAGE=alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6

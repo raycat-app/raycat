@@ -28,7 +28,7 @@ case $kind in
 
 Образ: `docker pull @IMAGE@:@VERSION@`. Для Raspberry Pi 3/4 и других процессоров без аппаратного AES: `@IMAGE@:@VERSION@-noaes`.
 
-Архивы для x86_64, aarch64 и armv7 лежат в ресурсах выпуска. Для ARM-процессоров без AES берите архивы с `-noaes` в имени.
+Архивы для x86_64, aarch64 и armv7 лежат в ресурсах выпуска. Для ARM-процессоров без AES берите архивы с `-noaes` в имени.@NOAES_NOTE@
 
 ## Проверка подлинности
 
@@ -55,7 +55,7 @@ EOF
 
 Образ: `docker pull @IMAGE@:@VERSION@` (также `:latest` и `:@MINOR@`). Для Raspberry Pi 3/4 и других процессоров без аппаратного AES: `@IMAGE@:@VERSION@-noaes` (также `:latest-noaes`).
 
-Архивы для x86_64, aarch64 и armv7 лежат в ресурсах выпуска. Для ARM-процессоров без AES берите архивы с `-noaes` в имени.
+Архивы для x86_64, aarch64 и armv7 лежат в ресурсах выпуска. Для ARM-процессоров без AES берите архивы с `-noaes` в имени.@NOAES_NOTE@
 
 ## Проверка подлинности
 
@@ -79,6 +79,14 @@ fi
 image="ghcr.io/${repo,,}"
 minor=${version%.*}
 
+dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+xray_version=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' "$dir/../../versions.toml")
+noaes_version=$(sed -n '/^\[xray\.noaes\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' "$dir/../../versions.toml")
+noaes_note=
+if [ "$noaes_version" != "$xray_version" ]; then
+  noaes_note=" Сборка \`-noaes\` собрана на xray $noaes_version, основная сборка — на xray $xray_version."
+fi
+
 # Замены в кавычках: иначе «&» в заголовке коммита bash 5.2 подставит как совпадение.
 text=${template//@SINCE@/"$since_text"}
 text=${text//@VERSION@/"$version"}
@@ -86,5 +94,6 @@ text=${text//@MINOR@/"$minor"}
 text=${text//@DEV_VERSION@/"$dev_version"}
 text=${text//@IMAGE@/"$image"}
 text=${text//@REPO@/"$repo"}
+text=${text//@NOAES_NOTE@/"$noaes_note"}
 text=${text//@CHANGES@/"$changes"}
 printf '%s\n' "$text"

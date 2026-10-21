@@ -1,8 +1,8 @@
 name: Обновление xray
 
 # Раз в час берёт самый новый релиз XTLS/Xray-core и, если он новее versions.toml, открывает
-# PR бота «build: xray <версия>»: версия, суммы архивов linux, коммит тега для сборки noaes и
-# директива go из go.mod upstream. Обязательные проверки бот запускает сам и сливает PR, если
+# PR бота «build: xray <версия>»: версия и суммы архивов linux. Сборка noaes (секция
+# [xray.noaes]) ботом не меняется. Обязательные проверки бот запускает сам и сливает PR, если
 # они зелёные. Если что-то не вышло, заводится issue (одно на версию). Новая версия не
 # предлагается, пока открыт PR бота или уже был PR этой версии. Версия только вперёд.
 #
@@ -60,7 +60,7 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          current=$(sed -n 's/^version = "\(.*\)"$/\1/p' versions.toml | head -n 1)
+          current=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"$/\1/p' versions.toml)
           [ -n "$current" ] || { echo "::error::версия xray в versions.toml не прочитана"; exit 1; }
           echo "current=$current" >> "$GITHUB_OUTPUT"
           gh api "repos/XTLS/Xray-core/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
@@ -89,59 +89,31 @@ jobs:
               curl -fsSL --retry 3 -o "$RUNNER_TEMP/xray/$file" "https://github.com/XTLS/Xray-core/releases/download/v$VERSION/$file"
             done
           done
-      - name: Коммит тега и go.mod
-        id: tag
-        if: ${{ steps.target.outputs.version != '' }}
-        env:
-          VERSION: ${{ steps.target.outputs.version }}
-        run: |
-          ref=$(gh api "repos/XTLS/Xray-core/git/ref/tags/v$VERSION" --jq '.object.type + " " + .object.sha')
-          read -r kind sha <<<"$ref"
-          while [ "$kind" = tag ]; do
-            ref=$(gh api "repos/XTLS/Xray-core/git/tags/$sha" --jq '.object.type + " " + .object.sha')
-            read -r kind sha <<<"$ref"
-          done
-          [ "$kind" = commit ] || { echo "::error::тег v$VERSION не ведёт на коммит"; exit 1; }
-          echo "commit=$sha" >> "$GITHUB_OUTPUT"
-          gh api "repos/XTLS/Xray-core/contents/go.mod?ref=$sha" --jq '.content | @base64d' > "$RUNNER_TEMP/xray/go.mod"
       - name: versions.toml
-        id: update
         if: ${{ steps.target.outputs.version != '' }}
         env:
           VERSION: ${{ steps.target.outputs.version }}
-          COMMIT: ${{ steps.tag.outputs.commit }}
-        run: |
-          old_go=$(sed -n 's/^upstream_go = "\(.*\)"$/\1/p' versions.toml)
-          bash .github/xray/update.sh "$VERSION" "$RUNNER_TEMP/xray" "$COMMIT" "$RUNNER_TEMP/xray/go.mod"
-          new_go=$(sed -n 's/^upstream_go = "\(.*\)"$/\1/p' versions.toml)
-          {
-            echo "old_go=$old_go"
-            echo "new_go=$new_go"
-          } >> "$GITHUB_OUTPUT"
+        run: bash .github/xray/update.sh "$VERSION" "$RUNNER_TEMP/xray"
       - name: Описание
         if: ${{ steps.target.outputs.version != '' }}
         env:
           OLD: ${{ steps.target.outputs.current }}
           NEW: ${{ steps.target.outputs.version }}
-          OLD_GO: ${{ steps.update.outputs.old_go }}
-          NEW_GO: ${{ steps.update.outputs.new_go }}
         run: |
-          go_version=$(sed -n 's/^go_version = "\(.*\)"$/\1/p' versions.toml)
+          noaes=$(sed -n '/^\[xray\.noaes\]$/,/^\[/ s/^version = "\(.*\)"$/\1/p' versions.toml)
           {
             echo "Xray-core обновлён с версии $OLD до $NEW."
             echo
             echo "- релиз: https://github.com/XTLS/Xray-core/releases/tag/v$NEW"
             echo "- прогон: $RUN_URL"
             echo
-            echo "В versions.toml меняются только значения: версия, sha256 архивов linux (x86_64, aarch64, armv7), коммит тега для сборки noaes и директива go."
+            echo "В versions.toml меняются только версия и sha256 архивов linux (x86_64, aarch64, armv7)."
+            echo
+            echo "Сборка -noaes остаётся на xray $noaes: секцию [xray.noaes] бот не меняет."
             echo
             echo "Коммиты XTLS после v$OLD:"
             echo
             gh api "repos/XTLS/Xray-core/compare/v$OLD...v$NEW" --jq '"- всего коммитов: \(.total_commits)", (.commits[0:40][] | "- " + (.commit.message | split("\n")[0]))' || echo "- список коммитов не получен"
-            if [ "$OLD_GO" != "$NEW_GO" ]; then
-              echo
-              echo "Директива go в go.mod upstream изменилась: $OLD_GO -> $NEW_GO. Сборка noaes идёт на Go $go_version из versions.toml, и при несовпадении она может не собраться. Тогда проверки упадут, PR останется открытым, а issue покажет причину."
-            fi
           } > "$RUNNER_TEMP/body.md"
       - name: Артефакт (dry_run)
         if: ${{ steps.target.outputs.version != '' && inputs.dry_run }}
