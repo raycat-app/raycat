@@ -877,7 +877,8 @@ jobs:
         run: test "$FAILED" = false
 
   # Публикует dev-выпуск тех же артефактов, что прошли этот запуск. С веток (ручной запуск CI)
-  # идёт сухой прогон без публикации.
+  # идёт сухой прогон без публикации. Ручной запуск на main публикует по-настоящему: так боты
+  # выпускают свои слияния, а push от GITHUB_TOKEN CI не запускает.
   release:
     name: Выпуск dev
     needs: result
@@ -889,4 +890,4 @@ jobs:
       attestations: write
     uses: ./.github/workflows/release-dev.yml # zizmor: ignore[self-repository] actionlint не знает синтаксиса $/
     with:
-      dry_run: ${{ github.event_name != 'push' }}
+      dry_run: ${{ github.ref != 'refs/heads/main' }}
