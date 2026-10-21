@@ -46,11 +46,12 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     git checkout -q FETCH_HEAD; \
     test "$(git rev-parse HEAD)" = "${GO_COMMIT}"; \
     git apply /go-noaes.patch; \
-    printf 'go%s-noaes\n' "${GO_VERSION}" > VERSION; \
-    cd src; \
+    printf 'go%s-noaes\n' "${GO_VERSION}" > VERSION
+WORKDIR /usr/local/go-noaes/src
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    set -eu; \
     CGO_ENABLED=0 GOROOT_BOOTSTRAP=/usr/local/go ./make.bash; \
-    cd ..; \
-    rm -rf .git; \
+    rm -rf /usr/local/go-noaes/.git; \
     test "$(/usr/local/go-noaes/bin/go env GOVERSION)" = "go${GO_VERSION}-noaes"
 
 # hadolint ignore=DL3029
