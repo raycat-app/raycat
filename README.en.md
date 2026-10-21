@@ -880,7 +880,7 @@ Releases are automatic; each channel has its own tags.
 
 | Channel | What it is | Docker image | Files |
 | --- | --- | --- | --- |
-| **stable** | Working versions `vX.Y.Z`. They went through the dev channel and waited out the hold period: one day for changes to emulation profiles and xray version bumps, three days for everything else. Breaking changes are released only by hand | `ghcr.io/raycat-app/raycat:latest`, `:X.Y.Z`, `:X.Y` | [Releases](https://github.com/raycat-app/raycat/releases/latest) |
+| **stable** | Working versions `vX.Y.Z`. They went through the dev channel and waited out the hold period: one day for changes to emulation profiles, three days for everything else; a new xray version reaches dev within an hour of its release and goes to stable at once. Breaking changes are released only by hand | `ghcr.io/raycat-app/raycat:latest`, `:X.Y.Z`, `:X.Y` | [Releases](https://github.com/raycat-app/raycat/releases/latest) |
 | **dev** | A build of each merge into `main` after green CI, `vX.Y.Z-dev.N`. For testing ahead of time, not for production servers; the last 20 are kept | `:dev`, `:X.Y.Z-dev.N` | a pre-release on the Releases page |
 
 Images are multi-architecture (amd64 and arm64). For **Raspberry Pi 3/4 and other CPUs without hardware

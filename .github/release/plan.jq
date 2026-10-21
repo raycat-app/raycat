@@ -17,8 +17,8 @@ def category:
   else "code" end;
 
 def wait_seconds:
-  if . == "hotfix" then 0
-  elif . == "emulation" or . == "xray" then 86400
+  if . == "hotfix" or . == "xray" then 0
+  elif . == "emulation" then 86400
   else 259200 end;
 
 def hours: ((. / 3600) | ceil);
