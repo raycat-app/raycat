@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Записывает релиз Xray в versions.toml: версию в секции [xray] и sha256 архивов linux (x86_64,
-# aarch64, armv7). Секция [xray.noaes] не трогается: её версию и коммит ведут отдельно. Sha256
-# каждого архива должен совпасть со строкой SHA2-256 его .dgst. Меняются только значения этих
-# ключей, остальной файл остаётся как был. Ошибка до записи не трогает файл.
-#   update.sh <версия без v> <каталог с архивами и .dgst> [versions.toml]
+# Записывает релиз Xray в versions.toml: версию и sha256 архивов linux (x86_64, aarch64, armv7)
+# в секции [xray], а также версию и коммит тега в секции [xray.noaes]: сборка -noaes идёт на той же
+# версии. Sha256 каждого архива должен совпасть со строкой SHA2-256 его .dgst. Меняются только
+# значения этих ключей, остальной файл остаётся как был. Ошибка до записи не трогает файл.
+#   update.sh <версия без v> <каталог с архивами и .dgst> <коммит тега v<версия>> [versions.toml]
 set -euo pipefail
 
 version=${1:?не указана версия}
 dir=${2:?не указан каталог архивов}
-file=${3:-versions.toml}
+commit=${3:?не указан коммит тега}
+file=${4:-versions.toml}
 
 fail() {
   echo "ОШИБКА: $*" >&2
@@ -16,8 +17,12 @@ fail() {
 }
 
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "версия не вида X.Y.Z: $version"
+[[ $commit =~ ^[0-9a-f]{40}$ ]] || fail "коммит не вида 40 строчных шестнадцатеричных символов: $commit"
 [ -f "$file" ] || fail "нет файла $file"
 [ "$(sed -n '/^\[xray\]$/,/^\[/p' "$file" | grep -c '^version = "')" -eq 1 ] || fail "в $file в секции [xray] ключ version должен встречаться ровно один раз"
+for key in version commit; do
+  [ "$(sed -n '/^\[xray\.noaes\]$/,/^\[/p' "$file" | grep -c "^$key = \"")" -eq 1 ] || fail "в $file в секции [xray.noaes] ключ $key должен встречаться ровно один раз"
+done
 for key in x86_64 aarch64 armv7; do
   [ "$(grep -c "^$key = \"" "$file")" -eq 1 ] || fail "в $file ключ $key должен встречаться ровно один раз"
 done
@@ -46,3 +51,5 @@ sed -i "/^\[xray\]\$/,/^\[/ s/^version = \".*\"\$/version = \"$version\"/" "$fil
 set_value x86_64 "${sums[x86_64]}"
 set_value aarch64 "${sums[aarch64]}"
 set_value armv7 "${sums[armv7]}"
+sed -i "/^\[xray\.noaes\]\$/,/^\[/ s/^version = \".*\"\$/version = \"$version\"/" "$file"
+sed -i "/^\[xray\.noaes\]\$/,/^\[/ s/^commit = \".*\"\$/commit = \"$commit\"/" "$file"

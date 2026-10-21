@@ -1,2 +1,3 @@
 *
 !dist/
+!.github/build/go-noaes.patch

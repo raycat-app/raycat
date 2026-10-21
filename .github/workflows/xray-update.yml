@@ -1,8 +1,8 @@
 name: Обновление xray
 
 # Раз в час берёт самый новый релиз XTLS/Xray-core и, если он новее versions.toml, открывает
-# PR бота «build: xray <версия>»: версия и суммы архивов linux. Сборка noaes (секция
-# [xray.noaes]) ботом не меняется. Обязательные проверки бот запускает сам и сливает PR, если
+# PR бота «build: xray <версия>»: версия и суммы архивов linux, а также версия и коммит тега в
+# секции [xray.noaes] (сборка noaes идёт на той же версии). Обязательные проверки бот запускает сам и сливает PR, если
 # они зелёные. Если что-то не вышло, заводится issue (одно на версию). Новая версия не
 # предлагается, пока открыт PR бота или уже был PR этой версии. Версия только вперёд.
 #
@@ -93,23 +93,23 @@ jobs:
         if: ${{ steps.target.outputs.version != '' }}
         env:
           VERSION: ${{ steps.target.outputs.version }}
-        run: bash .github/xray/update.sh "$VERSION" "$RUNNER_TEMP/xray"
+        run: |
+          commit=$(gh api "repos/XTLS/Xray-core/commits/v$VERSION" --jq .sha)
+          bash .github/xray/update.sh "$VERSION" "$RUNNER_TEMP/xray" "$commit"
       - name: Описание
         if: ${{ steps.target.outputs.version != '' }}
         env:
           OLD: ${{ steps.target.outputs.current }}
           NEW: ${{ steps.target.outputs.version }}
         run: |
-          noaes=$(sed -n '/^\[xray\.noaes\]$/,/^\[/ s/^version = "\(.*\)"$/\1/p' versions.toml)
           {
             echo "Xray-core обновлён с версии $OLD до $NEW."
             echo
             echo "- релиз: https://github.com/XTLS/Xray-core/releases/tag/v$NEW"
             echo "- прогон: $RUN_URL"
             echo
-            echo "В versions.toml меняются только версия и sha256 архивов linux (x86_64, aarch64, armv7)."
-            echo
-            echo "Сборка -noaes остаётся на xray $noaes: секцию [xray.noaes] бот не меняет."
+            echo "В versions.toml меняются версия и sha256 архивов linux (x86_64, aarch64, armv7), а также"
+            echo "версия и коммит тега в [xray.noaes]: сборка -noaes собирается из той же версии xray."
             echo
             echo "Коммиты XTLS после v$OLD:"
             echo

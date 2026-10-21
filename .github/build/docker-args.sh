@@ -62,8 +62,8 @@ case "$build" in
     [ "$(jq '.manifests | length' "$index")" -gt 1 ] || fail "закреплён манифест одной платформы, нужен индекс"
     arg XRAY_COMMIT "$(value commit)"
     arg GO_VERSION "$(value go_version)"
+    arg GO_COMMIT "$(value go_commit)"
     arg GO_IMAGE "$go_image"
-    arg XRAY_GO_DIRECTIVE "$(value upstream_go)"
     ;;
   *) fail "неизвестная сборка xray: $build" ;;
 esac

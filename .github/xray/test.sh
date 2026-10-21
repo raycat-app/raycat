@@ -86,6 +86,8 @@ sum_arm64=$(sha256sum "$dl/Xray-linux-arm64-v8a.zip" | cut -d' ' -f1)
 sum_arm32=$(sha256sum "$dl/Xray-linux-arm32-v7a.zip" | cut -d' ' -f1)
 
 zeros=0000000000000000000000000000000000000000000000000000000000000000
+newcommit=2222222222222222222222222222222222222222
+gocommit=1111111111111111111111111111111111111111
 cat >"$work/versions.toml" <<TOML
 [xray]
 version = "1.2.0"
@@ -99,9 +101,9 @@ armv7 = "$zeros"
 [xray.noaes]
 version = "1.1.0"
 commit = "ffffffffffffffffffffffffffffffffffffffff"
-go_version = "1.26.8"
-go_image = "golang:1.26.8-alpine@sha256:$zeros"
-upstream_go = "1.27"
+go_version = "1.27.3"
+go_commit = "$gocommit"
+go_image = "golang:1.27.3-alpine@sha256:$zeros"
 TOML
 
 cat >"$work/expected.toml" <<TOML
@@ -115,16 +117,16 @@ armv7 = "$sum_arm32"
 
 # Сборка xray для процессоров без аппаратного AES.
 [xray.noaes]
-version = "1.1.0"
-commit = "ffffffffffffffffffffffffffffffffffffffff"
-go_version = "1.26.8"
-go_image = "golang:1.26.8-alpine@sha256:$zeros"
-upstream_go = "1.27"
+version = "1.3.0"
+commit = "$newcommit"
+go_version = "1.27.3"
+go_commit = "$gocommit"
+go_image = "golang:1.27.3-alpine@sha256:$zeros"
 TOML
 
 cp "$work/versions.toml" "$work/orig.toml"
-bash "$dir/update.sh" 1.3.0 "$dl" "$work/versions.toml"
-check "запись: меняются версия [xray] и суммы, секция noaes не трогается" "$(cat "$work/expected.toml")" "$(cat "$work/versions.toml")"
+bash "$dir/update.sh" 1.3.0 "$dl" "$newcommit" "$work/versions.toml"
+check "запись: меняются версия и суммы [xray], версия и коммит [xray.noaes]" "$(cat "$work/expected.toml")" "$(cat "$work/versions.toml")"
 
 update() {
   cp "$work/orig.toml" "$work/try.toml"
@@ -134,26 +136,32 @@ update() {
 check "запись: несовпавший sha256 — ошибка и файл не меняется" error "$(
   rm -rf "$work/bad" && cp -r "$dl" "$work/bad"
   printf 'SHA2-256= %s\n' "$zeros" >"$work/bad/Xray-linux-64.zip.dgst"
-  failed update 1.3.0 "$work/bad"
+  failed update 1.3.0 "$work/bad" "$newcommit"
 )"
 
 check "запись: .dgst без строки SHA2-256 — ошибка" error "$(
   rm -rf "$work/bad" && cp -r "$dl" "$work/bad"
   printf 'MD5= 00\n' >"$work/bad/Xray-linux-arm64-v8a.zip.dgst"
-  failed update 1.3.0 "$work/bad"
+  failed update 1.3.0 "$work/bad" "$newcommit"
 )"
 
 check "запись: нет архива — ошибка" error "$(
   rm -rf "$work/bad" && cp -r "$dl" "$work/bad"
   rm "$work/bad/Xray-linux-arm32-v7a.zip"
-  failed update 1.3.0 "$work/bad"
+  failed update 1.3.0 "$work/bad" "$newcommit"
 )"
 
-check "запись: версия не вида X.Y.Z — ошибка" error "$(failed update 1.3 "$dl")"
+check "запись: версия не вида X.Y.Z — ошибка" error "$(failed update 1.3 "$dl" "$newcommit")"
+check "запись: коммит не вида 40 hex-символов — ошибка" error "$(failed update 1.3.0 "$dl" 2222)"
+
+sed '/^commit = /d' "$work/orig.toml" >"$work/nocommit.toml"
+cp "$work/nocommit.toml" "$work/nocommit.orig"
+check "запись: в секции [xray.noaes] нет commit — ошибка" error "$(failed bash "$dir/update.sh" 1.3.0 "$dl" "$newcommit" "$work/nocommit.toml")"
+check "запись: без commit в [xray.noaes] versions.toml не меняется" "$(cat "$work/nocommit.orig")" "$(cat "$work/nocommit.toml")"
 
 sed '/^version = "1.2.0"$/d' "$work/orig.toml" >"$work/nover.toml"
 cp "$work/nover.toml" "$work/nover.orig"
-check "запись: в секции [xray] нет версии — ошибка" error "$(failed bash "$dir/update.sh" 1.3.0 "$dl" "$work/nover.toml")"
+check "запись: в секции [xray] нет версии — ошибка" error "$(failed bash "$dir/update.sh" 1.3.0 "$dl" "$newcommit" "$work/nover.toml")"
 check "запись: при ошибке versions.toml не меняется" "$(cat "$work/nover.orig")" "$(cat "$work/nover.toml")"
 
 if [ "$failures" -ne 0 ]; then
