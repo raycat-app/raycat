@@ -121,12 +121,18 @@ pub(crate) fn health(env: &Env) -> Result<()> {
     Ok(())
 }
 
-/// Демон отвечает, xray работает и узел выбран. xray запускается только после установки
-/// правил шлюза, поэтому отдельного признака для них не нужно.
+/// Демон отвечает, xray работает, его API отвечает и узел выбран. xray запускается только
+/// после установки правил шлюза, поэтому отдельного признака для них не нужно.
 async fn ready(client: &Client) -> Result<String> {
     let status = client.status().await?;
     if !status.xray.running {
         bail!("xray не запущен; подробности: raycat status");
+    }
+    if status.xray.api_stuck {
+        bail!(
+            "xray не отвечает уже {} с; подробности: raycat status",
+            status.xray.api_silent_secs.unwrap_or_default()
+        );
     }
     let Some(node) = &status.node else {
         bail!("узел не выбран: подписки ещё не дали рабочих узлов; подробности: raycat status");
@@ -629,6 +635,19 @@ mod health_tests {
         assert_eq!(
             error.to_string(),
             "xray не запущен; подробности: raycat status"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_xray_that_does_not_answer_its_api_is_not_ready() {
+        let reply = r#"{"version":"0.1.0","mode":"gateway","uptime_secs":5,"kill_switch":true,
+            "xray":{"running":true,"pid":7,"restarts":0,"api_silent_secs":120,"api_stuck":true},
+            "node":null,"subscriptions":[]}"#;
+        let fake = fake(reply.to_owned());
+        let error = ready(&Client::new(fake.socket.clone())).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "xray не отвечает уже 120 с; подробности: raycat status"
         );
     }
 

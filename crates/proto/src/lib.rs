@@ -31,6 +31,13 @@ pub struct XrayStatus {
     pub pid: Option<u32>,
     /// Сколько раз xray запускали заново после первого запуска.
     pub restarts: u32,
+    /// Сколько секунд API xray молчит: с последнего ответа, а до первого ответа — со старта
+    /// xray; `None`, если xray не запущен.
+    #[serde(default)]
+    pub api_silent_secs: Option<u64>,
+    /// API молчит дольше порога демона: xray считается зависшим, демон его перезапустит.
+    #[serde(default)]
+    pub api_stuck: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,6 +307,8 @@ mod tests {
                 running: true,
                 pid: Some(7),
                 restarts: 0,
+                api_silent_secs: Some(2),
+                api_stuck: false,
             },
             node: None,
             subscriptions: Vec::new(),
@@ -307,7 +316,17 @@ mod tests {
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["mode"], "gateway");
         assert_eq!(json["xray"]["pid"], 7);
+        assert_eq!(json["xray"]["api_silent_secs"], 2);
         assert_eq!(serde_json::from_value::<Status>(json).unwrap(), status);
+    }
+
+    #[test]
+    fn xray_status_from_an_older_daemon_still_parses() {
+        let xray: XrayStatus =
+            serde_json::from_str(r#"{"running":true,"pid":7,"restarts":1}"#).unwrap();
+        assert_eq!(xray.api_silent_secs, None);
+        assert!(!xray.api_stuck);
+        assert_eq!(xray.restarts, 1);
     }
 
     #[test]

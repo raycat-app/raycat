@@ -492,6 +492,8 @@ mod tests {
                 running: true,
                 pid: Some(42),
                 restarts: 0,
+                api_silent_secs: Some(0),
+                api_stuck: false,
             },
             node: Some(CurrentNode {
                 id: "main/NL-1".to_owned(),

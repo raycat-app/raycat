@@ -3,9 +3,12 @@
 use std::time::Duration;
 
 use raycat_config::DEFAULT_UPDATE_INTERVAL;
+use tokio::time::Instant;
 
 /// Чаще панель не опрашивается, что бы ни просил провайдер.
 const MIN_INTERVAL: Duration = Duration::from_secs(10 * 60);
+/// Порог молчания API xray не короче этого, даже при частом опросе.
+const MIN_API_LIMIT: Duration = Duration::from_secs(30);
 const RETRY_FIRST: Duration = Duration::from_secs(30);
 /// Узлы уже есть (кэш), xray работает: панель можно не беспокоить чаще.
 const RETRY_MAX: Duration = Duration::from_secs(30 * 60);
@@ -62,6 +65,16 @@ pub(crate) fn after_retry_header(delay: Duration, header: Option<&str>) -> Durat
 /// Следующая пауза перед перезапуском: вдвое дольше предыдущей, не дольше 30 с.
 pub(crate) fn next_restart_delay(previous: Duration) -> Duration {
     previous.saturating_mul(2).min(RESTART_MAX)
+}
+
+/// Порог молчания API xray: три интервала опроса, но не меньше 30 с.
+pub(crate) fn api_limit(check_interval: Duration) -> Duration {
+    (check_interval * 3).max(MIN_API_LIMIT)
+}
+
+/// Сколько API xray молчит: с последнего ответа, а до первого ответа — со старта xray.
+pub(crate) fn api_silence(now: Instant, started: Instant, last_ok: Option<Instant>) -> Duration {
+    now.saturating_duration_since(last_ok.unwrap_or(started))
 }
 
 #[cfg(test)]
@@ -189,5 +202,36 @@ mod tests {
             seen.push(delay.as_secs());
         }
         assert_eq!(seen, [1, 2, 4, 8, 16, 30, 30]);
+    }
+
+    #[test]
+    fn the_api_limit_is_three_intervals_and_at_least_thirty_seconds() {
+        assert_eq!(api_limit(Duration::from_secs(30)), Duration::from_secs(90));
+        assert_eq!(api_limit(Duration::from_secs(5)), Duration::from_secs(30));
+        assert_eq!(
+            api_limit(Duration::from_secs(600)),
+            Duration::from_secs(1_800)
+        );
+    }
+
+    #[test]
+    fn silence_counts_from_the_last_answer_or_from_the_start() {
+        let started = Instant::now();
+        let now = started + Duration::from_secs(100);
+        assert_eq!(api_silence(now, started, None), Duration::from_secs(100));
+        let answered = started + Duration::from_secs(60);
+        assert_eq!(
+            api_silence(now, started, Some(answered)),
+            Duration::from_secs(40)
+        );
+    }
+
+    #[test]
+    fn a_fresh_xray_that_never_answered_is_not_stuck_before_the_limit() {
+        let limit = api_limit(Duration::from_secs(30));
+        let started = Instant::now();
+        let silence = |secs| api_silence(started + Duration::from_secs(secs), started, None);
+        assert!(silence(89) <= limit);
+        assert!(silence(91) > limit);
     }
 }

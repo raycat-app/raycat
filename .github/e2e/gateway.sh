@@ -114,6 +114,8 @@ in_list() {
 # Подстановка процесса, а не конвейер: ранний выход grep не должен ронять pipefail.
 log_has() { grep -q -- "$2" <(docker logs "$1" 2>&1); }
 rule_present() { grep -q 7263 <("$@" ip -4 rule show); }
+# Неготовность raycat health — ненулевой код; для скрипта важен только текст ответа.
+health_says() { local out; out=$(gateway_run raycat health 2>&1 || true); grep -q -- "$1" <<<"$out"; }
 
 # Ответ сайта — адрес, с которого к нему пришли; он должен принадлежать узлу.
 expect_via_node() {
@@ -214,6 +216,18 @@ wait_for "xray перезапущен и трафик снова идёт" 60 fe
 wait_for "raycat health снова успешен" 60 gateway_run raycat health
 expect_via_node "$site" "${nodes_inet[@]}"
 log_has "$gateway" "xray завершился" || fail "в журнале нет записи о падении xray"
+
+echo "== зависший xray: процесс заморожен, демон сам видит молчание API и перезапускает его"
+frozen=$(gateway_run pidof xray)
+gateway_run sh -c "kill -STOP $frozen"
+# Демон перезапускает xray после порога молчания; «не готов» виден, пока старый процесс останавливается.
+wait_for "raycat health: зависший xray не готов" 150 health_says 'xray не отвечает'
+log_has "$gateway" "xray не отвечает" || fail "в журнале нет предупреждения о зависшем xray"
+wait_for "xray перезапущен демоном, raycat health снова успешен" 90 gateway_run raycat health
+restarted=$(gateway_run pidof xray)
+[ "$restarted" != "$frozen" ] || fail "xray не перезапустился: тот же процесс $frozen"
+expect_via_node "$site" "${nodes_inet[@]}"
+echo "  зависший xray (pid $frozen) заменён процессом $restarted"
 
 echo "== docker compose restart: приложение снова ходит через шлюз"
 "${compose[@]}" restart raycat >/dev/null
