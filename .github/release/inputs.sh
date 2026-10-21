@@ -23,7 +23,7 @@ for pair in x86_64:x86_64-unknown-linux-musl aarch64:aarch64-unknown-linux-musl 
 done
 install -m 755 "$artifacts/xray-noaes-armv7/xray" "$out/xray-armv7-noaes"
 
-xray_version=$(sed -n 's/^version = "\(.*\)"/\1/p' versions.toml)
+xray_version=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' versions.toml)
 [ -n "$xray_version" ] || fail "в versions.toml нет версии xray"
 for pair in x86_64:Xray-linux-64.zip aarch64:Xray-linux-arm64-v8a.zip armv7:Xray-linux-arm32-v7a.zip; do
   key=${pair%%:*}

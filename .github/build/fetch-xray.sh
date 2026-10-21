@@ -5,7 +5,7 @@
 set -euo pipefail
 
 dest=${1:-.}
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' versions.toml)
+version=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' versions.toml)
 sha256=$(sed -n 's/^x86_64 = "\(.*\)"/\1/p' versions.toml)
 test -n "$version" && test -n "$sha256"
 

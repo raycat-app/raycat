@@ -25,6 +25,8 @@ echo "$version_output"
 if [ "${XRAY_BUILD:-}" = noaes ]; then
   go_version=$(sed -n 's/^go_version = "\(.*\)"/\1/p' versions.toml)
   grep -qF "(go${go_version} " <<<"$version_output"
+  noaes_version=$(sed -n '/^\[xray\.noaes\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' versions.toml)
+  grep -qF "Xray ${noaes_version} " <<<"$version_output"
 fi
 # Все конфиги проверяются одним запуском контейнера, а не по контейнеру на файл.
 docker run --rm -v "$PWD/crates/xray/tests/golden:/golden:ro" --entrypoint sh "$image" -c '
