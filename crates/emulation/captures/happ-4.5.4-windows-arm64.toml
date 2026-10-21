@@ -1,12 +1,12 @@
 app = "happ"
 platform = "windows"
 arch = "arm64"
-release = "4.5.2"
+release = "4.5.4"
 url = "http://127.0.0.1:{PORT}/sub/capture-windows"
-# Часы захвата: before link: 2026-09-28T19:00:00.0034868Z.
+# Часы захвата: before link: 2026-09-28T19:00:00.0030866Z.
 unix = 1_790_622_000
 machine_id = "0d0af05ee8fd4dc29275718f2ce4dff1"
-hwid = "fde114c0-02bf-43ff-8e89-3d0c85d9fdb5"
-hostname = "runnervmyf5rf"
+hwid = "9f50393a-5ccc-471a-b3d4-810d3cbe450b"
+hostname = "runnervmso2ns"
 os_version = "11_10.0.26200"
 locale = "en"
