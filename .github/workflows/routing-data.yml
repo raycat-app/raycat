@@ -230,6 +230,9 @@ jobs:
           title=$(gh pr view "$PR" -R "$REPO" --json title --jq .title)
           body=$(gh pr view "$PR" -R "$REPO" --json body --jq .body)
           gh pr merge "$PR" -R "$REPO" --squash --match-head-commit "$SHA" --subject "$title (#$PR)" --body "$body"
+      - name: Выпуск после слияния
+        if: ${{ needs.update.outputs.jump != 'true' }}
+        run: gh workflow run ci.yml -R "$REPO" --ref main
       - name: Слияние отключено скачком
         if: ${{ needs.update.outputs.jump == 'true' }}
         run: echo "::notice::проверки зелёные, но число подсетей изменилось больше чем на 20 %, PR $PR остаётся открытым"

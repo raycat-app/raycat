@@ -256,6 +256,9 @@ jobs:
           title=$(gh pr view "$PR" -R "$REPO" --json title --jq .title)
           body=$(gh pr view "$PR" -R "$REPO" --json body --jq .body)
           gh pr merge "$PR" -R "$REPO" --squash --match-head-commit "$SHA" --subject "$title (#$PR)" --body "$body"
+      - name: Выпуск после слияния
+        if: ${{ inputs.merge }}
+        run: gh workflow run ci.yml -R "$REPO" --ref main
       - name: Слияние отключено
         if: ${{ !inputs.merge }}
         run: echo "::notice::проверки зелёные, слияние отключено входным параметром, PR $PR остаётся открытым"
