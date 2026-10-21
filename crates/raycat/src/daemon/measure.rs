@@ -267,6 +267,8 @@ mod tests {
                 running: true,
                 pid: Some(1),
                 restarts: 0,
+                api_silent_secs: Some(0),
+                api_stuck: false,
             },
             node: None,
             subscriptions: Vec::new(),

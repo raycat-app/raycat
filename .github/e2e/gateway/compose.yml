@@ -131,7 +131,7 @@ services:
     # перехватываются. Без него имена разрешаются через хост, мимо перехвата.
     dns: [1.1.1.1]
     environment:
-      RAYCAT_CONFIG: /e2e/gateway/config.toml
+      RAYCAT_CONFIG: ${RAYCAT_E2E_CONFIG:-/e2e/gateway/config.toml}
     volumes:
       - ..:/e2e:ro
       - state:/var/lib/raycat

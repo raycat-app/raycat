@@ -84,6 +84,8 @@ fn initial_status(config: &Config) -> Status {
             running: false,
             pid: None,
             restarts: 0,
+            api_silent_secs: None,
+            api_stuck: false,
         },
         node: None,
         subscriptions: Vec::new(),
@@ -262,6 +264,8 @@ struct Daemon {
     /// xray запущен с тем же конфигом, который собран сейчас: теги узлов совпадают.
     xray_current: bool,
     xray_started: Option<Instant>,
+    /// Последний успешный ответ API xray на текущем процессе.
+    last_api_ok: Option<Instant>,
     xray_starts: u32,
     /// Алгоритм TCP для соединений к узлам, выбранный при старте процесса.
     tcp_congestion: Option<String>,
@@ -342,6 +346,7 @@ impl Daemon {
             xray_api: None,
             xray_current: false,
             xray_started: None,
+            last_api_ok: None,
             xray_starts: 0,
             tcp_congestion: None,
             udp_buffers_checked: false,
@@ -489,6 +494,7 @@ impl Daemon {
             self.next_select = now + self.config.selection.check_interval;
             self.select_step().await;
         }
+        self.check_api_hang();
         let due: Vec<usize> = self
             .subs
             .iter()
@@ -526,6 +532,7 @@ impl Daemon {
         }
         self.xray_current = true;
         self.xray_started = Some(Instant::now());
+        self.last_api_ok = None;
         self.xray_starts = self.xray_starts.saturating_add(1);
         self.next_select = Instant::now() + FIRST_SELECT_DELAY;
         self.shared.emit(Event::Xray {

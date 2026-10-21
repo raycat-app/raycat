@@ -337,6 +337,8 @@ fn demo_status() -> Status {
             running: true,
             pid: Some(4127),
             restarts: 0,
+            api_silent_secs: Some(0),
+            api_stuck: false,
         },
         node: Some(CurrentNode {
             id: SELECTED.to_owned(),

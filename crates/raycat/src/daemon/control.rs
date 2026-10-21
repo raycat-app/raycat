@@ -10,14 +10,14 @@ use raycat_proto::{
 };
 use raycat_select::{Decision, Status as SelectStatus};
 use raycat_subscription::Usage;
-use raycat_xray_api::XrayApi;
+use raycat_xray_api::{ApiError, XrayApi};
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
-use super::{Daemon, PendingUpdate, Sub};
+use super::{Daemon, PendingUpdate, Restart, Sub};
 use crate::api::{Command, Refusal};
-use crate::log::{self, Level, info};
-use crate::{plan, selection};
+use crate::log::{self, Level, info, warn};
+use crate::{plan, schedule, selection};
 
 const API_TIMEOUT: Duration = Duration::from_secs(3);
 /// Первые секунды после запуска API xray ещё может не отвечать: это не предупреждение.
@@ -148,12 +148,17 @@ impl Daemon {
         let statuses = match api.outbound_status().await {
             Ok(statuses) => statuses,
             Err(error) => {
+                // xray ответил ошибкой — значит, жив; молчанием считаются тайм-аут и обрыв связи.
+                if matches!(error, ApiError::Request { .. }) {
+                    self.last_api_ok = Some(Instant::now());
+                }
                 self.report_api_problem(&error.to_string());
                 self.drop_api();
                 return;
             }
         };
         self.api_problem.clear();
+        self.last_api_ok = Some(Instant::now());
         let health = selection::health(&statuses);
         let decision = self.selector.step(selection::now(), &health);
         self.apply_decision(&api, decision).await;
@@ -194,6 +199,29 @@ impl Daemon {
         self.pinned_in_xray = None;
         self.shared.set_xray(None);
         self.shared.set_xray_pin(None);
+    }
+
+    /// Сколько API xray молчит; `None`, пока xray не запущен.
+    fn api_silence(&self) -> Option<Duration> {
+        let started = self.xray_started.filter(|_| self.process.pid().is_some())?;
+        let silence = schedule::api_silence(Instant::now(), started, self.last_api_ok);
+        Some(silence)
+    }
+
+    /// Зависший xray: API молчит дольше порога. Процесс не падает, поэтому его перезапускает
+    /// общий путь перезапуска; правила шлюза при этом остаются на месте.
+    pub(super) fn check_api_hang(&mut self) {
+        if !self.selecting() || self.restart != Restart::Idle {
+            return;
+        }
+        let Some(silence) = self.api_silence() else {
+            return;
+        };
+        if silence <= schedule::api_limit(self.config.selection.check_interval) {
+            return;
+        }
+        warn!("xray не отвечает {} с — перезапускаю", silence.as_secs());
+        self.restart = Restart::Now;
     }
 
     async fn apply_decision(&mut self, api: &XrayApi, decision: Decision) {
@@ -271,6 +299,8 @@ impl Daemon {
             Mode::Gateway { kill_switch, .. } => (ApiMode::Gateway, Some(kill_switch)),
         };
         let pid = self.process.pid();
+        let silence = self.api_silence();
+        let limit = schedule::api_limit(self.config.selection.check_interval);
         Status {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             mode,
@@ -280,6 +310,8 @@ impl Daemon {
                 running: pid.is_some(),
                 pid,
                 restarts: self.xray_starts.saturating_sub(1),
+                api_silent_secs: silence.map(|silence| silence.as_secs()),
+                api_stuck: silence.is_some_and(|silence| silence > limit),
             },
             node,
             subscriptions: self.subs.iter().map(subscription_status).collect(),

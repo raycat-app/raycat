@@ -145,7 +145,13 @@ fn xray_text(term: Term, xray: &XrayStatus) -> String {
     } else {
         String::new()
     };
-    format!("{}{pid}{restarts}", term.paint(Tone::Green, "работает"))
+    let state = if xray.api_stuck {
+        let secs = xray.api_silent_secs.unwrap_or_default();
+        term.paint(Tone::Red, &format!("не отвечает ({secs} с)"))
+    } else {
+        term.paint(Tone::Green, "работает")
+    };
+    format!("{state}{pid}{restarts}")
 }
 
 fn header_lines(term: Term, status: &Status) -> Vec<String> {
@@ -702,6 +708,8 @@ mod tests {
                 running: true,
                 pid: Some(4127),
                 restarts: 0,
+                api_silent_secs: Some(0),
+                api_stuck: false,
             },
             node: Some(CurrentNode {
                 id: "main/NL-1".to_owned(),
@@ -784,6 +792,8 @@ mod tests {
             running: false,
             pid: None,
             restarts: 2,
+            api_silent_secs: None,
+            api_stuck: false,
         };
         let text = status(plain(), &data, NOW, &TimeZone::UTC);
         assert!(text.contains("режим:        прокси"));
@@ -816,6 +826,16 @@ mod tests {
         assert!(text.contains("срок:         бессрочно"));
         assert!(text.contains("3.0 МиБ (без ограничения)"));
         assert!(text.contains("обновлена:    ещё не получена"));
+    }
+
+    #[test]
+    fn a_stuck_xray_is_shown_instead_of_working() {
+        let mut data = sample_status();
+        data.xray.api_stuck = true;
+        data.xray.api_silent_secs = Some(120);
+        let text = status(plain(), &data, NOW, &TimeZone::UTC);
+        assert!(text.contains("не отвечает (120 с) (pid 4127)"));
+        assert!(!text.contains("работает"));
     }
 
     #[test]

@@ -191,6 +191,12 @@ fn xray_segs(xray: &XrayStatus) -> Vec<Seg> {
     let mut segs = Vec::new();
     if !xray.running {
         segs.push(Seg::new("xray не запущен", Tone::Red, 0));
+    } else if xray.api_stuck {
+        let text = format!(
+            "xray не отвечает ({} с)",
+            xray.api_silent_secs.unwrap_or_default()
+        );
+        segs.push(Seg::new(text, Tone::Red, 0));
     }
     if xray.restarts > 0 {
         let text = format!("xray перезапускался: {}", xray.restarts);
@@ -793,6 +799,8 @@ mod tests {
                 running: true,
                 pid: Some(4127),
                 restarts: 0,
+                api_silent_secs: Some(0),
+                api_stuck: false,
             },
             node: Some(CurrentNode {
                 id: "main/NL-1".to_owned(),
@@ -1425,6 +1433,8 @@ mod tests {
             running: false,
             pid: None,
             restarts: 3,
+            api_silent_secs: None,
+            api_stuck: false,
         };
         status.kill_switch = Some(false);
         status.node = None;
@@ -1444,6 +1454,16 @@ mod tests {
             lines[0],
             "raycat · шлюз · ● подключено · xray перезапускался: 2 · kill switch ●"
         );
+    }
+
+    #[test]
+    fn a_stuck_xray_is_a_problem_in_the_header() {
+        let mut status = sample_status();
+        status.xray.api_stuck = true;
+        status.xray.api_silent_secs = Some(120);
+        let mut app = app_with(status, sample_nodes());
+        let lines = screen(&mut app, 80, 20);
+        assert!(lines[0].contains("xray не отвечает (120 с)"));
     }
 
     #[test]
