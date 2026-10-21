@@ -1,0 +1,17 @@
+[[subscription]]
+name = "e2e"
+url = "http://11.30.0.5:8080/sub/e2etoken1234"
+allow_http = true
+app = "happ"
+platform = "windows"
+
+[mode]
+type = "gateway"
+kill_switch = true
+
+[selection]
+# Порог молчания API xray — три интервала, но не меньше 30 с: минимум для стенда.
+check_interval = "5s"
+
+[log]
+level = "debug"

@@ -3,22 +3,27 @@
 # через узел; kill switch, DNS, IPv6, восстановление правил и их снятие.
 #
 #   docker load < образ   # тег raycat:ci
-#   bash .github/e2e/gateway.sh [all|main|guard]
+#   bash .github/e2e/gateway.sh [all|main|guard|hung]
 #
-# main — всё, кроме возврата сброшенных правил, guard — только он (демон проверяет правила
-# раз в 30 с, и ожидание идёт в отдельном запуске параллельно с остальными проверками).
+# main — всё, кроме возврата сброшенных правил и зависшего xray; guard — только возврат
+# правил (демон проверяет правила раз в 30 с, и ожидание идёт в отдельном запуске параллельно
+# с остальными проверками); hung — только зависший xray на стенде с check_interval 5 с
+# (порог молчания API 30 с, конфиг gateway/hung.toml). all — main и guard вместе.
 # Стенд описан в .github/e2e/gateway/compose.yml. Нужен Docker с compose v2.
 set -euo pipefail
 
 mode=${1:-all}
 case "$mode" in
-  all | main | guard) ;;
-  *) echo "режим: all, main или guard" >&2; exit 2 ;;
+  all | main | guard | hung) ;;
+  *) echo "режим: all, main, guard или hung" >&2; exit 2 ;;
 esac
 
 here=$(cd "$(dirname "$0")" && pwd)
 compose=(docker compose -f "$here/gateway/compose.yml")
 image=${RAYCAT_IMAGE:-raycat:ci}
+if [ "$mode" = hung ]; then
+  export RAYCAT_E2E_CONFIG=/e2e/gateway/hung.toml
+fi
 
 gateway=raycat-e2e-gateway
 app=raycat-e2e-app
@@ -146,6 +151,23 @@ case "$first_event" in
   *) fail "xray запущен раньше, чем установлены правила" ;;
 esac
 
+if [ "$mode" = hung ]; then
+  echo "== зависший xray: процесс заморожен, демон сам видит молчание API и перезапускает его"
+  wait_for "raycat health: узел выбран" 30 gateway_run raycat health
+  frozen=$(gateway_run pidof xray)
+  gateway_run sh -c "kill -STOP $frozen"
+  # Демон перезапускает xray после порога молчания; «не готов» виден, пока старый процесс останавливается.
+  wait_for "raycat health: зависший xray не готов" 120 health_says 'xray не отвечает'
+  log_has "$gateway" "xray не отвечает" || fail "в журнале нет предупреждения о зависшем xray"
+  wait_for "xray перезапущен демоном, raycat health снова успешен" 90 gateway_run raycat health
+  restarted=$(gateway_run pidof xray)
+  [ "$restarted" != "$frozen" ] || fail "xray не перезапустился: тот же процесс $frozen"
+  expect_via_node "$site" "${nodes_inet[@]}"
+  echo "  зависший xray (pid $frozen) заменён процессом $restarted"
+  echo "e2e шлюза (зависший xray): успех"
+  exit 0
+fi
+
 echo "== жёсткие настройки и готовность: read_only, HEALTHCHECK, raycat health, CLI внутри контейнера"
 [ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$gateway")" = true ] || fail "корень шлюза не только для чтения"
 if gateway_run sh -c 'touch /probe' 2>/dev/null; then
@@ -216,18 +238,6 @@ wait_for "xray перезапущен и трафик снова идёт" 60 fe
 wait_for "raycat health снова успешен" 60 gateway_run raycat health
 expect_via_node "$site" "${nodes_inet[@]}"
 log_has "$gateway" "xray завершился" || fail "в журнале нет записи о падении xray"
-
-echo "== зависший xray: процесс заморожен, демон сам видит молчание API и перезапускает его"
-frozen=$(gateway_run pidof xray)
-gateway_run sh -c "kill -STOP $frozen"
-# Демон перезапускает xray после порога молчания; «не готов» виден, пока старый процесс останавливается.
-wait_for "raycat health: зависший xray не готов" 150 health_says 'xray не отвечает'
-log_has "$gateway" "xray не отвечает" || fail "в журнале нет предупреждения о зависшем xray"
-wait_for "xray перезапущен демоном, raycat health снова успешен" 90 gateway_run raycat health
-restarted=$(gateway_run pidof xray)
-[ "$restarted" != "$frozen" ] || fail "xray не перезапустился: тот же процесс $frozen"
-expect_via_node "$site" "${nodes_inet[@]}"
-echo "  зависший xray (pid $frozen) заменён процессом $restarted"
 
 echo "== docker compose restart: приложение снова ходит через шлюз"
 "${compose[@]}" restart raycat >/dev/null
