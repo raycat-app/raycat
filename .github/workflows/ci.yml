@@ -47,13 +47,13 @@ jobs:
         if: ${{ failure() && steps.fmt.outcome == 'failure' }}
         run: cargo fmt --all && git diff > rustfmt.patch
       - if: ${{ failure() && steps.fmt.outcome == 'failure' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rustfmt-patch
           path: rustfmt.patch
           retention-days: 7
       - run: cargo clippy --workspace --all-targets --all-features --locked
-      - uses: crate-ci/typos@00f422f3b19c57bc6338715ebfe3316d38768461 # v1.50.3
+      - uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1.51.1
 
   lockfile:
     name: Cargo.lock
@@ -74,7 +74,7 @@ jobs:
         if: ${{ failure() && steps.lock.outcome == 'failure' }}
         run: cargo metadata --format-version 1 > /dev/null
       - if: ${{ failure() && steps.lock.outcome == 'failure' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Cargo.lock
           path: Cargo.lock
@@ -107,7 +107,7 @@ jobs:
             exit 1
           fi
       - if: ${{ failure() && steps.check.outcome == 'failure' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: config.schema.json
           path: ${{ runner.temp }}/config.schema.json
@@ -131,7 +131,7 @@ jobs:
       - id: check
         run: cargo test --locked -p raycat tui_screenshot
       - if: ${{ failure() && steps.check.outcome == 'failure' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tui.svg
           path: target/tui.svg
@@ -154,7 +154,7 @@ jobs:
           save-if: ${{ env.CACHE_SAVE }}
           cache-on-failure: true
           add-rust-environment-hash-key: false
-      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: cargo-nextest
       - run: cargo nextest run --workspace --all-features --locked
@@ -198,7 +198,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: cargo-deny
       - run: cargo deny --config .cargo/deny.toml --log-level warn --manifest-path ./Cargo.toml --all-features check
@@ -219,7 +219,7 @@ jobs:
         with:
           persist-credentials: false
       # actionlint проверяет run-скрипты через shellcheck, если он есть.
-      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: shellcheck
       - name: actionlint
@@ -263,7 +263,7 @@ jobs:
           add-rust-environment-hash-key: false
       - name: Сборка
         run: cargo build --profile "$BUILD_PROFILE" --locked --target "$TARGET"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: raycat-x86_64-unknown-linux-musl
           path: target/x86_64-unknown-linux-musl/${{ env.BUILD_PROFILE }}/raycat
@@ -300,7 +300,7 @@ jobs:
           add-rust-environment-hash-key: false
       - name: Сборка
         run: cargo build --profile "$BUILD_PROFILE" --locked --target "$TARGET"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: raycat-aarch64-unknown-linux-musl
           path: target/aarch64-unknown-linux-musl/${{ env.BUILD_PROFILE }}/raycat
@@ -337,7 +337,7 @@ jobs:
           add-rust-environment-hash-key: false
       - name: Сборка
         run: cargo build --profile "$BUILD_PROFILE" --locked --target "$TARGET"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: raycat-armv7-unknown-linux-musleabihf
           path: target/armv7-unknown-linux-musleabihf/${{ env.BUILD_PROFILE }}/raycat
@@ -448,7 +448,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: raycat-x86_64-unknown-linux-musl
           path: dist/amd64
@@ -459,7 +459,7 @@ jobs:
           docker build "${args[@]}" --tag raycat:ci .
       - name: Сохранение образа
         run: docker save raycat:ci | gzip -1 > "$RUNNER_TEMP/image-${ARCH}.tar.gz"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: image-amd64
           path: ${{ runner.temp }}/image-amd64.tar.gz
@@ -493,7 +493,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: raycat-aarch64-unknown-linux-musl
           path: dist/arm64
@@ -521,7 +521,7 @@ jobs:
           docker buildx build --load "${cache[@]}" "${args[@]}" --tag raycat:ci .
       - name: Сохранение образа
         run: docker save raycat:ci | gzip -1 > "$RUNNER_TEMP/image-${ARCH}.tar.gz"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: image-arm64${{ matrix.suffix }}
           path: ${{ runner.temp }}/image-arm64${{ matrix.suffix }}.tar.gz
@@ -552,7 +552,7 @@ jobs:
             cache+=(--cache-to "type=gha,mode=max,scope=noaes-armv7")
           fi
           docker buildx build --platform linux/arm/v7 "${cache[@]}" "${args[@]}" --target xray-noaes --output type=local,dest=out .
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: xray-noaes-armv7
           path: out/out/xray
@@ -679,7 +679,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: image-amd64
           path: ${{ runner.temp }}/image
@@ -706,7 +706,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2.87.25
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: shellcheck
       - name: shellcheck
@@ -737,7 +737,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: raycat-x86_64-unknown-linux-musl
           path: dist
@@ -768,7 +768,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: raycat-x86_64-unknown-linux-musl
           path: dist
@@ -795,7 +795,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: image-amd64
           path: ${{ runner.temp }}/image
