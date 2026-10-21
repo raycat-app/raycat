@@ -1,10 +1,10 @@
 [xray]
-version = "26.9.30"
+version = "26.10.21"
 
 [xray.sha256]
-x86_64 = "f851110beaff16e78d643f0ccfd9524b4a44dfd59bae3e34bb52bba378f7690e"
-aarch64 = "9886f077f9fd8e6713b84c377c1c7db4e53b9bfa8c276a5bd12561139522b473"
-armv7 = "0b9719471c7c69752857714e9711d4da57cf38a6beb75dcddfb21425f7919908"
+x86_64 = "0eec3ed4163c273d8c8bf821f7d219e257921cf584aa3fb970715e458e631978"
+aarch64 = "d1304946c486d98e6b886e9b931eaaaebb23835b30e217638037b7f2721d4e9c"
+armv7 = "89978508fa2ebb4a1e661f2c6ed51d241c4091b3cd17f4c65fdf20baae7dedac"
 
 # Сборка xray из исходников на Go 1.26 для процессоров без аппаратного AES
 # (Raspberry Pi 3/4, многие armv7): в Go 1.27 GHASH стал константным по времени и
