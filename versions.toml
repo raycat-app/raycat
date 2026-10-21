@@ -1,17 +1,17 @@
 [xray]
-version = "26.9.30"
+version = "26.10.17"
 
 [xray.sha256]
-x86_64 = "f851110beaff16e78d643f0ccfd9524b4a44dfd59bae3e34bb52bba378f7690e"
-aarch64 = "9886f077f9fd8e6713b84c377c1c7db4e53b9bfa8c276a5bd12561139522b473"
-armv7 = "0b9719471c7c69752857714e9711d4da57cf38a6beb75dcddfb21425f7919908"
+x86_64 = "ecdd54eccd24c4c21a8f00968e7dbf7f5996da92383d2321170b560dc4a95158"
+aarch64 = "4ebdad86048fa499e65334f88a120b1ed17e662f1c222afd3514afdf8820cdb1"
+armv7 = "3c5339ba4a14ebad74df26e6ad935c215f5be615684f139a78d3dff8cbf6e7e4"
 
 # Сборка xray из исходников на Go 1.26 для процессоров без аппаратного AES
 # (Raspberry Pi 3/4, многие armv7): в Go 1.27 GHASH стал константным по времени и
 # на таких процессорах AES-GCM заметно медленнее. Исходники берутся по коммиту тега
 # версии, образ golang — по digest индекса (многоархитектурного манифеста).
 [xray.noaes]
-commit = "b26a91de4f3294e26a0ad0a970b81a386a41f789"
+commit = "92ccc939aaf4f8965f369cf0b142e005aeaa11d5"
 go_version = "1.26.8"
 go_image = "golang:1.26.8-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c"
 upstream_go = "1.27"
