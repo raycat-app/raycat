@@ -695,6 +695,7 @@ type = "gateway"
   `condition: service_healthy` the apps do not start until the VPN is ready, and `restart: true`
   restarts them together with the gateway. To check by hand:
   `docker compose exec raycat raycat health` (exit code 0 or 1 and the reason).
+- **Not Docker.** If you run outside Docker (for example, podman or your own runtime) with `cap_drop: [ALL]`, also add `CAP_NET_BIND_SERVICE` or `net.ipv4.ip_unprivileged_port_start=0`: without them, DNS in gateway mode does not work.
 
 **The subscription link as a Docker secret.** Instead of `url`, set `url_file = "/run/secrets/raycat_sub"`
 and pass the file through `secrets:` (spaces and line breaks at the edges do not matter; the file

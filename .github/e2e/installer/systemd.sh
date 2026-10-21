@@ -22,7 +22,7 @@ panel_port=18090
 proxy=127.0.0.1:7890
 password=e2e-password
 installer="$root/deploy/install.sh"
-caps_net_admin=0000000000001000
+caps_gateway=0000000000001400
 
 work=$(mktemp -d)
 pids=()
@@ -110,8 +110,10 @@ set -eu
 caps=$(sed -n 's/^CapEff:[[:space:]]*//p' /proc/self/status)
 bound=$(sed -n 's/^CapBnd:[[:space:]]*//p' /proc/self/status)
 echo "CapEff=$caps CapBnd=$bound"
-[ "$caps" = 0000000000001000 ] || { echo "ожидалась только CAP_NET_ADMIN"; exit 1; }
-[ "$bound" = 0000000000001000 ] || { echo "ограничивающий набор шире CAP_NET_ADMIN"; exit 1; }
+python3 -c 'import socket; s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.setsockopt(socket.SOL_IP, socket.IP_TRANSPARENT, 1); s.bind(("192.0.2.1", 53))' ||
+  { echo "прозрачный UDP-сокет не привязывается к 192.0.2.1:53: нет CAP_NET_BIND_SERVICE"; exit 1; }
+[ "$caps" = 0000000000001400 ] || { echo "ожидались только CAP_NET_ADMIN и CAP_NET_BIND_SERVICE"; exit 1; }
+[ "$bound" = 0000000000001400 ] || { echo "ограничивающий набор шире CAP_NET_ADMIN и CAP_NET_BIND_SERVICE"; exit 1; }
 grep -q '^NoNewPrivs:[[:space:]]*1' /proc/self/status
 nft add table inet raycatprobe
 nft delete table inet raycatprobe
@@ -190,10 +192,10 @@ sudo systemctl start raycat
 wait_for "прокси отвечает" site_ok
 wait_for "узел выбран" status_is '.node.id == "e2e/E2E"'
 pid=$(main_pid)
-[ "$(caps_of "$pid")" = "$caps_net_admin" ] || fail "у демона привилегии $(caps_of "$pid")"
+[ "$(caps_of "$pid")" = "$caps_gateway" ] || fail "у демона привилегии $(caps_of "$pid")"
 xpid=$(xray_pid)
 [ -n "$xpid" ] || fail "xray не запущен"
-[ "$(caps_of "$xpid")" = "$caps_net_admin" ] || fail "у xray привилегии $(caps_of "$xpid")"
+[ "$(caps_of "$xpid")" = "$caps_gateway" ] || fail "у xray привилегии $(caps_of "$xpid")"
 [ "$(sudo stat -c %a /run/raycat/raycat.sock)" = 600 ] || fail "права сокета не 0600"
 [ "$(sudo stat -c %a /var/lib/raycat)" = 700 ] || fail "права каталога состояния не 0700"
 sudo raycat check >/dev/null || fail "raycat check под root не прошла"

@@ -694,6 +694,7 @@ type = "gateway"
   С `condition: service_healthy` приложения не стартуют, пока VPN не готов, а
   `restart: true` перезапускает их вместе со шлюзом. Проверить вручную:
   `docker compose exec raycat raycat health` (код 0 или 1 и причина).
+- **Не Docker.** Если запускаете не в Docker (например, podman или своим рантаймом) с `cap_drop: [ALL]`, добавьте также `CAP_NET_BIND_SERVICE` или `net.ipv4.ip_unprivileged_port_start=0`: без них DNS в режиме шлюза не работает.
 
 **Ссылка подписки как секрет Docker.** Вместо `url` укажите `url_file = "/run/secrets/raycat_sub"`
 и передайте файл через `secrets:` (пробелы и перевод строки по краям не важны; права файла
