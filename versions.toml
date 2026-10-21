@@ -12,8 +12,8 @@ armv7 = "89978508fa2ebb4a1e661f2c6ed51d241c4091b3cd17f4c65fdf20baae7dedac"
 # на 40–50% медленнее. Версия и коммит совпадают с [xray]: бот обновляет их вместе. go_image —
 # образ-бутстрап тулчейна, закреплён по digest индекса (многоархитектурного манифеста).
 [xray.noaes]
-version = "26.9.30"
-commit = "b26a91de4f3294e26a0ad0a970b81a386a41f789"
+version = "26.10.21"
+commit = "1b1647cd9ddf0abc34b981d4611fc03bcac1ca74"
 go_version = "1.27.3"
 go_commit = "2aae1000ea1d4b28923b96db28acf4e3b99d6aff"
 go_image = "golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd"
