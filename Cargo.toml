@@ -36,7 +36,7 @@ jiff = { version = "0.2.38", default-features = false, features = [
 ] }
 libc = "0.2"
 prost = "0.14"
-protox = "0.9"
+protox = "0.10"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 raycat-config = { path = "crates/config" }
 raycat-emulation = { path = "crates/emulation" }
