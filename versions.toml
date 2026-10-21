@@ -6,14 +6,14 @@ x86_64 = "0eec3ed4163c273d8c8bf821f7d219e257921cf584aa3fb970715e458e631978"
 aarch64 = "d1304946c486d98e6b886e9b931eaaaebb23835b30e217638037b7f2721d4e9c"
 armv7 = "89978508fa2ebb4a1e661f2c6ed51d241c4091b3cd17f4c65fdf20baae7dedac"
 
-# Сборка xray из исходников на Go 1.26 для процессоров без аппаратного AES
-# (Raspberry Pi 3/4, многие armv7): в Go 1.27 GHASH стал константным по времени и
-# на таких процессорах AES-GCM заметно медленнее. Версия может отставать от [xray]:
-# её собирают на Go 1.26, а новые релизы xray могут требовать Go 1.27. Исходники берутся
-# по коммиту тега этой версии, образ golang — по digest индекса (многоархитектурного манифеста).
+# Сборка xray для процессоров без аппаратного AES (Raspberry Pi 3/4, многие armv7). Тулчейн Go
+# собирается из исходников тега go_version (коммит go_commit) с патчем .github/build/go-noaes.patch:
+# он отменяет константный по времени GHASH из Go 1.27, из-за которого AES-GCM без AES-инструкций
+# на 40–50% медленнее. Версия и коммит совпадают с [xray]: бот обновляет их вместе. go_image —
+# образ-бутстрап тулчейна, закреплён по digest индекса (многоархитектурного манифеста).
 [xray.noaes]
-version = "26.10.10"
-commit = "701af60772cda123492f86e383e1fdba066614a9"
-go_version = "1.26.8"
-go_image = "golang:1.26.8-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c"
-upstream_go = "1.27"
+version = "26.10.21"
+commit = "1b1647cd9ddf0abc34b981d4611fc03bcac1ca74"
+go_version = "1.27.3"
+go_commit = "2aae1000ea1d4b28923b96db28acf4e3b99d6aff"
+go_image = "golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd"

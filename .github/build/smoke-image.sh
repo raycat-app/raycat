@@ -24,7 +24,7 @@ version_output=$(docker run --rm --entrypoint "$xray" "$image" version)
 echo "$version_output"
 if [ "${XRAY_BUILD:-}" = noaes ]; then
   go_version=$(sed -n 's/^go_version = "\(.*\)"/\1/p' versions.toml)
-  grep -qF "(go${go_version} " <<<"$version_output"
+  grep -qF "(go${go_version}-noaes " <<<"$version_output"
   noaes_version=$(sed -n '/^\[xray\.noaes\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' versions.toml)
   grep -qF "Xray ${noaes_version} " <<<"$version_output"
 fi
