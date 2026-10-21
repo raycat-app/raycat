@@ -145,7 +145,8 @@ jobs:
         run: |
           tag=${REQUESTED:-latest}
           if [ "$tag" = latest ]; then
-            tag=$(gh release list -R "$REPO" --limit 1 --json tagName --jq '.[0].tagName')
+            . .github/capture/releases.sh
+            tag=$(latest_stable "$REPO" "$ASSET")
           fi
           [[ "$tag" =~ ^[0-9A-Za-z._-]+$ ]] || { echo "неверная версия: $tag"; exit 1; }
           gh release download "$tag" -R "$REPO" -p "$ASSET"

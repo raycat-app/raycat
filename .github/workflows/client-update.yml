@@ -50,6 +50,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
+      actions: read
       contents: write
       pull-requests: write
     outputs:
@@ -70,10 +71,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: capture-${{ inputs.app }}-${{ inputs.platform }}-*
-          path: artifacts
+      # download-artifact с шаблоном, которому отвечает один артефакт, кладёт файлы прямо в
+      # artifacts/ без каталога, а инструмент ищет каталоги capture-…. Поэтому каждый
+      # артефакт скачивается в свой каталог по имени.
+      - name: Захваты
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          prefix="capture-$APP-$PLATFORM-"
+          names=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[] | select(.expired | not) | .name' | grep "^$prefix" || true)
+          count=0
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            mkdir -p "artifacts/$name"
+            gh run download "$RUN_ID" -R "$REPO" -n "$name" -D "artifacts/$name"
+            count=$((count + 1))
+          done <<<"$names"
+          [ "$count" -gt 0 ] || { echo "::error::нет артефактов захвата $prefix*"; exit 1; }
       # Кэш cargo здесь не нужен: задача публикует код, а сборка инструмента занимает минуты.
       - name: Профиль и образцы по захвату
         run: |
