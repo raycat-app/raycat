@@ -7,6 +7,7 @@
 # пересобрать профиль по текущей (проверка стенда: профиль не должен измениться).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+. .github/capture/releases.sh
 
 force=${FORCE:-none}
 output=${GITHUB_OUTPUT:-/dev/stdout}
@@ -29,15 +30,11 @@ recorded_release() {
   done
 }
 
-# Тестовые и черновые релизы (в Happ это бета-сборки) профилем не становятся.
-latest_stable() {
-  gh api "repos/$1/releases?per_page=100" |
-    jq -r --arg asset "$2" '.[] | select(.draft == false and .prerelease == false) | select(any(.assets[]; .name == $asset)) | .tag_name' |
-    sort -V | tail -n 1
-}
-
 is_newer() {
-  [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]
+  local latest_version current_version
+  latest_version=$(version_of "$1")
+  current_version=$(version_of "$2")
+  [ "$latest_version" != "$current_version" ] && [ "$(printf '%s\n%s\n' "$latest_version" "$current_version" | sort -V | tail -n 1)" = "$latest_version" ]
 }
 
 entries=()
