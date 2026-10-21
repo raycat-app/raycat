@@ -381,7 +381,7 @@ write_example_config() {
 # Настройки raycat: /etc/raycat/config.toml (права 0600, в файле ссылка подписки).
 # После правки: sudo systemctl restart raycat
 # Проверка файла и подписок: sudo raycat check
-# Описание всех ключей: https://github.com/raycat-app/raycat
+# Описание всех ключей: https://github.com/raycat-app/raycat#настройки
 
 [[subscription]]
 name = "основная"
