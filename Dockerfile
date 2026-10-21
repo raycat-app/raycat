@@ -33,21 +33,20 @@ ARG GO_COMMIT
 WORKDIR /usr/local/go-noaes
 COPY .github/build/go-noaes.patch /go-noaes.patch
 # Версии пакетов не закреплены: репозиторий Alpine хранит только текущие сборки.
+# Суффикс в VERSION попадает в runtime.Version: `xray version` печатает его, и CI по нему видит,
+# что xray собран тулчейном с патчем. make.bash — скрипт bash, поэтому bash ставится здесь же.
 # hadolint ignore=DL3018
-RUN set -eu; \
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    set -eu; \
     : "${GO_VERSION:?}" "${GO_COMMIT:?}"; \
-    apk add --no-cache git; \
+    apk add --no-cache bash git; \
     git init -q .; \
     git remote add origin https://github.com/golang/go.git; \
     git fetch -q --depth 1 origin "${GO_COMMIT}"; \
     git checkout -q FETCH_HEAD; \
     test "$(git rev-parse HEAD)" = "${GO_COMMIT}"; \
     git apply /go-noaes.patch; \
-    printf 'go%s-noaes\n' "${GO_VERSION}" > VERSION
-# Суффикс в VERSION попадает в runtime.Version: `xray version` печатает его, и CI по нему видит,
-# что xray собран тулчейном с патчем.
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    set -eu; \
+    printf 'go%s-noaes\n' "${GO_VERSION}" > VERSION; \
     cd src; \
     CGO_ENABLED=0 GOROOT_BOOTSTRAP=/usr/local/go ./make.bash; \
     cd ..; \
@@ -61,10 +60,6 @@ ARG GO_VERSION
 ARG TARGETARCH
 ARG TARGETVARIANT
 COPY --from=go-noaes /usr/local/go-noaes /usr/local/go-noaes
-ENV GOROOT=/usr/local/go-noaes \
-    PATH=/usr/local/go-noaes/bin:${PATH} \
-    CGO_ENABLED=0 \
-    GOTOOLCHAIN=local
 WORKDIR /src
 # Версии пакетов не закреплены: репозиторий Alpine хранит только текущие сборки.
 # hadolint ignore=DL3018
@@ -76,6 +71,10 @@ RUN set -eu; \
     git fetch -q --depth 1 origin "${XRAY_COMMIT}"; \
     git checkout -q FETCH_HEAD; \
     test "$(git rev-parse HEAD)" = "${XRAY_COMMIT}"
+ENV GOROOT=/usr/local/go-noaes \
+    PATH=/usr/local/go-noaes/bin:${PATH} \
+    CGO_ENABLED=0 \
+    GOTOOLCHAIN=local
 # Кэши Go в монтировании, а не в слое: слой остаётся размером с бинарник, и его дёшево
 # хранить в кэше сборки CI.
 RUN --mount=type=cache,target=/go/pkg/mod \
