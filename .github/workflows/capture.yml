@@ -86,7 +86,7 @@ jobs:
           Stop-Process $server -Force
           Get-Content server.log
           Copy-Item server.log captures/
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ always() }}
         with:
           name: capture-happ-windows-${{ matrix.arch }}-${{ steps.app.outputs.version }}${{ matrix.odd && '-odd-day' || '' }}
@@ -186,7 +186,7 @@ jobs:
           script: bash .github/capture/android.sh
       - if: ${{ always() }}
         run: cat server.log && cp server.log captures/
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ always() }}
         with:
           name: capture-${{ matrix.scheme }}-android-x86_64-${{ steps.app.outputs.version }}${{ matrix.odd && '-odd-day' || '' }}
