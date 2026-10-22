@@ -470,7 +470,7 @@ fn tui_screenshot_matches_assets() {
 }
 
 #[test]
-fn tui_nodes_screenshot_matches_assets() {
+fn tui_screenshot_nodes_matches_assets() {
     let mut app = demo_app();
     app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
     check(&mut app, COMMITTED_NODES, WRITTEN_NODES);
