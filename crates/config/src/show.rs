@@ -73,7 +73,7 @@ impl Shown {
             self.text.push('\n');
         }
         let _ = writeln!(self.text, "{header}");
-        self.prefix = prefix.to_owned();
+        prefix.clone_into(&mut self.prefix);
     }
 
     /// Строка `ключ = значение`; значение уже записано как в TOML.

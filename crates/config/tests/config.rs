@@ -1297,7 +1297,7 @@ fn effective_settings_show_every_value_with_its_source() {
     let shown = raycat_config::effective(Some(path.as_path()), &vars, false).unwrap();
     std::fs::remove_file(&path).unwrap();
     for line in [
-        "name = \"main\"\n",
+        "name = \"основная\"  # из файла\n",
         "url = \"https://sub.example.com/…1234\"  # из файла\n",
         "type = \"gateway\"  # из файла\n",
         "kill_switch = true\n",
@@ -1342,6 +1342,58 @@ fn effective_settings_without_a_file_come_from_the_environment() {
         "{shown}"
     );
     assert!(!shown.contains("ZzZz0007"), "{shown}");
+}
+
+/// Раскомментирование любой строки-ключа примера (вместе с закомментированным заголовком её
+/// таблицы) не ломает разбор: ключ попадает в свою таблицу, а не в соседнюю.
+#[test]
+fn uncommenting_any_key_of_the_example_keeps_the_file_parseable() {
+    let lines: Vec<&str> = EXAMPLE.lines().collect();
+    let mut checked = 0;
+    for (index, line) in lines.iter().enumerate() {
+        if !is_commented_key(line) {
+            continue;
+        }
+        let mut changed: Vec<String> = lines.iter().map(|text| (*text).to_owned()).collect();
+        changed[index] = uncommented(line);
+        if let Some(header) = commented_header_above(&lines, index) {
+            changed[header] = uncommented(lines[header]);
+        }
+        let text = format!("{}\n", changed.join("\n"));
+        let result = Config::from_toml_str(&text, &Env::new());
+        assert!(!matches!(result, Err(Error::Parse(_))), "{line}: {result:?}");
+        checked += 1;
+    }
+    assert!(checked >= 30, "раскомментировано строк: {checked}");
+}
+
+/// `# ключ = значение`: закомментированный ключ, который можно раскомментировать.
+fn is_commented_key(line: &str) -> bool {
+    let Some(body) = line.strip_prefix("# ") else {
+        return false;
+    };
+    let Some((key, _)) = body.split_once(" = ") else {
+        return false;
+    };
+    !key.is_empty() && key.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+}
+
+fn uncommented(line: &str) -> String {
+    line.strip_prefix("# ").unwrap_or(line).to_owned()
+}
+
+/// Ближайший закомментированный заголовок `# [таблица]` выше строки. Если раньше встретился
+/// раскомментированный заголовок, таблица уже открыта, и свой заголовок не нужен.
+fn commented_header_above(lines: &[&str], index: usize) -> Option<usize> {
+    for above in (0..index).rev() {
+        if lines[above].starts_with('[') {
+            return None;
+        }
+        if lines[above].starts_with("# [") {
+            return Some(above);
+        }
+    }
+    None
 }
 
 #[test]

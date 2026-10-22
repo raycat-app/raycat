@@ -96,8 +96,8 @@ fn describe(message: &str) -> String {
     }
 }
 
-/// `rest` — сообщение serde после «unknown field `»: имя ключа и перечень допустимых ключей
-/// этой секции («, expected one of `a`, `b`»). Подсказка выбирается из этого перечня.
+/// `rest` — сообщение serde после «unknown field»: имя ключа и перечень допустимых ключей
+/// этой секции (часть «expected one of»). Подсказка выбирается из этого перечня.
 fn unknown_key(rest: &str) -> String {
     let (name, tail) = rest.split_once('`').unwrap_or((rest, ""));
     let expected: Vec<&str> = tail.split('`').skip(1).step_by(2).collect();
