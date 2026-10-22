@@ -611,12 +611,10 @@ pub(crate) fn event_text(event: &Event) -> (Tone, String) {
                 sanitize(reason)
             ),
         ),
-        Event::Pin { node: Some(node) } => {
-            (
-                Tone::Yellow,
-                format!("закреплён узел {}", display_name(node, NameStyle::Country)),
-            )
-        }
+        Event::Pin { node: Some(node) } => (
+            Tone::Yellow,
+            format!("закреплён узел {}", display_name(node, NameStyle::Country)),
+        ),
         Event::Pin { node: None } => (Tone::Plain, "закрепление снято".to_owned()),
         Event::SubscriptionUpdated {
             subscription,
