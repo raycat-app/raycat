@@ -909,15 +909,15 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(
             lines[0],
-            "   Подписка  Узел  Статус  Задержка  Сбои  Трафик                Ошибка"
+            "    Подписка  Узел  Статус  Задержка  Сбои  Трафик                Ошибка"
         );
         assert_eq!(
             lines[1],
-            "★  main      NL-1  ● жив      31 мс     0  ↑10.0 КиБ ↓200.0 КиБ"
+            "▶★  main      NL-1  ● жив      31 мс     0  ↑10.0 КиБ ↓200.0 КиБ"
         );
         assert_eq!(
             lines[2],
-            "   main      DE-2  ● жив      31 мс     0  ↑10.0 КиБ ↓200.0 КиБ"
+            "    main      DE-2  ● жив      31 мс     0  ↑10.0 КиБ ↓200.0 КиБ"
         );
         assert_eq!(
             lines[3],
@@ -967,15 +967,15 @@ mod tests {
     }
 
     #[test]
-    fn a_long_error_is_cut_with_an_ellipsis() {
+    fn the_table_shows_the_reason_not_the_raw_error() {
         let mut data = sample_nodes();
-        data.nodes[2].last_error =
-            Some("панель не ответила за отведённое время, попробуйте позже".to_owned());
-        let text = nodes(plain(), &data, true);
-        assert!(
-            text.contains("панель не ответила за отведённое время,…"),
-            "{text}"
+        data.nodes[2].last_error = Some(
+            "the outbound node-007-main is dead: GET request failed: context deadline exceeded"
+                .to_owned(),
         );
+        let text = nodes(plain(), &data, true);
+        assert!(text.contains("не отвечает (тайм-аут)"), "{text}");
+        assert!(!text.contains("outbound"), "{text}");
     }
 
     #[test]
