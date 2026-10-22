@@ -7,7 +7,9 @@ use raycat_proto::{Node, NodeStatus, SubscriptionStatus};
 
 use super::app::{App, Hit, Link, Target, names_label};
 use super::canvas::{Canvas, GAP, Seg, highlight, wrap};
-use super::view::{delay_tone, speed_label, sub_phrase, subscription_title, traffic_seg, xray_segs};
+use super::view::{
+    delay_tone, speed_label, sub_phrase, subscription_title, traffic_seg, xray_segs,
+};
 use crate::names::{NameStyle, country_code, display_name, node_reason};
 use crate::render;
 use crate::term::{Tone, display_width, pad, truncate};
@@ -140,18 +142,16 @@ fn node_segs(app: &App) -> Vec<Seg> {
     ));
     let (down, up) = app.speed().map_or((0, 0), |speed| (speed.down, speed.up));
     segs.push(Seg::new(speed_label(down, up), Tone::Plain, 1));
-    let choice = if node.pinned { "закреплён" } else { "авто" };
+    let choice = if node.pinned {
+        "закреплён"
+    } else {
+        "авто"
+    };
     segs.push(Seg::new(choice, Tone::Dim, 1));
     segs
 }
 
-fn subscription_brief(
-    canvas: &mut Canvas<'_>,
-    app: &App,
-    y: usize,
-    rows: usize,
-    zone: &TimeZone,
-) {
+fn subscription_brief(canvas: &mut Canvas<'_>, app: &App, y: usize, rows: usize, zone: &TimeZone) {
     let subs: &[SubscriptionStatus] = match &app.status {
         Some(status) => &status.subscriptions,
         None => &[],
@@ -184,7 +184,11 @@ fn subscription_brief(
 /// Последние события в рамке: строк столько, сколько есть места, но не больше `RECENT`.
 fn events(canvas: &mut Canvas<'_>, app: &App, y: usize, room: usize, zone: &TimeZone) {
     let height = room.min(FRAME + RECENT);
-    let mut inner = canvas.framed(y, height, vec![Seg::new("Последние события", Tone::Bold, 0)]);
+    let mut inner = canvas.framed(
+        y,
+        height,
+        vec![Seg::new("Последние события", Tone::Bold, 0)],
+    );
     if app.log.is_empty() {
         inner.line(0, 0, vec![Seg::new("пока пусто", Tone::Dim, 0)]);
         return;
@@ -311,7 +315,11 @@ fn node_details(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
         return;
     };
     let (status_text, status_tone) = render::node_status_mark(node.status);
-    let selected = if node.selected { "выбран" } else { "не выбран" };
+    let selected = if node.selected {
+        "выбран"
+    } else {
+        "не выбран"
+    };
     let choice = if node.pinned {
         "закреплён вручную"
     } else {
@@ -343,7 +351,11 @@ fn node_details(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
             ),
             Seg::new(format!("сбоев {}", node.failures), Tone::Plain, 0),
         ],
-        vec![Seg::new(format!("Выбор: {selected}, {choice}"), Tone::Plain, 0)],
+        vec![Seg::new(
+            format!("Выбор: {selected}, {choice}"),
+            Tone::Plain,
+            0,
+        )],
         vec![Seg::new(
             format!("Причина: {}", reason.unwrap_or("нет")),
             reason_tone,
@@ -366,12 +378,15 @@ fn node_details(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
         lines.push(vec![Seg::new(line, Tone::Dim, 0)]);
     }
     let pin_width = display_width("[p] закрепить");
-    let mut inner = canvas.framed(y0, room, vec![Seg::new("Узел · подробности", Tone::Bold, 0)]);
+    let mut inner = canvas.framed(
+        y0,
+        room,
+        vec![Seg::new("Узел · подробности", Tone::Bold, 0)],
+    );
     for (row, segs) in lines.into_iter().enumerate() {
         inner.line(row, 0, segs);
     }
-    app.hits
-        .push(Hit::new(2, y0 + 2, pin_width, Target::Pin));
+    app.hits.push(Hit::new(2, y0 + 2, pin_width, Target::Pin));
 }
 
 /// Колонки в порядке важности: на узком экране последние пропадают первыми. Скорость
@@ -679,15 +694,18 @@ fn sub_details(canvas: &mut Canvas<'_>, app: &App, top: usize, selected: usize, 
         || "—".to_owned(),
         |used| render::traffic_text(used, sub.total_bytes).0,
     );
-    let expiry = sub
-        .expire
-        .map_or_else(|| "—".to_owned(), |expire| render::expiry_text(expire, now, zone).0);
+    let expiry = sub.expire.map_or_else(
+        || "—".to_owned(),
+        |expire| render::expiry_text(expire, now, zone).0,
+    );
     let updated = match sub.updated_at {
         Some(then) => format!(
             "{}, следующая {}",
             render::ago(now, then),
-            sub.next_update
-                .map_or_else(|| "не запланирована".to_owned(), |next| render::ahead(now, next))
+            sub.next_update.map_or_else(
+                || "не запланирована".to_owned(),
+                |next| render::ahead(now, next)
+            )
         ),
         None => "ещё не получена".to_owned(),
     };
@@ -792,7 +810,10 @@ fn journal_lines(
             } else {
                 " ".repeat(column)
             };
-            lines.push(vec![Seg::new(lead, Tone::Dim, 0), Seg::new(text, entry.tone, 0)]);
+            lines.push(vec![
+                Seg::new(lead, Tone::Dim, 0),
+                Seg::new(text, entry.tone, 0),
+            ]);
         }
     }
     let back = app.journal_back.min(lines.len().saturating_sub(capacity));
@@ -821,7 +842,8 @@ pub(super) fn settings(canvas: &mut Canvas<'_>, app: &mut App, top: usize, end: 
     let mut inner = canvas.framed(y, 4, vec![Seg::new("Вид", Tone::Bold, 0)]);
     inner.line(0, 0, vec![Seg::new(label, Tone::Bold, 0)]);
     inner.line(1, 0, vec![Seg::new(explain, Tone::Dim, 0)]);
-    app.hits.push(Hit::new(2, y + 1, width, Target::NamesToggle));
+    app.hits
+        .push(Hit::new(2, y + 1, width, Target::NamesToggle));
     y += 4;
     if y < end {
         let path = if app.settings_path.is_empty() {
@@ -850,7 +872,11 @@ fn summary_lines(app: &App) -> Vec<Vec<Seg>> {
     );
     vec![
         vec![Seg::new("Состояние демона", Tone::Bold, 0)],
-        vec![Seg::new(format!("Версия: {}", status.version), Tone::Plain, 0)],
+        vec![Seg::new(
+            format!("Версия: {}", status.version),
+            Tone::Plain,
+            0,
+        )],
         vec![Seg::new(
             format!("Режим: {}", render::mode_name(status.mode)),
             Tone::Plain,

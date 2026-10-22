@@ -138,7 +138,10 @@ mod tests {
 
     #[test]
     fn a_flag_becomes_its_country_code() {
-        assert_eq!(display_name("🇩🇪 Германия", NameStyle::Country), "DE Германия");
+        assert_eq!(
+            display_name("🇩🇪 Германия", NameStyle::Country),
+            "DE Германия"
+        );
         assert_eq!(country_code("🇩🇪 Германия"), Some("DE".to_owned()));
         assert_eq!(
             display_name("  🇫🇷  Франция   1 ", NameStyle::Country),
@@ -186,9 +189,15 @@ mod tests {
         let refused = "the outbound node-010-main is dead: dial tcp: connection refused";
         assert_eq!(node_reason(refused), Some("порт закрыт"));
         let tls = "the outbound node-011-main is dead: tls: first record does not look like a TLS handshake";
-        assert_eq!(node_reason(tls), Some("рукопожатие не удалось (TLS/REALITY)"));
+        assert_eq!(
+            node_reason(tls),
+            Some("рукопожатие не удалось (TLS/REALITY)")
+        );
         let reality = "the outbound node-012-main is dead: reality verification failed";
-        assert_eq!(node_reason(reality), Some("рукопожатие не удалось (TLS/REALITY)"));
+        assert_eq!(
+            node_reason(reality),
+            Some("рукопожатие не удалось (TLS/REALITY)")
+        );
         let dns = "the outbound node-013-main is dead: lookup example.com: no such host";
         assert_eq!(node_reason(dns), Some("адрес сервера не разрешается"));
         assert_eq!(node_reason("что-то новое"), Some("ошибка проверки"));

@@ -574,7 +574,8 @@ mod tests {
         let fake = start(temp.path().join("raycat.sock"), true);
         let client = Client::new(fake.socket.clone());
 
-        let Msg::Pinned(Ok(pinned)) = perform(&client, Effect::Pin("main/NL-1".to_owned()), None).await
+        let Msg::Pinned(Ok(pinned)) =
+            perform(&client, Effect::Pin("main/NL-1".to_owned()), None).await
         else {
             panic!("ожидался ответ о закреплении");
         };

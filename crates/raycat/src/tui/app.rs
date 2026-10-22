@@ -98,7 +98,7 @@ fn to_u16(value: usize) -> u16 {
     u16::try_from(value).unwrap_or(u16::MAX)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Link {
     Connecting,
     Up,
@@ -382,7 +382,9 @@ impl App {
     pub(super) fn journal_entries(&self) -> Vec<&LogEntry> {
         self.log
             .iter()
-            .filter(|entry| !self.journal_warnings || matches!(entry.tone, Tone::Yellow | Tone::Red))
+            .filter(|entry| {
+                !self.journal_warnings || matches!(entry.tone, Tone::Yellow | Tone::Red)
+            })
             .collect()
     }
 
@@ -675,7 +677,11 @@ impl App {
         if let Some(node) = self.current() {
             return Some(Effect::Pin(node.id.clone()));
         }
-        self.notify(Tone::Yellow, "Нет узла, который можно закрепить", NOTICE_SECS);
+        self.notify(
+            Tone::Yellow,
+            "Нет узла, который можно закрепить",
+            NOTICE_SECS,
+        );
         None
     }
 
@@ -688,7 +694,11 @@ impl App {
         if !automatic {
             return Some(Effect::Unpin);
         }
-        self.notify(Tone::Yellow, "Узел и так выбирается автоматически", NOTICE_SECS);
+        self.notify(
+            Tone::Yellow,
+            "Узел и так выбирается автоматически",
+            NOTICE_SECS,
+        );
         None
     }
 
@@ -1258,7 +1268,10 @@ mod tests {
         assert_eq!(visible_ids(&app).len(), 5);
         let mut plain = nodes_app(sample());
         press(&mut plain, KeyCode::Char('d'));
-        assert_eq!(visible_ids(&plain), ["main/NL-1", "main/DE-2", "backup/NL-1", "backup/FI-5"]);
+        assert_eq!(
+            visible_ids(&plain),
+            ["main/NL-1", "main/DE-2", "backup/NL-1", "backup/FI-5"]
+        );
         press(&mut plain, KeyCode::Char('d'));
         assert_eq!(visible_ids(&plain).len(), 5);
     }

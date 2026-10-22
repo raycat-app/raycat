@@ -30,15 +30,24 @@ const HELP: [(&str, &str); 15] = [
     ("↑ ↓  j k", "выбор строки, прокрутка"),
     ("PgUp PgDn", "страница вверх и вниз"),
     ("Home End", "в начало и в конец (g G)"),
-    ("Enter", "подробности узла или подписки; на «Настройках» — переключить"),
-    ("p", "закрепить выбранный узел (на вкладке «Узлы» — и двойной клик)"),
+    (
+        "Enter",
+        "подробности узла или подписки; на «Настройках» — переключить",
+    ),
+    (
+        "p",
+        "закрепить выбранный узел (на вкладке «Узлы» — и двойной клик)",
+    ),
     ("a", "вернуть автоматический выбор узла"),
     ("u", "обновить все подписки (на «Подписках» — выбранную)"),
     ("d", "скрыть мёртвые узлы (вкладка «Узлы»)"),
     ("s", "фильтр по подписке (вкладка «Узлы»)"),
     ("/", "поиск по узлам (Enter — применить, Esc — сбросить)"),
     ("w", "в журнале — только предупреждения и ошибки"),
-    ("Esc", "закрыть подробности и сбросить фильтры; на верхнем уровне — выход"),
+    (
+        "Esc",
+        "закрыть подробности и сбросить фильтры; на верхнем уровне — выход",
+    ),
     ("?", "эта справка"),
     ("q  Ctrl+C", "выйти"),
 ];
@@ -247,7 +256,11 @@ fn header_node(canvas: &mut Canvas<'_>, app: &App, y: usize) {
     if let Some(speed) = app.speed() {
         segs.push(Seg::new(speed_label(speed.down, speed.up), Tone::Plain, 1));
     }
-    let choice = if node.pinned { "закреплён" } else { "авто" };
+    let choice = if node.pinned {
+        "закреплён"
+    } else {
+        "авто"
+    };
     segs.push(Seg::new(choice, Tone::Dim, 0));
     if let Some(reason) = &node.reason {
         segs.push(Seg::new(reason.clone(), Tone::Dim, 0));
@@ -311,7 +324,10 @@ pub(super) fn sub_phrase(sub: &SubscriptionStatus, now: u64) -> (&'static str, T
     if sub.last_error.is_some() {
         return ("ошибка", Tone::Red);
     }
-    if sub.expire.is_some_and(|expire| expire != 0 && expire <= now) {
+    if sub
+        .expire
+        .is_some_and(|expire| expire != 0 && expire <= now)
+    {
         return ("истекла", Tone::Red);
     }
     if let (Some(used), Some(total)) = (sub.used_bytes, sub.total_bytes)
@@ -612,10 +628,15 @@ mod tests {
     fn the_tab_row_names_every_tab_and_is_clickable() {
         let mut app = sample_app();
         let lines = screen(&mut app, 100, 30);
-        for word in ["1 Обзор", "2 Узлы", "3 Подписки", "4 Журнал", "5 Настройки"] {
+        for word in ["1 Обзор", "2 Узлы", "3 Подписки", "4 Журнал", "5 Настройки"]
+        {
             assert!(lines[0].contains(word), "{word}: {:?}", lines[0]);
         }
-        assert!(app.hits.iter().any(|hit| hit.target == Target::Tab(Tab::Journal)));
+        assert!(
+            app.hits
+                .iter()
+                .any(|hit| hit.target == Target::Tab(Tab::Journal))
+        );
     }
 
     #[test]
@@ -903,7 +924,10 @@ mod tests {
         let mut app = app_with(sample_status(), nodes);
         on_nodes(&mut app);
         let lines = screen(&mut app, 100, 30);
-        let flagged = lines.iter().find(|line| line.contains("DE Германия")).unwrap();
+        let flagged = lines
+            .iter()
+            .find(|line| line.contains("DE Германия"))
+            .unwrap();
         let plain = lines.iter().find(|line| line.contains("DE-2")).unwrap();
         let status_at = |line: &str| display_width(&line[..line.find("жив").unwrap()]);
         assert_eq!(status_at(flagged), status_at(plain));
