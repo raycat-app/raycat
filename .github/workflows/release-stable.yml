@@ -4,6 +4,10 @@ name: Выпуск stable
 # её в stable без пересборки: те же файлы (с новым именем каталога в архиве) и те же образы
 # под новыми тегами. Правила сроков и исключения описаны в .github/release/plan.jq.
 # С веток, кроме main, и с флагом dry_run работает как сухой прогон: проверяет всё, ничего не публикует.
+#
+# Если продвижение не принесло в stable свежий xray (код ещё не выдержал срок), после него
+# выпускается обновление xray vX.Y.(Z+1): тот же raycat, что в последней stable, и xray из versions.toml.
+# Решение и сборка — в задачах xray-plan и xray (см. .github/release/xray-decide.sh).
 
 on:
   schedule:
@@ -23,6 +27,11 @@ on:
         description: Только проверить и собрать, ничего не публиковать (с веток, кроме main, всегда включено)
         type: boolean
         default: false
+      base_tag:
+        description: Только для сухого прогона — прошлый выпуск вместо последней stable (vX.Y.Z или vX.Y.Z-dev.N) при проверке обновления xray. Пусто — последняя stable
+        type: string
+        required: false
+        default: ""
 
 permissions: {}
 
@@ -146,6 +155,266 @@ jobs:
           name: release-stable
           path: |
             stable
+            notes.md
+          retention-days: 7
+          if-no-files-found: error
+
+  xray-plan:
+    name: Нужно ли обновление xray
+    needs: [plan, promote]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && (needs.promote.result == 'success' || needs.promote.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      DRY_RUN: ${{ inputs.dry_run || github.ref != 'refs/heads/main' }}
+      BASE_TAG: ${{ inputs.base_tag }}
+    outputs:
+      update: ${{ steps.decide.outputs.update }}
+      version: ${{ steps.decide.outputs.version }}
+      xray: ${{ steps.decide.outputs.xray }}
+      reason: ${{ steps.decide.outputs.reason }}
+      last_tag: ${{ steps.last.outputs.tag }}
+      last_sha: ${{ steps.last.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Прошлая stable
+        id: last
+        run: |
+          tag=$(bash .github/release/stable-tag.sh HEAD)
+          if [ -n "$BASE_TAG" ]; then
+            [ "$DRY_RUN" = true ] || { echo "::error::base_tag задаётся только для сухого прогона"; exit 1; }
+            [[ $BASE_TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-dev\.[0-9]+)?$ ]] || { echo "::error::base_tag: vX.Y.Z или vX.Y.Z-dev.N"; exit 1; }
+            tag=$BASE_TAG
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -n "$tag" ]; then
+            echo "sha=$(git rev-parse --verify "$tag^{commit}")" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Метка стоп-релиз
+        id: stop
+        run: |
+          if [ "$DRY_RUN" = true ]; then
+            echo "::notice::в сухом прогоне метка «стоп-релиз» не учитывается: ничего не публикуется"
+            echo "stop=false" >> "$GITHUB_OUTPUT"
+          elif [ "$(gh issue list --repo "$REPOSITORY" --state open --label 'стоп-релиз' --json number --jq 'length')" -gt 0 ]; then
+            echo "stop=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stop=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Решение
+        id: decide
+        env:
+          LAST_TAG: ${{ steps.last.outputs.tag }}
+          STOP: ${{ steps.stop.outputs.stop }}
+        run: |
+          main_xray=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' versions.toml)
+          stable_xray=
+          if [ -n "$LAST_TAG" ]; then
+            last="$RUNNER_TEMP/last"
+            mkdir -p "$last"
+            gh release download "$LAST_TAG" --repo "$REPOSITORY" --dir "$last"
+            REPO="$REPOSITORY" bash .github/release/verify-dev.sh "$last" "${LAST_TAG#v}"
+            tar -xzf "$last/raycat-${LAST_TAG#v}-x86_64-linux-musl.tar.gz" -C "$last"
+            stable_xray=$(bash .github/release/xray-version.sh "$last/raycat-${LAST_TAG#v}-x86_64-linux-musl/xray")
+          fi
+          bash .github/release/xray-decide.sh "$main_xray" "$stable_xray" "$LAST_TAG" "$STOP" | tee -a "$GITHUB_OUTPUT"
+      - name: Сводка
+        env:
+          REASON: ${{ steps.decide.outputs.reason }}
+        run: |
+          echo "### Обновление xray" >> "$GITHUB_STEP_SUMMARY"
+          echo "$REASON" >> "$GITHUB_STEP_SUMMARY"
+
+  xray:
+    name: Выпуск xray ${{ needs.xray-plan.outputs.version }}
+    needs: xray-plan
+    if: ${{ needs.xray-plan.outputs.update == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      BINFMT_IMAGE: tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+      DRY_RUN: ${{ inputs.dry_run || github.ref != 'refs/heads/main' }}
+      LAST_TAG: ${{ needs.xray-plan.outputs.last_tag }}
+      LAST_SHA: ${{ needs.xray-plan.outputs.last_sha }}
+      VERSION: ${{ needs.xray-plan.outputs.version }}
+      XRAY_VERSION: ${{ needs.xray-plan.outputs.xray }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Архивы прошлой stable
+        run: |
+          mkdir -p stable-last
+          gh release download "$LAST_TAG" --repo "$REPOSITORY" --dir stable-last
+          REPO="$REPOSITORY" bash .github/release/verify-dev.sh stable-last "${LAST_TAG#v}"
+      - name: Файлы xray
+        run: bash .github/release/xray-files.sh xray-files
+      - name: Версия xray
+        run: |
+          version=$(bash .github/release/xray-version.sh xray-files/xray-x86_64)
+          [ "$version" = "$XRAY_VERSION" ] || { echo "::error::xray $version, в versions.toml $XRAY_VERSION"; exit 1; }
+      - name: Архивы
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$LAST_SHA")
+          export SOURCE_DATE_EPOCH
+          bash .github/release/xray-repack.sh "${LAST_TAG#v}" "$VERSION" stable-last xray-files release
+      - name: qemu
+        run: docker run --privileged --rm "$BINFMT_IMAGE" --install arm64,arm
+      - name: Образы
+        env:
+          SMOKE_COMMIT: ${{ needs.xray-plan.outputs.last_sha }}
+        run: bash .github/release/xray-images.sh "$VERSION" release images
+      - name: Локальный реестр
+        if: ${{ env.DRY_RUN == 'true' }}
+        run: |
+          docker run -d --name registry -p 127.0.0.1:5000:5000 \
+            registry:3@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8
+          for _ in $(seq 30); do
+            curl -fsS http://127.0.0.1:5000/v2/ && exit 0
+            sleep 1
+          done
+          echo "Реестр не отвечает" >&2
+          exit 1
+      - name: Вход в GHCR
+        if: ${{ env.DRY_RUN != 'true' }}
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: skopeo
+        run: command -v skopeo || { sudo apt-get update -q && sudo apt-get install -y -q skopeo; }
+      - name: Публикация образов
+        id: push
+        run: |
+          if [ "$DRY_RUN" = true ]; then
+            registry=localhost:5000/raycat
+            insecure=true
+          else
+            registry="ghcr.io/${REPOSITORY,,}"
+            insecure=false
+          fi
+          echo "name=$registry" >> "$GITHUB_OUTPUT"
+          REPO="$registry" VERSION="$VERSION" ROLLING=latest MINOR_TAG="${VERSION%.*}" IMAGES=images \
+            INSECURE_REGISTRY="$insecure" OUT="$GITHUB_OUTPUT" bash .github/release/images.sh
+      - name: Образы для SBOM
+        run: |
+          mkdir -p "$RUNNER_TEMP/tars" "$RUNNER_TEMP/sbom"
+          for name in amd64 arm64 arm64-noaes; do
+            gunzip -c "images/image-$name.tar.gz" >"$RUNNER_TEMP/tars/$name.tar"
+          done
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: docker-archive:${{ runner.temp }}/tars/amd64.tar
+          output-file: ${{ runner.temp }}/sbom/amd64.spdx.json
+          format: spdx-json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: docker-archive:${{ runner.temp }}/tars/arm64.tar
+          output-file: ${{ runner.temp }}/sbom/arm64.spdx.json
+          format: spdx-json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: docker-archive:${{ runner.temp }}/tars/arm64-noaes.tar
+          output-file: ${{ runner.temp }}/sbom/arm64-noaes.spdx.json
+          format: spdx-json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-xray
+          path: ${{ runner.temp }}/sbom
+          retention-days: 7
+          if-no-files-found: error
+      - name: Аттестация происхождения образа
+        if: ${{ env.DRY_RUN != 'true' }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.push.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.index }}
+          push-to-registry: true
+          create-storage-record: false
+      - name: Аттестация происхождения образа без AES
+        if: ${{ env.DRY_RUN != 'true' }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.push.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.noaes }}
+          push-to-registry: true
+          create-storage-record: false
+      - name: SBOM образа amd64
+        if: ${{ env.DRY_RUN != 'true' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.push.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.amd64 }}
+          sbom-path: ${{ runner.temp }}/sbom/amd64.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+      - name: SBOM образа arm64
+        if: ${{ env.DRY_RUN != 'true' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.push.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.arm64 }}
+          sbom-path: ${{ runner.temp }}/sbom/arm64.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+      - name: SBOM образа arm64 без AES
+        if: ${{ env.DRY_RUN != 'true' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.push.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.noaes }}
+          sbom-path: ${{ runner.temp }}/sbom/arm64-noaes.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+      - name: Аттестация происхождения архивов
+        if: ${{ env.DRY_RUN != 'true' }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release/*.tar.gz
+      - name: Заметки
+        run: |
+          bash .github/release/make-notes.sh xray "$VERSION" "$REPOSITORY" "$LAST_TAG" "$GITHUB_SHA" </dev/null >notes.md
+          {
+            echo "### Файлы stable v$VERSION"
+            echo '```'
+            ls -l release
+            echo '```'
+            cat notes.md
+          } >>"$GITHUB_STEP_SUMMARY"
+      - name: GitHub release
+        if: ${{ env.DRY_RUN != 'true' }}
+        run: |
+          gh release create "v$VERSION" release/*.tar.gz release/SHA256SUMS \
+            --repo "$REPOSITORY" --target "$LAST_SHA" --latest --title "v$VERSION" --notes-file notes.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ env.DRY_RUN == 'true' }}
+        with:
+          name: release-xray
+          path: |
+            release
             notes.md
           retention-days: 7
           if-no-files-found: error
