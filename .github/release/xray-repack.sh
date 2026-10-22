@@ -21,11 +21,11 @@ mkdir -p "$out"
 
 for suffix in "${ARCHIVE_SUFFIXES[@]}"; do
   case $suffix in
-    x86_64-linux-musl) xray=xray-x86_64 ;;
-    aarch64-linux-musl) xray=xray-aarch64 ;;
-    aarch64-linux-musl-noaes) xray=xray-aarch64-noaes ;;
-    armv7-linux-musleabihf) xray=xray-armv7 ;;
-    armv7-linux-musleabihf-noaes) xray=xray-armv7-noaes ;;
+    x86_64-linux-musl) xray="xray-x86_64" ;;
+    aarch64-linux-musl) xray="xray-aarch64" ;;
+    aarch64-linux-musl-noaes) xray="xray-aarch64-noaes" ;;
+    armv7-linux-musleabihf) xray="xray-armv7" ;;
+    armv7-linux-musleabihf-noaes) xray="xray-armv7-noaes" ;;
     *) fail "неизвестная цель $suffix" ;;
   esac
   old="raycat-${prev}-${suffix}"
