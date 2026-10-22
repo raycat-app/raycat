@@ -311,7 +311,8 @@ jobs:
             insecure=false
           fi
           echo "name=$registry" >> "$GITHUB_OUTPUT"
-          REPO="$registry" VERSION="$VERSION" ROLLING=latest MINOR_TAG="${VERSION%.*}" IMAGES=images \
+          minor=${VERSION%.*}
+          REPO="$registry" ROLLING=latest MINOR_TAG="$minor" IMAGES=images \
             INSECURE_REGISTRY="$insecure" OUT="$GITHUB_OUTPUT" bash .github/release/images.sh
       - name: Образы для SBOM
         run: |
