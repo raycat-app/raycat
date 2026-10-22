@@ -1307,11 +1307,11 @@ fn effective_settings_show_every_value_with_its_source() {
         "# hostname: не задано, значение выбирает raycat\n",
         "[log]\n",
     ] {
-        assert!(shown.contains(line), "нет строки {line:?}:\n{shown}");
+        assert!(shown.contains(line), "нет строки {line:?}");
     }
     assert!(
         !shown.contains("SEEDSECRET") && !shown.contains("AbCdEfGh1234"),
-        "{shown}"
+        "секрет попал в вывод effective"
     );
 }
 
@@ -1323,9 +1323,9 @@ fn effective_settings_hide_the_proxy_password() {
     std::fs::remove_file(&path).unwrap();
     assert!(
         shown.contains("auth = \"alice:***\"  # из файла\n"),
-        "{shown}"
+        "пароль не замаскирован"
     );
-    assert!(!shown.contains("hunter2"), "{shown}");
+    assert!(!shown.contains("hunter2"), "пароль попал в вывод effective");
 }
 
 #[test]
@@ -1336,12 +1336,12 @@ fn effective_settings_without_a_file_come_from_the_environment() {
         ("RAYCAT_PLATFORM", "windows"),
     ]);
     let shown = raycat_config::effective(None, &vars, false).unwrap();
-    assert!(shown.contains("# Файла нет"), "{shown}");
+    assert!(shown.contains("# Файла нет"), "нет пометки об отсутствии файла");
     assert!(
         shown.contains("url = \"https://sub.example.com/…0007\"  # из RAYCAT_SUBSCRIPTION\n"),
-        "{shown}"
+        "нет строки url из переменной"
     );
-    assert!(!shown.contains("ZzZz0007"), "{shown}");
+    assert!(!shown.contains("ZzZz0007"), "ссылка попала в вывод effective");
 }
 
 /// Раскомментирование любой строки-ключа примера (вместе с закомментированным заголовком её
