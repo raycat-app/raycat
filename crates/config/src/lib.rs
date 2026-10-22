@@ -14,13 +14,13 @@ mod validate;
 
 pub use error::{Error, Problem};
 pub use load::Env;
-pub use show::effective;
 pub use model::{
     Action, App, Config, DEFAULT_UPDATE_INTERVAL, Device, Dns, DomainMatch, Lan, LogLevel, Logging,
     Mode, Pin, Platform, ProxyAuth, Routing, Rule, Secret, Selection, Subscription, TcpCongestion,
     Xray,
 };
 pub use pattern::Pattern;
+pub use show::effective;
 
 #[cfg(feature = "schema")]
 #[doc(hidden)]

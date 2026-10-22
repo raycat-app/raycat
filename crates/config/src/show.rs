@@ -273,7 +273,9 @@ fn subscription_section(shown: &mut Shown, index: usize, subscription: &Subscrip
 }
 
 fn patterns(list: &[Pattern]) -> Vec<String> {
-    list.iter().map(|pattern| quoted(pattern.as_str())).collect()
+    list.iter()
+        .map(|pattern| quoted(pattern.as_str()))
+        .collect()
 }
 
 fn selection(shown: &mut Shown, selection: &Selection) {

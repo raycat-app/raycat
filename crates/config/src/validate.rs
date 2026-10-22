@@ -449,7 +449,10 @@ fn required<T>(
     p: &mut Problems,
 ) -> Option<T> {
     let Some(value) = value else {
-        p.add(field, format!("не указано ({})", options_problem(options, "")));
+        p.add(
+            field,
+            format!("не указано ({})", options_problem(options, "")),
+        );
         return None;
     };
     choice(field, value, parse, options, p)

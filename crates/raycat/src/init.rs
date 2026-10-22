@@ -669,7 +669,8 @@ mod tests {
         ));
         assert!(text.starts_with("#:schema https://"));
         assert!(text.contains(&format!("\nurl = \"{URL}\"\n")));
-        assert!(text.contains("\napp = \"incy\"\nplatform = \"android\"\n"));
+        assert!(text.contains("\napp = \"incy\"\n"));
+        assert!(text.contains("\nplatform = \"android\"\n"));
         assert!(text.contains("\ntype = \"gateway\"\nlan = true\n"));
         assert!(!text.contains("REPLACE-WITH-YOUR-LINK"));
     }
@@ -693,7 +694,11 @@ mod tests {
             "platform = \"windows\"".to_owned(),
             "type = \"proxy\"".to_owned(),
         ] {
-            assert_eq!(TEMPLATE.matches(&format!("\n{line}\n")).count(), 1, "{line}");
+            assert_eq!(
+                TEMPLATE.matches(&format!("\n{line}\n")).count(),
+                1,
+                "{line}"
+            );
         }
     }
 

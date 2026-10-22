@@ -1199,7 +1199,10 @@ fn the_example_file_loads_with_the_defaults() {
     assert_eq!(config.subscriptions.len(), 1);
     assert_eq!(config.subscriptions[0].name, "main");
     assert_eq!(
-        (config.subscriptions[0].app, config.subscriptions[0].platform),
+        (
+            config.subscriptions[0].app,
+            config.subscriptions[0].platform
+        ),
         (App::Happ, Platform::Windows)
     );
     assert_eq!(
@@ -1267,7 +1270,10 @@ fn happ_encrypted_links_are_explained_without_the_link() {
         list[0].contains("это зашифрованная ссылка Happ (happ://crypt…)"),
         "{list:?}"
     );
-    assert!(list[0].contains("обычную ссылку подписки https://…"), "{list:?}");
+    assert!(
+        list[0].contains("обычную ссылку подписки https://…"),
+        "{list:?}"
+    );
     assert!(!list[0].contains("SECRETLINK42"), "{list:?}");
 
     let vars = env(&[
@@ -1285,9 +1291,7 @@ fn happ_encrypted_links_are_explained_without_the_link() {
 
 #[test]
 fn effective_settings_show_every_value_with_its_source() {
-    let text = format!(
-        "{OK_SUB}\n[device]\nseed = \"SEEDSECRET\"\n\n[mode]\ntype = \"gateway\"\n"
-    );
+    let text = format!("{OK_SUB}\n[device]\nseed = \"SEEDSECRET\"\n\n[mode]\ntype = \"gateway\"\n");
     let path = temp_file("effective", text.as_bytes());
     let vars = env(&[("RAYCAT_LOG", "debug")]);
     let shown = raycat_config::effective(Some(path.as_path()), &vars, false).unwrap();
@@ -1317,7 +1321,10 @@ fn effective_settings_hide_the_proxy_password() {
     let path = temp_file("effective-auth", text.as_bytes());
     let shown = raycat_config::effective(Some(path.as_path()), &Env::new(), false).unwrap();
     std::fs::remove_file(&path).unwrap();
-    assert!(shown.contains("auth = \"alice:***\"  # из файла\n"), "{shown}");
+    assert!(
+        shown.contains("auth = \"alice:***\"  # из файла\n"),
+        "{shown}"
+    );
     assert!(!shown.contains("hunter2"), "{shown}");
 }
 

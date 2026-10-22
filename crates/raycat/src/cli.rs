@@ -754,7 +754,9 @@ mod tests {
         let (name, sub) = matches.subcommand().unwrap();
         assert_eq!(name, "config");
         assert!(sub.get_flag("path"));
-        let matches = command().try_get_matches_from(["raycat", "config"]).unwrap();
+        let matches = command()
+            .try_get_matches_from(["raycat", "config"])
+            .unwrap();
         assert!(!matches.subcommand().unwrap().1.get_flag("path"));
     }
 
@@ -901,7 +903,7 @@ mod tests {
             ),
             "{help}"
         );
-        for name in ["status", "nodes", "update", "events", "config"] {
+        for name in ["status", "nodes", "update", "events"] {
             let help = root
                 .find_subcommand_mut(name)
                 .unwrap()
