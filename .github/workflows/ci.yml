@@ -230,7 +230,7 @@ jobs:
           tar -xzf "$archive" actionlint
           ./actionlint -color
       - name: shellcheck скриптов выпуска и сборки
-        run: shellcheck --severity=warning .github/release/*.sh .github/xray/*.sh .github/build/fetch-xray.sh .github/build/smoke-image.sh
+        run: shellcheck --severity=warning .github/release/*.sh .github/xray/*.sh .github/deps/*.sh .github/build/fetch-xray.sh .github/build/smoke-image.sh
       - name: hadolint
         run: |
           curl -fsSLo hadolint "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
@@ -836,6 +836,18 @@ jobs:
           persist-credentials: false
       - run: bash .github/xray/test.sh
 
+  deps-scripts:
+    name: Скрипты зависимостей
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash .github/deps/test.sh
+
   result:
     name: Итог
     if: ${{ always() }}
@@ -867,6 +879,7 @@ jobs:
       - installer-systemd
       - release-scripts
       - xray-scripts
+      - deps-scripts
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}

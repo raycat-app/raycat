@@ -218,6 +218,23 @@ check "нет изменений: продвигать нечего" false "$(pl
 check "классы коммитов" "xray,emulation,emulation,code,code,breaking,hotfix,breaking" "$(plan --last 0.1.0 | jq -r '[.entries[].category] | join(",")')"
 check "сроки коммитов, ч" "0,24,24,72,72,72,0,72" "$(plan --last 0.1.0 | jq -r '[.entries[].wait / 3600] | join(",")')"
 
+{
+  cm c1 "feat: возможность" "$SRC"
+  cm c2 "chore: подсети РФ" '["crates/routing/data/ru-ipv4.txt"]'
+} >"$work/commits.jsonl"
+check "классы: подсети РФ отдельно" "code,data" "$(plan --last 0.1.0 | jq -r '[.entries[].category] | join(",")')"
+check "сроки: подсети РФ 24 ч" "72,24" "$(plan --last 0.1.0 | jq -r '[.entries[].wait / 3600] | join(",")')"
+{
+  bd v0.2.0-dev.1 c1 $((4 * DAY))
+  bd v0.2.0-dev.2 c2 $((2 * 3600))
+} >"$work/builds.jsonl"
+check "auto: подсети РФ ждут сутки" "true v0.2.0-dev.1 0.2.0" "$(plan --last 0.1.0 | summary)"
+{
+  bd v0.2.0-dev.1 c1 $((4 * DAY))
+  bd v0.2.0-dev.2 c2 $((25 * 3600))
+} >"$work/builds.jsonl"
+check "auto: подсети РФ продвигаются через сутки" "true v0.2.0-dev.2 0.2.0" "$(plan --last 0.1.0 | summary)"
+
 # Заметки
 
 {
