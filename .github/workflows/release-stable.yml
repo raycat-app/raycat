@@ -236,7 +236,9 @@ jobs:
   xray:
     name: Выпуск xray ${{ needs.xray-plan.outputs.version }}
     needs: xray-plan
-    if: ${{ needs.xray-plan.outputs.update == 'true' }}
+    # Без !cancelled() GitHub добавляет success(), который учитывает и пропущенный promote
+    # (он транзитивная зависимость), и задача молча пропускается.
+    if: ${{ !cancelled() && needs.xray-plan.outputs.update == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
