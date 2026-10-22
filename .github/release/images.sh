@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Публикация образов dev-выпуска из образов CI без пересборки.
-#   REPO=<реестр/имя> VERSION=<версия dev> ROLLING=dev IMAGES=<каталог image-*.tar.gz> OUT=<файл> images.sh
+#   REPO=<реестр/имя> VERSION=<версия dev> ROLLING=dev [MINOR_TAG=X.Y] IMAGES=<каталог image-*.tar.gz> OUT=<файл> images.sh
 # Тегает: <версия> и <ROLLING> (список amd64+arm64), <версия>-noaes и <ROLLING>-noaes (только arm64).
+# MINOR_TAG, если задан, получает ещё один тег на тот же список.
 # Служебные теги <версия>-amd64 и <версия>-arm64 нужны для сборки списка и остаются в реестре.
 # В OUT пишутся строки index=, amd64=, arm64=, noaes= с digest.
 set -euo pipefail
@@ -42,6 +43,11 @@ arm64=$(docker buildx imagetools inspect --raw "$repo:$version" \
 [ -n "$arm64" ] || fail "в списке образов нет arm64"
 [ "$(digest_of "$repo:$rolling")" = "$index" ] || fail "тег $rolling не указывает на $version"
 [ "$(digest_of "$repo:$rolling-noaes")" = "$noaes" ] || fail "тег $rolling-noaes не указывает на $version-noaes"
+
+if [ -n "${MINOR_TAG:-}" ]; then
+  retag "$repo" "$index" "$MINOR_TAG"
+  [ "$(digest_of "$repo:$MINOR_TAG")" = "$index" ] || fail "тег $MINOR_TAG указывает не на $index"
+fi
 
 {
   echo "index=$index"

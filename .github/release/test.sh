@@ -381,6 +381,81 @@ rm "$work/dev-c/extra.txt"
 echo повреждено >>"$work/dev-c/raycat-0.2.0-dev.7-x86_64-linux-musl.tar.gz"
 check "проверка dev-выпуска: испорченный архив" error "$(SKIP_ATTESTATION=1 bash "$dir/verify-dev.sh" "$work/dev-c" 0.2.0-dev.7 >/dev/null 2>&1 && echo ok || echo error)"
 
+# Обновление xray без нового кода
+
+fake_xray="$work/xray-fake"
+printf '%s\n' '#!/bin/sh' 'echo "Xray 26.10.21 (Xray, Penetrates Everything.) 35ce4b5 (go1.27.3 linux/amd64)"' >"$fake_xray"
+chmod +x "$fake_xray"
+check "xray-version: версия из вывода" 26.10.21 "$(bash "$dir/xray-version.sh" "$fake_xray")"
+printf '%s\n' '#!/bin/sh' 'echo "что-то другое"' >"$work/xray-unknown"
+chmod +x "$work/xray-unknown"
+if bash "$dir/xray-version.sh" "$work/xray-unknown" >/dev/null 2>&1; then
+  check "xray-version: без строки версии — ошибка" error ok
+else
+  check "xray-version: без строки версии — ошибка" error error
+fi
+
+decide() {
+  bash "$dir/xray-decide.sh" "$@" | sed -n 's/^update=//p;s/^version=//p' | paste -sd '|' -
+}
+
+check "xray-decide: новый xray в main — выпуск патча" "true|0.1.1" "$(decide 26.10.21 26.9.30 v0.1.0 false)"
+check "xray-decide: stable уже с этим xray — ничего" "false|" "$(decide 26.10.21 26.10.21 v0.1.0 false)"
+check "xray-decide: стоп-релиз отменяет выпуск" "false|" "$(decide 26.10.21 26.9.30 v0.1.0 true)"
+check "xray-decide: стоп-релиз назван в причине" yes "$(contains "$(bash "$dir/xray-decide.sh" 26.10.21 26.9.30 v0.1.0 true)" "стоп-релиз")"
+check "xray-decide: без stable — ничего" "false|" "$(decide 26.10.21 "" "" false)"
+check "xray-decide: stable с xray новее main — ничего" "false|" "$(decide 26.9.30 26.10.21 v0.1.0 false)"
+check "xray-decide: версии сравниваются по числам" "true|0.1.1" "$(decide 26.10.2 26.9.30 v0.1.0 false)"
+check "xray-decide: dev-база сухого прогона, патч+1" "true|0.1.10" "$(decide 26.10.21 26.9.30 v0.1.9-dev.4 false)"
+check "xray-decide: причина названа" yes "$(contains "$(bash "$dir/xray-decide.sh" 26.10.21 26.9.30 v0.1.0 false)" "xray 26.10.21 новее xray 26.9.30 в v0.1.0")"
+check "xray-decide: версия xray в main выведена" yes "$(contains "$(bash "$dir/xray-decide.sh" 26.10.21 26.9.30 v0.1.0 false)" "xray=26.10.21")"
+if bash "$dir/xray-decide.sh" 26.10 26.9.30 v0.1.0 false >/dev/null 2>&1; then
+  check "xray-decide: неверная версия в main — ошибка" error ok
+else
+  check "xray-decide: неверная версия в main — ошибка" error error
+fi
+if bash "$dir/xray-decide.sh" 26.10.21 26.9.30 0.1.0 false >/dev/null 2>&1; then
+  check "xray-decide: тег без v — ошибка" error ok
+else
+  check "xray-decide: тег без v — ошибка" error error
+fi
+
+xray_notes=$(bash "$dir/make-notes.sh" xray 0.2.1 raycat-app/raycat v0.2.0 0123456789abcdef </dev/null)
+check "заметки xray: заголовок" yes "$(contains "$xray_notes" "Обновление xray до ")"
+check "заметки xray: прошлая stable с теми же файлами" yes "$(contains "$xray_notes" "его файлы те же, что в v0.2.0")"
+check "заметки xray: коммит main" yes "$(contains "$xray_notes" "коммита 0123456.")"
+check "заметки xray: образ" yes "$(contains "$xray_notes" "docker pull ghcr.io/raycat-app/raycat:0.2.1")"
+check "заметки xray: плейсхолдеров не осталось" no "$(contains "$xray_notes" "@")"
+if bash "$dir/make-notes.sh" xray 0.2.1 raycat-app/raycat "" "" </dev/null >/dev/null 2>&1; then
+  check "заметки xray: без коммита — ошибка" error ok
+else
+  check "заметки xray: без коммита — ошибка" error error
+fi
+
+xray_new="$work/xray-new"
+mkdir -p "$xray_new"
+for name in xray-x86_64 xray-aarch64 xray-aarch64-noaes xray-armv7 xray-armv7-noaes; do
+  echo "$name-new" >"$xray_new/$name"
+done
+bash "$dir/package.sh" 0.2.0 "$inputs" "$work/prev"
+bash "$dir/xray-repack.sh" 0.2.0 0.2.1 "$work/prev" "$xray_new" "$work/refresh"
+check "xray-repack: имена архивов" "$(printf 'raycat-0.2.1-%s.tar.gz\n' "${ARCHIVE_SUFFIXES[@]}" | LC_ALL=C sort | paste -sd ' ')" \
+  "$(cd "$work/refresh" && ls raycat-*.tar.gz | LC_ALL=C sort | paste -sd ' ')"
+check "xray-repack: суммы сходятся" ok "$(cd "$work/refresh" && sha256sum -c SHA256SUMS >/dev/null && echo ok)"
+mkdir -p "$work/x-refresh" "$work/x-prev"
+tar -xzf "$work/refresh/raycat-0.2.1-armv7-linux-musleabihf-noaes.tar.gz" -C "$work/x-refresh"
+check "xray-repack: xray заменён" "xray-armv7-noaes-new" "$(cat "$work/x-refresh/raycat-0.2.1-armv7-linux-musleabihf-noaes/xray")"
+tar -xzf "$work/refresh/raycat-0.2.1-x86_64-linux-musl.tar.gz" -C "$work/x-refresh"
+tar -xzf "$work/prev/raycat-0.2.0-x86_64-linux-musl.tar.gz" -C "$work/x-prev"
+check "xray-repack: меняется только xray" 1 "$(diff -rq "$work/x-prev/raycat-0.2.0-x86_64-linux-musl" "$work/x-refresh/raycat-0.2.1-x86_64-linux-musl" | wc -l | tr -d ' ')"
+check "xray-repack: xray исполняемый" 755 "$(stat -c %a "$work/x-refresh/raycat-0.2.1-x86_64-linux-musl/xray")"
+rm "$xray_new/xray-armv7"
+if bash "$dir/xray-repack.sh" 0.2.0 0.2.2 "$work/prev" "$xray_new" "$work/refresh-broken" 2>/dev/null; then
+  check "xray-repack: нет файла xray — ошибка" error ok
+else
+  check "xray-repack: нет файла xray — ошибка" error error
+fi
+
 if [ "$failures" -ne 0 ]; then
   echo "Провалено проверок: $failures"
   exit 1
