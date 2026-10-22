@@ -69,6 +69,7 @@ toml = { version = "1", default-features = false, features = ["std", "parse", "s
 tonic = { version = "0.14", default-features = false, features = ["channel", "codegen"] }
 tonic-prost = "0.14"
 tonic-prost-build = "0.14"
+unicode-width = "0.2"
 webpki-roots = "1.0.10"
 
 [workspace.lints.rust]

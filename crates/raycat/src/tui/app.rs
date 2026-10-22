@@ -1,13 +1,16 @@
-//! Состояние TUI: данные демона, курсор, фильтры, журнал. Здесь нет ни терминала,
-//! ни сети: клавиши и сообщения меняют состояние, а действия над демоном
-//! возвращаются как [`Effect`] и выполняются снаружи.
+//! Состояние TUI: вкладки, данные демона, курсор, фильтры, журнал и области нажатий
+//! мыши. Здесь нет ни терминала, ни сети: клавиши и сообщения меняют состояние, а
+//! действия над демоном возвращаются как [`Effect`] и выполняются снаружи.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use raycat_proto::{Event, Node, NodeStatus, Nodes, Pinned, Status, Updates};
 
+use crate::names::NameStyle;
 use crate::render;
 use crate::term::{Term, Tone, truncate};
 use crate::util::sanitize;
@@ -18,6 +21,82 @@ const NOTICE_SECS: u64 = 8;
 const RESULT_SECS: u64 = 20;
 const FILTER_MAX: usize = 64;
 const DEFAULT_ROWS: usize = 10;
+const WHEEL_ROWS: usize = 3;
+const DOUBLE_CLICK: Duration = Duration::from_millis(500);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Tab {
+    Overview,
+    Nodes,
+    Subscriptions,
+    Journal,
+    Settings,
+}
+
+impl Tab {
+    pub(super) const ALL: [Self; 5] = [
+        Self::Overview,
+        Self::Nodes,
+        Self::Subscriptions,
+        Self::Journal,
+        Self::Settings,
+    ];
+
+    pub(super) fn title(self) -> &'static str {
+        match self {
+            Self::Overview => "Обзор",
+            Self::Nodes => "Узлы",
+            Self::Subscriptions => "Подписки",
+            Self::Journal => "Журнал",
+            Self::Settings => "Настройки",
+        }
+    }
+}
+
+/// Что делает нажатие мыши: переключает, выбирает или запускает действие.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Target {
+    Tab(Tab),
+    NodeRow(usize),
+    SubRow(usize),
+    Pin,
+    Autoselect,
+    UpdateAll,
+    UpdateSub,
+    DeadToggle,
+    SubFilter,
+    Search,
+    WarningsToggle,
+    NamesToggle,
+}
+
+/// Область нажатия шириной в одну строку экрана, координаты от левого верхнего угла.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Hit {
+    x: u16,
+    y: u16,
+    width: u16,
+    pub(super) target: Target,
+}
+
+impl Hit {
+    pub(super) fn new(x: usize, y: usize, width: usize, target: Target) -> Self {
+        Self {
+            x: to_u16(x),
+            y: to_u16(y),
+            width: to_u16(width),
+            target,
+        }
+    }
+
+    fn contains(self, column: u16, row: u16) -> bool {
+        row == self.y && (self.x..self.x.saturating_add(self.width)).contains(&column)
+    }
+}
+
+fn to_u16(value: usize) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Link {
@@ -38,12 +117,13 @@ pub(super) enum InputMode {
     Help,
 }
 
-/// Что нужно сделать с демоном; выполняет вызывающий, ответ приходит как [`Msg`].
+/// Что нужно сделать снаружи состояния; ответ приходит как [`Msg`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Effect {
     Pin(String),
     Unpin,
     Update(Option<String>),
+    SaveNames(NameStyle),
 }
 
 pub(super) struct Snapshot {
@@ -64,6 +144,7 @@ pub(super) enum Msg {
     },
     Pinned(Result<Pinned, String>),
     Updated(Result<Updates, String>),
+    Saved(Result<(), String>),
 }
 
 pub(super) struct LogEntry {
@@ -88,6 +169,8 @@ pub(super) struct UpdateRun {
 pub(super) struct Filter {
     pub(super) text: String,
     pub(super) subscription: Option<String>,
+    /// Мёртвые узлы скрыты; выбранный узел остаётся видимым.
+    pub(super) hide_dead: bool,
 }
 
 impl Filter {
@@ -161,6 +244,14 @@ fn bits_per_second(bytes: u64, millis: u128) -> u64 {
     u64::try_from(bits).unwrap_or(u64::MAX)
 }
 
+/// Название вида для подсказок и строк.
+pub(super) fn names_label(style: NameStyle) -> &'static str {
+    match style {
+        NameStyle::Country => "код страны",
+        NameStyle::AsIs => "как есть",
+    }
+}
+
 pub(super) struct App {
     pub(super) now: u64,
     pub(super) link: Link,
@@ -172,17 +263,31 @@ pub(super) struct App {
     pub(super) visible: Vec<usize>,
     pub(super) filter: Filter,
     pub(super) input: InputMode,
+    pub(super) tab: Tab,
+    /// Открыта панель подробностей узла или подписки.
+    pub(super) details: bool,
     /// Позиция курсора среди видимых узлов.
     pub(super) cursor: usize,
-    /// Первая показанная строка таблицы.
+    /// Первая показанная строка таблицы узлов.
     pub(super) offset: usize,
+    /// Выбранная строка на вкладке «Подписки».
+    pub(super) sub_cursor: usize,
+    /// Сколько строк журнала прокручено от конца; 0 — самые свежие.
+    pub(super) journal_back: usize,
+    pub(super) journal_warnings: bool,
+    pub(super) names: NameStyle,
+    /// Файл настроек демона, показывается на вкладке «Настройки».
+    pub(super) settings_path: String,
     pub(super) log: VecDeque<LogEntry>,
     pub(super) notice: Option<Notice>,
     pub(super) update: Option<UpdateRun>,
+    /// Области нажатий последней отрисовки.
+    pub(super) hits: Vec<Hit>,
     pub(super) quit: bool,
     meter: Option<Meter>,
     cursor_id: Option<String>,
     rows: usize,
+    last_click: Option<(Target, Instant)>,
 }
 
 fn clip(text: &str) -> String {
@@ -209,15 +314,24 @@ impl App {
             visible: Vec::new(),
             filter: Filter::default(),
             input: InputMode::Normal,
+            tab: Tab::Overview,
+            details: false,
             cursor: 0,
             offset: 0,
+            sub_cursor: 0,
+            journal_back: 0,
+            journal_warnings: false,
+            names: NameStyle::default(),
+            settings_path: String::new(),
             log: VecDeque::new(),
             notice: None,
             update: None,
+            hits: Vec::new(),
             quit: false,
             meter: None,
             cursor_id: None,
             rows: DEFAULT_ROWS,
+            last_click: None,
         }
     }
 
@@ -264,6 +378,16 @@ impl App {
         names
     }
 
+    /// Записи журнала, которые показывает вкладка: все или только предупреждения и ошибки.
+    pub(super) fn journal_entries(&self) -> Vec<&LogEntry> {
+        self.log
+            .iter()
+            .filter(|entry| {
+                !self.journal_warnings || matches!(entry.tone, Tone::Yellow | Tone::Red)
+            })
+            .collect()
+    }
+
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> Option<Effect> {
         if key.kind == KeyEventKind::Release {
             return None;
@@ -285,6 +409,61 @@ impl App {
         }
     }
 
+    pub(super) fn handle_mouse(&mut self, mouse: MouseEvent, at: Instant) -> Option<Effect> {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => self.scroll_up(WHEEL_ROWS),
+            MouseEventKind::ScrollDown => self.scroll_down(WHEEL_ROWS),
+            MouseEventKind::Down(MouseButton::Left) => {
+                return self.press(mouse.column, mouse.row, at);
+            }
+            _ => {}
+        }
+        None
+    }
+
+    fn press(&mut self, column: u16, row: u16, at: Instant) -> Option<Effect> {
+        if self.input == InputMode::Help {
+            self.input = InputMode::Normal;
+            return None;
+        }
+        let target = self
+            .hits
+            .iter()
+            .find(|hit| hit.contains(column, row))?
+            .target;
+        if self.input == InputMode::Filter {
+            self.input = InputMode::Normal;
+        }
+        self.click(target, at)
+    }
+
+    fn click(&mut self, target: Target, at: Instant) -> Option<Effect> {
+        let double = self.last_click.is_some_and(|(previous, when)| {
+            previous == target && at.duration_since(when) <= DOUBLE_CLICK
+        });
+        self.last_click = Some((target, at));
+        match target {
+            Target::Tab(tab) => self.switch(tab),
+            Target::NodeRow(index) => {
+                self.move_to(index);
+                if double {
+                    return self.pin_current();
+                }
+            }
+            Target::SubRow(index) => self.sub_cursor = index.min(self.last_sub()),
+            Target::Pin => return self.pin_current(),
+            Target::Autoselect => return self.unpin(),
+            Target::UpdateAll => return self.start_update(None),
+            Target::UpdateSub => return self.update_selected(),
+            Target::DeadToggle => self.toggle_dead(),
+            Target::SubFilter => self.next_subscription(),
+            Target::Search => self.input = InputMode::Filter,
+            Target::WarningsToggle => self.journal_warnings = !self.journal_warnings,
+            Target::NamesToggle => return Some(self.toggle_names()),
+        }
+        None
+    }
+
     fn normal_key(&mut self, key: KeyEvent) -> Option<Effect> {
         if key
             .modifiers
@@ -294,21 +473,31 @@ impl App {
         }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
-            KeyCode::Up | KeyCode::Char('k') => self.move_up(1),
-            KeyCode::Down | KeyCode::Char('j') => self.move_down(1),
-            KeyCode::PageUp => self.move_up(self.page()),
-            KeyCode::PageDown => self.move_down(self.page()),
-            KeyCode::Home | KeyCode::Char('g') => self.move_to(0),
-            KeyCode::End | KeyCode::Char('G') => self.move_to(usize::MAX),
-            KeyCode::Char('/') => self.input = InputMode::Filter,
+            KeyCode::Esc => self.escape(),
+            KeyCode::Char('1') => self.switch(Tab::Overview),
+            KeyCode::Char('2') => self.switch(Tab::Nodes),
+            KeyCode::Char('3') => self.switch(Tab::Subscriptions),
+            KeyCode::Char('4') => self.switch(Tab::Journal),
+            KeyCode::Char('5') => self.switch(Tab::Settings),
+            KeyCode::Tab | KeyCode::Right => self.step_tab(true),
+            KeyCode::BackTab | KeyCode::Left => self.step_tab(false),
+            KeyCode::Up | KeyCode::Char('k') => self.scroll_up(1),
+            KeyCode::Down | KeyCode::Char('j') => self.scroll_down(1),
+            KeyCode::PageUp => self.scroll_up(self.page()),
+            KeyCode::PageDown => self.scroll_down(self.page()),
+            KeyCode::Home | KeyCode::Char('g') => self.jump(false),
+            KeyCode::End | KeyCode::Char('G') => self.jump(true),
+            KeyCode::Char('/') if self.tab == Tab::Nodes => self.input = InputMode::Filter,
             KeyCode::Char('?') | KeyCode::F(1) => self.input = InputMode::Help,
-            KeyCode::Tab => self.cycle_subscription(true),
-            KeyCode::BackTab => self.cycle_subscription(false),
-            KeyCode::Esc => self.clear_filter(),
-            KeyCode::Enter => return self.pin_current(),
+            KeyCode::Enter => return self.enter(),
+            KeyCode::Char('p') if self.tab == Tab::Nodes => return self.pin_current(),
             KeyCode::Char('a') => return self.unpin(),
-            KeyCode::Char('u') => return self.start_update(None),
-            KeyCode::Char('U') => return self.update_subscription(),
+            KeyCode::Char('u') => return self.update_key(),
+            KeyCode::Char('d') if self.tab == Tab::Nodes => self.toggle_dead(),
+            KeyCode::Char('s') if self.tab == Tab::Nodes => self.next_subscription(),
+            KeyCode::Char('w') if self.tab == Tab::Journal => {
+                self.journal_warnings = !self.journal_warnings;
+            }
             _ => {}
         }
         None
@@ -360,6 +549,11 @@ impl App {
             Msg::Down { reason, retry_in } => self.on_down(&reason, retry_in),
             Msg::Pinned(result) => self.on_pinned(result),
             Msg::Updated(result) => self.on_updated(result),
+            Msg::Saved(Ok(())) => {}
+            Msg::Saved(Err(error)) => {
+                let (cause, _) = split_lines(&error);
+                self.fail(&format!("Не удалось сохранить вид: {cause}"));
+            }
         }
     }
 
@@ -508,21 +702,20 @@ impl App {
         None
     }
 
-    /// Обновляет подписку, выбранную Tab, а без неё — подписку узла под курсором.
-    fn update_subscription(&mut self) -> Option<Effect> {
-        if let Some(name) = self.filter.subscription.clone() {
-            return self.start_update(Some(name));
+    /// На вкладке «Подписки» — выбранная подписка, в остальных местах — все.
+    fn update_key(&mut self) -> Option<Effect> {
+        if self.tab == Tab::Subscriptions {
+            return self.update_selected();
         }
-        if let Some(node) = self.current() {
-            let subscription = node.subscription.clone();
-            return self.start_update(Some(subscription));
-        }
-        self.notify(
-            Tone::Yellow,
-            "Нет подписки для обновления: выберите её Tab или узел",
-            NOTICE_SECS,
-        );
-        None
+        self.start_update(None)
+    }
+
+    fn update_selected(&mut self) -> Option<Effect> {
+        let Some(name) = self.subscription_names().get(self.sub_cursor).cloned() else {
+            self.notify(Tone::Yellow, "Нет подписки для обновления", NOTICE_SECS);
+            return None;
+        };
+        self.start_update(Some(name))
     }
 
     fn start_update(&mut self, target: Option<String>) -> Option<Effect> {
@@ -538,35 +731,131 @@ impl App {
         Some(Effect::Update(target))
     }
 
-    fn clear_filter(&mut self) {
-        if self.filter.is_active() || !self.filter.text.is_empty() {
-            self.filter = Filter::default();
+    fn toggle_names(&mut self) -> Effect {
+        self.names = match self.names {
+            NameStyle::Country => NameStyle::AsIs,
+            NameStyle::AsIs => NameStyle::Country,
+        };
+        let text = format!("Значки в именах: {}", names_label(self.names));
+        self.notify(Tone::Green, &text, NOTICE_SECS);
+        Effect::SaveNames(self.names)
+    }
+
+    fn toggle_dead(&mut self) {
+        if self.tab == Tab::Nodes {
+            self.filter.hide_dead = !self.filter.hide_dead;
             self.refilter();
         }
     }
 
-    fn cycle_subscription(&mut self, forward: bool) {
+    fn next_subscription(&mut self) {
         let names = self.subscription_names();
         if names.is_empty() {
             return;
         }
-        let slots = names.len() + 1;
         let current = self
             .filter
             .subscription
             .as_ref()
             .and_then(|name| names.iter().position(|candidate| candidate == name))
             .map_or(0, |index| index + 1);
-        let next = if forward {
-            (current + 1) % slots
-        } else {
-            (current + slots - 1) % slots
-        };
+        let next = (current + 1) % (names.len() + 1);
         self.filter.subscription = next
             .checked_sub(1)
             .and_then(|index| names.get(index))
             .cloned();
         self.refilter();
+    }
+
+    fn clear_filter(&mut self) {
+        if self.filter.is_active() {
+            self.filter.text.clear();
+            self.filter.subscription = None;
+            self.refilter();
+        }
+    }
+
+    fn escape(&mut self) {
+        if self.details {
+            self.details = false;
+        } else if self.tab == Tab::Nodes && self.filter.is_active() {
+            self.clear_filter();
+        } else {
+            self.quit = true;
+        }
+    }
+
+    fn enter(&mut self) -> Option<Effect> {
+        match self.tab {
+            Tab::Nodes => {
+                if self.current().is_some() {
+                    self.details = !self.details;
+                } else {
+                    self.notify(Tone::Yellow, "Нет узла для подробностей", NOTICE_SECS);
+                }
+            }
+            Tab::Subscriptions => self.details = !self.details,
+            Tab::Settings => return Some(self.toggle_names()),
+            Tab::Overview | Tab::Journal => {}
+        }
+        None
+    }
+
+    fn switch(&mut self, tab: Tab) {
+        if self.tab != tab {
+            self.details = false;
+        }
+        self.tab = tab;
+    }
+
+    fn step_tab(&mut self, forward: bool) {
+        let count = Tab::ALL.len();
+        let index = Tab::ALL
+            .iter()
+            .position(|tab| *tab == self.tab)
+            .unwrap_or(0);
+        let next = if forward {
+            (index + 1) % count
+        } else {
+            (index + count - 1) % count
+        };
+        if let Some(tab) = Tab::ALL.get(next) {
+            self.switch(*tab);
+        }
+    }
+
+    fn scroll_up(&mut self, by: usize) {
+        match self.tab {
+            Tab::Nodes => self.move_up(by),
+            Tab::Subscriptions => self.sub_cursor = self.sub_cursor.saturating_sub(by),
+            Tab::Journal => self.journal_back = self.journal_back.saturating_add(by),
+            Tab::Overview | Tab::Settings => {}
+        }
+    }
+
+    fn scroll_down(&mut self, by: usize) {
+        match self.tab {
+            Tab::Nodes => self.move_down(by),
+            Tab::Subscriptions => {
+                self.sub_cursor = self.sub_cursor.saturating_add(by).min(self.last_sub());
+            }
+            Tab::Journal => self.journal_back = self.journal_back.saturating_sub(by),
+            Tab::Overview | Tab::Settings => {}
+        }
+    }
+
+    /// Home и End: в начало или в конец списка текущей вкладки.
+    fn jump(&mut self, end: bool) {
+        match self.tab {
+            Tab::Nodes => self.move_to(if end { usize::MAX } else { 0 }),
+            Tab::Subscriptions => self.sub_cursor = if end { self.last_sub() } else { 0 },
+            Tab::Journal => self.journal_back = if end { 0 } else { usize::MAX },
+            Tab::Overview | Tab::Settings => {}
+        }
+    }
+
+    fn last_sub(&self) -> usize {
+        self.subscription_names().len().saturating_sub(1)
     }
 
     fn page(&self) -> usize {
@@ -609,12 +898,15 @@ impl App {
     fn refilter(&mut self) {
         let needle = self.filter.text.trim().to_lowercase();
         let subscription = self.filter.subscription.as_deref();
+        let hide_dead = self.filter.hide_dead;
         self.visible = self
             .nodes
             .iter()
             .enumerate()
             .filter(|(_, node)| {
-                subscription.is_none_or(|name| node.subscription == name)
+                let alive = node.selected || node.status != NodeStatus::Dead;
+                (!hide_dead || alive)
+                    && subscription.is_none_or(|name| node.subscription == name)
                     && (needle.is_empty() || node.id.to_lowercase().contains(&needle))
             })
             .map(|(index, _)| index)
@@ -640,6 +932,10 @@ mod tests {
 
     fn press(app: &mut App, code: KeyCode) -> Option<Effect> {
         app.handle_key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn nodes_tab(app: &mut App) {
+        press(app, KeyCode::Char('2'));
     }
 
     fn set_pinned(app: &mut App, pinned: bool) {
@@ -752,6 +1048,13 @@ mod tests {
         app
     }
 
+    /// Приложение на вкладке «Узлы».
+    fn nodes_app(nodes: Vec<Node>) -> App {
+        let mut app = app_with(nodes);
+        nodes_tab(&mut app);
+        app
+    }
+
     fn visible_ids(app: &App) -> Vec<&str> {
         app.visible
             .iter()
@@ -771,7 +1074,7 @@ mod tests {
 
     #[test]
     fn arrows_and_vim_keys_move_the_cursor_within_bounds() {
-        let mut app = app_with(sample());
+        let mut app = nodes_app(sample());
         press(&mut app, KeyCode::Up);
         assert_eq!(app.cursor, 0);
         press(&mut app, KeyCode::Down);
@@ -799,7 +1102,7 @@ mod tests {
 
     #[test]
     fn paging_scrolls_the_window_and_keeps_the_cursor_visible() {
-        let mut app = app_with(many(30));
+        let mut app = nodes_app(many(30));
         app.set_rows(10);
         press(&mut app, KeyCode::PageDown);
         assert_eq!(app.cursor, 9);
@@ -820,8 +1123,27 @@ mod tests {
     }
 
     #[test]
+    fn the_wheel_moves_the_node_cursor_and_the_journal() {
+        let mut app = nodes_app(many(30));
+        let wheel = |kind| MouseEvent {
+            kind,
+            column: 5,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        let at = Instant::now();
+        app.handle_mouse(wheel(MouseEventKind::ScrollDown), at);
+        assert_eq!(app.cursor, 3);
+        app.handle_mouse(wheel(MouseEventKind::ScrollUp), at);
+        assert_eq!(app.cursor, 0);
+        press(&mut app, KeyCode::Char('4'));
+        app.handle_mouse(wheel(MouseEventKind::ScrollUp), at);
+        assert_eq!(app.journal_back, WHEEL_ROWS);
+    }
+
+    #[test]
     fn a_taller_screen_pulls_the_window_back() {
-        let mut app = app_with(many(30));
+        let mut app = nodes_app(many(30));
         app.set_rows(5);
         press(&mut app, KeyCode::End);
         assert_eq!(app.offset, 25);
@@ -831,7 +1153,7 @@ mod tests {
 
     #[test]
     fn the_cursor_follows_its_node_when_the_list_changes() {
-        let mut app = app_with(sample());
+        let mut app = nodes_app(sample());
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Down);
         assert_eq!(app.current().unwrap().id, "main/Германия 3");
@@ -844,20 +1166,20 @@ mod tests {
 
     #[test]
     fn a_vanished_node_leaves_the_cursor_on_the_same_position() {
-        let mut app = app_with(sample());
+        let mut app = nodes_app(sample());
         press(&mut app, KeyCode::End);
         app.apply(snapshot(sample().into_iter().take(3).collect()));
         assert_eq!(app.cursor, 2);
         app.apply(snapshot(Vec::new()));
         assert_eq!(app.cursor, 0);
         assert!(app.current().is_none());
-        assert_eq!(press(&mut app, KeyCode::Enter), None);
+        assert_eq!(press(&mut app, KeyCode::Char('p')), None);
         assert!(app.notice.is_some());
     }
 
     #[test]
     fn the_text_filter_matches_the_id_in_any_case() {
-        let mut app = app_with(sample());
+        let mut app = nodes_app(sample());
         press(&mut app, KeyCode::Char('/'));
         assert_eq!(app.input, InputMode::Filter);
         typed(&mut app, "NL");
@@ -876,7 +1198,7 @@ mod tests {
 
     #[test]
     fn typing_a_subscription_name_filters_by_it() {
-        let mut app = app_with(sample());
+        let mut app = nodes_app(sample());
         press(&mut app, KeyCode::Char('/'));
         typed(&mut app, "backup/");
         assert_eq!(visible_ids(&app), ["backup/NL-1", "backup/FI-5"]);
@@ -888,7 +1210,7 @@ mod tests {
 
     #[test]
     fn filter_input_takes_letters_that_are_commands_elsewhere() {
-        let mut app = app_with(sample());
+        let mut app = nodes_app(sample());
         press(&mut app, KeyCode::Char('/'));
         typed(&mut app, "quaUa?");
         assert!(!app.quit);
@@ -899,7 +1221,7 @@ mod tests {
 
     #[test]
     fn ctrl_u_clears_the_filter_line_and_the_length_is_limited() {
-        let mut app = app_with(sample());
+        let mut app = nodes_app(sample());
         press(&mut app, KeyCode::Char('/'));
         typed(&mut app, "abc");
         app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
@@ -909,18 +1231,16 @@ mod tests {
     }
 
     #[test]
-    fn tab_cycles_through_subscriptions_and_back_to_all() {
-        let mut app = app_with(sample());
-        press(&mut app, KeyCode::Tab);
+    fn s_cycles_through_subscriptions_and_back_to_all() {
+        let mut app = nodes_app(sample());
+        press(&mut app, KeyCode::Char('s'));
         assert_eq!(app.filter.subscription.as_deref(), Some("main"));
         assert_eq!(visible_ids(&app).len(), 3);
-        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('s'));
         assert_eq!(app.filter.subscription.as_deref(), Some("backup"));
         assert_eq!(visible_ids(&app).len(), 2);
-        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('s'));
         assert_eq!(app.filter.subscription, None);
-        press(&mut app, KeyCode::BackTab);
-        assert_eq!(app.filter.subscription.as_deref(), Some("backup"));
         press(&mut app, KeyCode::Esc);
         assert_eq!(app.filter.subscription, None);
         assert_eq!(visible_ids(&app).len(), 5);
@@ -928,19 +1248,50 @@ mod tests {
 
     #[test]
     fn subscription_filter_and_text_filter_combine() {
-        let mut app = app_with(sample());
-        press(&mut app, KeyCode::Tab);
+        let mut app = nodes_app(sample());
+        press(&mut app, KeyCode::Char('s'));
         press(&mut app, KeyCode::Char('/'));
         typed(&mut app, "nl");
         assert_eq!(visible_ids(&app), ["main/NL-1"]);
     }
 
     #[test]
-    fn enter_pins_the_highlighted_node_and_a_unpins() {
-        let mut app = app_with(sample());
+    fn d_hides_dead_nodes_but_keeps_the_selected_one() {
+        let mut nodes = sample();
+        nodes[2].selected = true;
+        let mut app = nodes_app(nodes);
+        press(&mut app, KeyCode::Char('d'));
+        assert!(app.filter.hide_dead);
+        assert!(!visible_ids(&app).contains(&"main/Германия 3") || app.nodes[2].selected);
+        assert_eq!(visible_ids(&app).len(), 5);
+        let mut plain = nodes_app(sample());
+        press(&mut plain, KeyCode::Char('d'));
+        assert_eq!(
+            visible_ids(&plain),
+            ["main/NL-1", "main/DE-2", "backup/NL-1", "backup/FI-5"]
+        );
+        press(&mut plain, KeyCode::Char('d'));
+        assert_eq!(visible_ids(&plain).len(), 5);
+    }
+
+    #[test]
+    fn enter_opens_details_and_escape_closes_them_first() {
+        let mut app = nodes_app(sample());
+        assert_eq!(press(&mut app, KeyCode::Enter), None);
+        assert!(app.details);
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.details);
+        assert!(!app.quit);
+        press(&mut app, KeyCode::Esc);
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn enter_pins_with_p_and_a_unpins() {
+        let mut app = nodes_app(sample());
         press(&mut app, KeyCode::Down);
         assert_eq!(
-            press(&mut app, KeyCode::Enter),
+            press(&mut app, KeyCode::Char('p')),
             Some(Effect::Pin("main/DE-2".to_owned()))
         );
         set_pinned(&mut app, true);
@@ -963,19 +1314,68 @@ mod tests {
 
     #[test]
     fn pin_works_on_the_filtered_list() {
-        let mut app = app_with(sample());
+        let mut app = nodes_app(sample());
         press(&mut app, KeyCode::Char('/'));
         typed(&mut app, "fi-");
         press(&mut app, KeyCode::Enter);
         assert_eq!(
-            press(&mut app, KeyCode::Enter),
+            press(&mut app, KeyCode::Char('p')),
             Some(Effect::Pin("backup/FI-5".to_owned()))
         );
     }
 
     #[test]
-    fn update_keys_ask_for_all_or_for_the_subscription_of_the_cursor() {
+    fn a_double_click_on_a_node_pins_it_and_one_click_only_selects() {
+        let mut app = nodes_app(sample());
+        app.hits.push(Hit::new(0, 4, 80, Target::NodeRow(1)));
+        let click = |row| MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 3,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let t0 = Instant::now();
+        assert_eq!(app.handle_mouse(click(4), t0), None);
+        assert_eq!(app.cursor, 1);
+        assert_eq!(
+            app.handle_mouse(click(4), t0 + Duration::from_millis(200)),
+            Some(Effect::Pin("main/DE-2".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_click_on_a_tab_switches_to_it() {
         let mut app = app_with(sample());
+        app.hits.push(Hit::new(10, 0, 8, Target::Tab(Tab::Journal)));
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 12,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.handle_mouse(click, Instant::now());
+        assert_eq!(app.tab, Tab::Journal);
+    }
+
+    #[test]
+    fn tabs_switch_with_digits_tab_and_arrows() {
+        let mut app = app_with(sample());
+        assert_eq!(app.tab, Tab::Overview);
+        press(&mut app, KeyCode::Char('5'));
+        assert_eq!(app.tab, Tab::Settings);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.tab, Tab::Overview);
+        press(&mut app, KeyCode::Left);
+        assert_eq!(app.tab, Tab::Settings);
+        press(&mut app, KeyCode::BackTab);
+        assert_eq!(app.tab, Tab::Journal);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.tab, Tab::Settings);
+    }
+
+    #[test]
+    fn update_keys_ask_for_all_or_for_the_chosen_subscription() {
+        let mut app = nodes_app(sample());
         assert_eq!(
             press(&mut app, KeyCode::Char('u')),
             Some(Effect::Update(None))
@@ -985,37 +1385,22 @@ mod tests {
             results: Vec::new(),
         })));
         assert!(app.update.is_none());
-        press(&mut app, KeyCode::End);
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Down);
         assert_eq!(
-            press(&mut app, KeyCode::Char('U')),
+            press(&mut app, KeyCode::Char('u')),
             Some(Effect::Update(Some("backup".to_owned())))
         );
     }
 
     #[test]
-    fn u_updates_the_subscription_chosen_by_tab_even_without_nodes() {
-        let main_only: Vec<Node> = sample()
-            .into_iter()
-            .filter(|node| node.subscription == "main")
-            .collect();
-        let mut app = app_with(main_only);
-        press(&mut app, KeyCode::Tab);
-        press(&mut app, KeyCode::Tab);
-        assert_eq!(app.filter.subscription.as_deref(), Some("backup"));
-        assert_eq!(app.visible, Vec::<usize>::new());
-        assert_eq!(
-            press(&mut app, KeyCode::Char('U')),
-            Some(Effect::Update(Some("backup".to_owned())))
-        );
-    }
-
-    #[test]
-    fn u_without_a_choice_and_without_nodes_says_how_to_choose() {
-        let mut app = app_with(Vec::new());
-        assert_eq!(press(&mut app, KeyCode::Char('U')), None);
+    fn u_without_subscriptions_says_so() {
+        let mut app = App::new(NOW);
+        press(&mut app, KeyCode::Char('3'));
+        assert_eq!(press(&mut app, KeyCode::Char('u')), None);
         assert_eq!(
             app.notice.as_ref().unwrap().text,
-            "Нет подписки для обновления: выберите её Tab или узел"
+            "Нет подписки для обновления"
         );
     }
 
@@ -1024,7 +1409,6 @@ mod tests {
         let mut app = app_with(sample());
         press(&mut app, KeyCode::Char('u'));
         assert_eq!(press(&mut app, KeyCode::Char('u')), None);
-        assert_eq!(press(&mut app, KeyCode::Char('U')), None);
         assert!(app.notice.as_ref().unwrap().text.contains("уже идёт"));
     }
 
@@ -1068,6 +1452,32 @@ mod tests {
         app.apply(Msg::Pinned(Err("узла «x» нет".to_owned())));
         assert!(app.notice.as_ref().unwrap().text.contains("узла «x» нет"));
         assert!(!app.quit);
+    }
+
+    #[test]
+    fn a_failed_settings_save_is_reported() {
+        let mut app = App::new(NOW);
+        app.apply(Msg::Saved(Err("нет каталога\nдетали".to_owned())));
+        assert_eq!(
+            app.notice.as_ref().unwrap().text,
+            "Не удалось сохранить вид: нет каталога"
+        );
+    }
+
+    #[test]
+    fn the_names_setting_flips_and_asks_to_be_saved() {
+        let mut app = App::new(NOW);
+        press(&mut app, KeyCode::Char('5'));
+        assert_eq!(app.names, NameStyle::Country);
+        assert_eq!(
+            press(&mut app, KeyCode::Enter),
+            Some(Effect::SaveNames(NameStyle::AsIs))
+        );
+        assert_eq!(app.names, NameStyle::AsIs);
+        assert_eq!(
+            app.notice.as_ref().unwrap().text,
+            "Значки в именах: как есть"
+        );
     }
 
     #[test]
@@ -1140,7 +1550,7 @@ mod tests {
     }
 
     #[test]
-    fn the_log_is_a_ring_buffer() {
+    fn the_log_is_a_ring_buffer_and_the_warnings_filter_keeps_them() {
         let mut app = App::new(NOW);
         for index in 0..LOG_CAP + 25 {
             app.apply(Msg::Event(Event::Warning {
@@ -1150,13 +1560,12 @@ mod tests {
         }
         assert_eq!(app.log.len(), LOG_CAP);
         assert!(app.log.front().unwrap().text.ends_with("запись 25"));
-        assert!(
-            app.log
-                .back()
-                .unwrap()
-                .text
-                .ends_with(&format!("запись {}", LOG_CAP + 24))
-        );
+        app.apply(Msg::Event(Event::Hello {
+            version: "0.1.0".to_owned(),
+        }));
+        assert_eq!(app.journal_entries().len(), LOG_CAP);
+        app.journal_warnings = true;
+        assert_eq!(app.journal_entries().len(), LOG_CAP - 1);
     }
 
     #[test]

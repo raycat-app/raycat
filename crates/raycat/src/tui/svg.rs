@@ -10,6 +10,7 @@ use jiff::tz::TimeZone;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Color, Modifier};
 use raycat_proto::{
     CurrentNode, Event, Mode, Node, NodeStatus, Nodes, Status, SubscriptionStatus, XrayStatus,
@@ -32,7 +33,9 @@ const SELECTED: &str = "main/🇳🇱 Нидерланды 2";
 const UP_STEP: u64 = 525_000;
 const DOWN_STEP: u64 = 12_075_000;
 const COMMITTED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/tui.svg");
+const COMMITTED_NODES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/tui-nodes.svg");
 const WRITTEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/tui.svg");
+const WRITTEN_NODES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/tui-nodes.svg");
 
 // Всё в десятых долях пикселя: так SVG записывается целыми числами.
 const CELL_W: usize = 84;
@@ -439,24 +442,36 @@ fn demo_app() -> App {
     app
 }
 
-#[test]
-fn tui_screenshot_matches_assets() {
-    let mut app = demo_app();
+/// Сверяет отрисовку с эталоном; при расхождении записывает новый снимок в `target`.
+fn check(app: &mut App, committed: &str, written: &str) {
     let mut terminal = Terminal::new(TestBackend::new(COLS, ROWS)).expect("тестовый терминал");
     terminal
-        .draw(|frame| draw_at(frame, &mut app, Palette::new(true), &TimeZone::UTC))
+        .draw(|frame| draw_at(frame, app, Palette::new(true), &TimeZone::UTC))
         .expect("отрисовка");
     let actual = render(terminal.backend().buffer());
-    let expected = std::fs::read_to_string(COMMITTED).unwrap_or_default();
+    let expected = std::fs::read_to_string(committed).unwrap_or_default();
     if actual == expected {
         return;
     }
-    let written = Path::new(WRITTEN);
+    let written = Path::new(written);
     if let Some(dir) = written.parent() {
         std::fs::create_dir_all(dir).expect("каталог target");
     }
     std::fs::write(written, actual).expect("запись снимка");
     panic!(
-        "assets/tui.svg устарел: новый снимок записан в target/tui.svg, его нужно скопировать в assets/tui.svg"
+        "снимок устарел: новый записан в {}, его нужно скопировать в assets",
+        written.display()
     );
+}
+
+#[test]
+fn tui_screenshot_matches_assets() {
+    check(&mut demo_app(), COMMITTED, WRITTEN);
+}
+
+#[test]
+fn tui_screenshot_nodes_matches_assets() {
+    let mut app = demo_app();
+    app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+    check(&mut app, COMMITTED_NODES, WRITTEN_NODES);
 }

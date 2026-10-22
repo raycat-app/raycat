@@ -10,6 +10,7 @@ use raycat_proto::{
     SubscriptionStatus, Updates, XrayState, XrayStatus,
 };
 
+use crate::names::{NameStyle, display_name};
 use crate::term::{Align, Cell, Column, Term, Tone, display_width, pad, table, truncate};
 use crate::util::{format_bytes, format_date, format_duration, format_moment, sanitize};
 
@@ -97,11 +98,6 @@ pub(crate) fn speed_text(bits_per_sec: u64) -> String {
     };
     let tenths = (u128::from(bits_per_sec) * 10 + divisor / 2) / divisor;
     format!("{}.{} {unit}", tenths / 10, tenths % 10)
-}
-
-/// Приём и отдача в шапке и таблице: `↓ 5.2 Мбит/с ↑ 0.3 Мбит/с`.
-pub(crate) fn speed_line(down: u64, up: u64) -> String {
-    format!("↓ {} ↑ {}", speed_text(down), speed_text(up))
 }
 
 pub(crate) fn expiry_text(expire: u64, now: u64, zone: &TimeZone) -> (String, Tone) {
@@ -199,7 +195,7 @@ fn node_lines(term: Term, node: Option<&CurrentNode>) -> Vec<String> {
         term,
         2,
         "имя:",
-        &term.paint(Tone::Bold, &sanitize(&node.name)),
+        &term.paint(Tone::Bold, &display_name(&node.name, NameStyle::Country)),
     ));
     lines.push(field(term, 2, "подписка:", &sanitize(&node.subscription)));
     let latency = node
@@ -412,7 +408,7 @@ fn node_row(node: &Node) -> Vec<Cell> {
     vec![
         Cell::new(mark, mark_tone),
         Cell::new(sanitize(&node.subscription), Tone::Plain),
-        Cell::new(sanitize(&node.name), name_tone),
+        Cell::new(display_name(&node.name, NameStyle::Country), name_tone),
         Cell::new(status_text, status_tone),
         Cell::new(latency_text(node.latency_ms), latency_tone(node.latency_ms)),
         Cell::new(node.failures.to_string(), failures_tone),
@@ -593,7 +589,10 @@ pub(crate) fn speedtest_progress(progress: &SpeedtestProgress) -> String {
 }
 
 fn node_or_dash(node: Option<&str>) -> String {
-    node.map_or_else(|| "—".to_owned(), sanitize)
+    node.map_or_else(
+        || "—".to_owned(),
+        |name| display_name(name, NameStyle::Country),
+    )
 }
 
 /// Текст события без времени и его тон; строки от провайдера очищены.
@@ -612,9 +611,10 @@ pub(crate) fn event_text(event: &Event) -> (Tone, String) {
                 sanitize(reason)
             ),
         ),
-        Event::Pin { node: Some(node) } => {
-            (Tone::Yellow, format!("закреплён узел {}", sanitize(node)))
-        }
+        Event::Pin { node: Some(node) } => (
+            Tone::Yellow,
+            format!("закреплён узел {}", display_name(node, NameStyle::Country)),
+        ),
         Event::Pin { node: None } => (Tone::Plain, "закрепление снято".to_owned()),
         Event::SubscriptionUpdated {
             subscription,
@@ -874,8 +874,6 @@ mod tests {
         assert_eq!(speed_text(5_200_000), "5.2 Мбит/с");
         assert_eq!(speed_text(5_250_000), "5.3 Мбит/с");
         assert_eq!(speed_text(1_500_000_000), "1.5 Гбит/с");
-        assert_eq!(speed_line(0, 0), "↓ 0 ↑ 0");
-        assert_eq!(speed_line(5_200_000, 300_000), "↓ 5.2 Мбит/с ↑ 0.3 Мбит/с");
     }
 
     #[test]

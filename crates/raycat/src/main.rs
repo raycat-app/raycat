@@ -8,6 +8,7 @@ mod gateway;
 mod init;
 mod log;
 mod manual;
+mod names;
 mod paths;
 mod plan;
 mod render;

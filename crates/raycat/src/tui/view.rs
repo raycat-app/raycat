@@ -1,44 +1,53 @@
-//! Отрисовка: шапка, рамки подписок, узлов и журнала, строки подсказок. Раскладка
-//! подстраивается под размер окна: сначала пропадают второстепенные колонки и
-//! куски строк, потом секции.
+//! Каркас экрана: строка вкладок, шапка с состоянием и текущим узлом, баннер связи,
+//! строка уведомлений и подсказок. Содержимое вкладок — в `pages`.
 
 use jiff::tz::TimeZone;
 use ratatui::Frame;
-use raycat_proto::{Node, SubscriptionStatus, XrayStatus};
+use raycat_proto::{SubscriptionStatus, XrayStatus};
 
-use super::app::{App, InputMode, Link};
+use super::app::{App, Hit, InputMode, Link, Tab, Target};
 use super::canvas::{Canvas, GAP, Palette, Seg, fit, highlight, wrap};
+use super::pages;
+use crate::names::{NameStyle, country_code, display_name};
 use crate::render;
-use crate::term::{Tone, display_width, pad, truncate};
-use crate::util::{format_bytes, format_moment, is_utc, local_zone};
+use crate::term::{Tone, display_width, pad};
+use crate::util::{format_bytes, local_zone};
 
 const MIN_WIDTH: usize = 44;
 const MIN_HEIGHT: usize = 12;
 const BOTTOM: usize = 2;
-const HEADER_LINES: usize = 2;
-/// Верхняя и нижняя линии рамки.
-const FRAME: usize = 2;
-/// Рамка узлов: строка заголовков таблицы и хотя бы две строки узлов.
-const NODES_MIN: usize = 5;
 const BANNER_LINES: usize = 3;
 const BANNER_HINT_LINES: usize = 2;
-const STATUS_WIDTH: usize = 13;
 const BAR_CELLS: usize = 10;
+/// Скорость ниже этого значения бит/с показывается как «—».
+const MIN_SPEED: u64 = 1_000;
+pub(super) const HEADER_LINES: usize = 2;
+/// Строки, которые всегда остаются телу вкладки.
+pub(super) const BODY_MIN: usize = 3;
 
-const HELP: [(&str, &str); 12] = [
-    ("↑ ↓  j k", "выбрать узел"),
+const HELP: [(&str, &str); 15] = [
+    ("1–5  Tab", "вкладки; Shift+Tab и ← → — перелистывание"),
+    ("↑ ↓  j k", "выбор строки, прокрутка"),
     ("PgUp PgDn", "страница вверх и вниз"),
     ("Home End", "в начало и в конец (g G)"),
-    ("Enter", "закрепить выбранный узел"),
-    ("a", "вернуть автоматический выбор узла"),
-    ("u", "обновить все подписки"),
     (
-        "U",
-        "обновить подписку (выбранную Tab или узла под курсором)",
+        "Enter",
+        "подробности узла или подписки; на «Настройках» — переключить",
     ),
-    ("/", "фильтр по тексту (Enter — применить, Esc — сбросить)"),
-    ("Tab", "фильтр по подписке (Shift+Tab — в обратную сторону)"),
-    ("Esc", "сбросить фильтры"),
+    (
+        "p",
+        "закрепить выбранный узел (на вкладке «Узлы» — и двойной клик)",
+    ),
+    ("a", "вернуть автоматический выбор узла"),
+    ("u", "обновить все подписки (на «Подписках» — выбранную)"),
+    ("d", "скрыть мёртвые узлы (вкладка «Узлы»)"),
+    ("s", "фильтр по подписке (вкладка «Узлы»)"),
+    ("/", "поиск по узлам (Enter — применить, Esc — сбросить)"),
+    ("w", "в журнале — только предупреждения и ошибки"),
+    (
+        "Esc",
+        "закрыть подробности и сбросить фильтры; на верхнем уровне — выход",
+    ),
     ("?", "эта справка"),
     ("q  Ctrl+C", "выйти"),
 ];
@@ -48,6 +57,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &mut App, palette: Palette) {
 }
 
 pub(super) fn draw_at(frame: &mut Frame<'_>, app: &mut App, palette: Palette, zone: &TimeZone) {
+    app.hits.clear();
     let mut canvas = Canvas::new(frame.buffer_mut(), palette);
     compose(&mut canvas, app, zone);
 }
@@ -71,65 +81,44 @@ fn compose(canvas: &mut Canvas<'_>, app: &mut App, zone: &TimeZone) {
         help(canvas);
         return;
     }
-    let top_limit = canvas.height.saturating_sub(BOTTOM + NODES_MIN);
-    let mut y = banner(canvas, app, top_limit);
+    tabs(canvas, app);
+    let room = canvas.height.saturating_sub(BOTTOM + BODY_MIN);
+    let mut y = 1;
+    y += banner(canvas, app, y, room.saturating_sub(y));
     canvas.set_dim(matches!(app.link, Link::Down { .. }));
-    y = header(canvas, app, y, top_limit);
+    y += header(canvas, app, y, room.saturating_sub(y));
 
-    let subs = subscription_lines(app, zone);
-    let subs_want = if app.status.is_some() {
-        FRAME + subs.len().max(1)
-    } else {
-        0
-    };
-    let body = canvas.height.saturating_sub(y + BOTTOM);
-    let log_cap = (body / 5).clamp(3, 12);
-    let log_want = FRAME + app.log.len().clamp(1, log_cap);
-    let layout = plan(body, subs_want, log_want);
-    let mut notes = Vec::new();
-    if subs_want > 0 && layout.subs == 0 {
-        notes.push("(подписки скрыты)");
-    }
-    if layout.log == 0 {
-        notes.push("(журнал скрыт: мало строк)");
-    }
-
-    if layout.subs > 0 {
-        subscriptions(canvas, y, layout.subs, subs, app);
-        y += layout.subs;
-    }
-    nodes_section(canvas, y, layout.nodes, app, &notes);
-    y += layout.nodes;
-    if layout.log > 0 {
-        log_section(canvas, y, layout.log, app, zone);
+    let end = canvas.height.saturating_sub(BOTTOM);
+    if y < end {
+        match app.tab {
+            Tab::Overview => pages::overview(canvas, app, y, end, zone),
+            Tab::Nodes => pages::nodes(canvas, app, y, end),
+            Tab::Subscriptions => pages::subscriptions(canvas, app, y, end, zone),
+            Tab::Journal => pages::journal(canvas, app, y, end, zone),
+            Tab::Settings => pages::settings(canvas, app, y, end),
+        }
     }
     canvas.set_dim(false);
     bottom(canvas, app);
 }
 
-struct Plan {
-    subs: usize,
-    nodes: usize,
-    log: usize,
-}
-
-/// Делит строки тела между секциями: таблице узлов сначала гарантируется минимум,
-/// затем подпискам и журналу по запросу, остальное достаётся таблице.
-fn plan(body: usize, subs_want: usize, log_want: usize) -> Plan {
-    let nodes_min = body.min(NODES_MIN);
-    let mut left = body - nodes_min;
-    let subs = if left > FRAME { left.min(subs_want) } else { 0 };
-    left -= subs;
-    let log = if left > FRAME { left.min(log_want) } else { 0 };
-    left -= log;
-    Plan {
-        subs,
-        nodes: nodes_min + left,
-        log,
+/// Вкладки в первой строке; каждая — область нажатия.
+fn tabs(canvas: &mut Canvas<'_>, app: &mut App) {
+    let mut x = 0;
+    for (index, tab) in Tab::ALL.iter().enumerate() {
+        let label = format!(" {} {} ", index + 1, tab.title());
+        let width = display_width(&label);
+        if *tab == app.tab {
+            canvas.put_style(x, 0, &label, width, highlight());
+        } else {
+            canvas.put(x, 0, &label, width, Tone::Plain);
+        }
+        app.hits.push(Hit::new(x, 0, width, Target::Tab(*tab)));
+        x += width + 1;
     }
 }
 
-fn banner(canvas: &mut Canvas<'_>, app: &App, limit: usize) -> usize {
+fn banner(canvas: &mut Canvas<'_>, app: &App, y0: usize, limit: usize) -> usize {
     let lines: Vec<Vec<Seg>> = match &app.link {
         Link::Up | Link::Connecting => Vec::new(),
         Link::Down {
@@ -162,20 +151,20 @@ fn banner(canvas: &mut Canvas<'_>, app: &App, limit: usize) -> usize {
     };
     let count = lines.len().min(limit);
     for (row, segs) in lines.into_iter().take(count).enumerate() {
-        canvas.line(row, 0, segs);
+        canvas.line(y0 + row, 0, segs);
     }
     count
 }
 
 fn header(canvas: &mut Canvas<'_>, app: &App, y: usize, limit: usize) -> usize {
-    let count = limit.saturating_sub(y).min(HEADER_LINES);
+    let count = limit.min(HEADER_LINES);
     if count > 0 {
         header_top(canvas, app, y);
     }
     if count > 1 {
         header_node(canvas, app, y + 1);
     }
-    y + count
+    count
 }
 
 fn link_seg(link: &Link) -> Seg {
@@ -187,7 +176,7 @@ fn link_seg(link: &Link) -> Seg {
 }
 
 /// Xray показывается только когда с ним что-то не так.
-fn xray_segs(xray: &XrayStatus) -> Vec<Seg> {
+pub(super) fn xray_segs(xray: &XrayStatus) -> Vec<Seg> {
     let mut segs = Vec::new();
     if !xray.running {
         segs.push(Seg::new("xray не запущен", Tone::Red, 0));
@@ -230,6 +219,8 @@ fn header_top(canvas: &mut Canvas<'_>, app: &App, y: usize) {
     }
 }
 
+/// Текущий узел: имя, задержка, скорость и выбор. Код страны выводится отдельно только
+/// в режиме «как есть»: в режиме кода он уже стоит вместо флага.
 fn header_node(canvas: &mut Canvas<'_>, app: &App, y: usize) {
     let Some(status) = &app.status else {
         canvas.line(
@@ -247,26 +238,29 @@ fn header_node(canvas: &mut Canvas<'_>, app: &App, y: usize) {
         );
         return;
     };
+    let mut segs = vec![Seg::new(
+        format!("▶ {}", display_name(&node.name, app.names)),
+        Tone::Bold,
+        0,
+    )];
+    if app.names == NameStyle::AsIs
+        && let Some(code) = country_code(&node.name)
+    {
+        segs.push(Seg::new(code, Tone::Plain, 1));
+    }
+    segs.push(Seg::new(
+        render::latency_text(node.latency_ms),
+        delay_tone(node.latency_ms),
+        0,
+    ));
+    if let Some(speed) = app.speed() {
+        segs.push(Seg::new(speed_label(speed.down, speed.up), Tone::Plain, 1));
+    }
     let choice = if node.pinned {
         "закреплён"
     } else {
         "авто"
     };
-    let mut segs = vec![
-        Seg::new(format!("▶ {}", node.id), Tone::Bold, 0),
-        Seg::new(
-            render::latency_text(node.latency_ms),
-            delay_tone(node.latency_ms),
-            0,
-        ),
-    ];
-    if let Some(speed) = app.speed() {
-        segs.push(Seg::new(
-            render::speed_line(speed.down, speed.up),
-            Tone::Plain,
-            1,
-        ));
-    }
     segs.push(Seg::new(choice, Tone::Dim, 0));
     if let Some(reason) = &node.reason {
         segs.push(Seg::new(reason.clone(), Tone::Dim, 0));
@@ -275,11 +269,24 @@ fn header_node(canvas: &mut Canvas<'_>, app: &App, y: usize) {
 }
 
 /// Без данных задержка тусклая, иначе цвет по порогам из `render`.
-fn delay_tone(latency: Option<u64>) -> Tone {
+pub(super) fn delay_tone(latency: Option<u64>) -> Tone {
     if latency.is_none() {
         Tone::Dim
     } else {
         render::latency_tone(latency)
+    }
+}
+
+/// Приём и отдача; в каждую сторону ниже 1 Кбит/с показывается «—».
+pub(super) fn speed_label(down: u64, up: u64) -> String {
+    format!("↓ {} ↑ {}", speed_part(down), speed_part(up))
+}
+
+fn speed_part(bits: u64) -> String {
+    if bits < MIN_SPEED {
+        "—".to_owned()
+    } else {
+        render::speed_text(bits)
     }
 }
 
@@ -290,7 +297,7 @@ fn bar(percent: u128) -> String {
 }
 
 /// Трафик подписки: полоска, процент и объёмы. Без лимита остаётся только объём.
-fn traffic_seg(used: u64, total: Option<u64>) -> Seg {
+pub(super) fn traffic_seg(used: u64, total: Option<u64>) -> Seg {
     let Some(total) = total.filter(|total| *total > 0) else {
         let (text, tone) = render::traffic_text(used, total);
         return Seg::new(text, tone, 1);
@@ -312,372 +319,78 @@ fn traffic_seg(used: u64, total: Option<u64>) -> Seg {
     Seg::new(text, tone, 1)
 }
 
-fn subscription_segs(sub: &SubscriptionStatus, now: u64, zone: &TimeZone) -> Vec<Seg> {
-    let mut segs = vec![Seg::new(sub.name.clone(), Tone::Bold, 0)];
-    if let Some(title) = sub.title.as_deref().filter(|title| !title.is_empty()) {
-        segs.push(Seg::new(format!("«{title}»"), Tone::Dim, 4));
+/// Состояние подписки одним словом; ошибка уходит в отдельную вкладку.
+pub(super) fn sub_phrase(sub: &SubscriptionStatus, now: u64) -> (&'static str, Tone) {
+    if sub.last_error.is_some() {
+        return ("ошибка", Tone::Red);
     }
-    segs.push(Seg::new(format!("узлов: {}", sub.nodes), Tone::Plain, 2));
-    if let Some(used) = sub.used_bytes {
-        segs.push(traffic_seg(used, sub.total_bytes));
+    if sub
+        .expire
+        .is_some_and(|expire| expire != 0 && expire <= now)
+    {
+        return ("истекла", Tone::Red);
     }
-    if let Some(expire) = sub.expire {
-        let (text, tone) = render::expiry_text(expire, now, zone);
-        segs.push(Seg::new(text, tone, 2));
-    }
-    match sub.updated_at {
-        Some(then) => {
-            let text = format!("обновлена {}", render::ago(now, then));
-            segs.push(Seg::new(text, Tone::Plain, 3));
-        }
-        None => segs.push(Seg::new("ещё не получена", Tone::Yellow, 1)),
-    }
-    if let Some(next) = sub.next_update {
-        let text = format!("следующая {}", render::ahead(now, next));
-        segs.push(Seg::new(text, Tone::Dim, 5));
+    if let (Some(used), Some(total)) = (sub.used_bytes, sub.total_bytes)
+        && total > 0
+        && used >= total
+    {
+        return ("трафик исчерпан", Tone::Red);
     }
     if sub.updating {
-        segs.push(Seg::new("⟳ идёт обновление", Tone::Green, 0));
+        return ("обновляется", Tone::Green);
     }
-    segs
-}
-
-fn subscription_lines(app: &App, zone: &TimeZone) -> Vec<Vec<Seg>> {
-    let Some(status) = &app.status else {
-        return Vec::new();
-    };
-    let mut lines = Vec::new();
-    for sub in &status.subscriptions {
-        lines.push(subscription_segs(sub, app.now, zone));
-        if let Some(error) = &sub.last_error {
-            lines.push(vec![Seg::new(format!("  ✗ {error}"), Tone::Red, 0)]);
-        }
+    if sub.updated_at.is_none() {
+        return ("ещё не получена", Tone::Yellow);
     }
-    lines
-}
-
-fn subscriptions(canvas: &mut Canvas<'_>, y0: usize, room: usize, lines: Vec<Vec<Seg>>, app: &App) {
-    let count = app
-        .status
-        .as_ref()
-        .map_or(0, |status| status.subscriptions.len());
-    let title = vec![
-        Seg::new("Подписки", Tone::Bold, 0),
-        Seg::new(format!("всего {count}"), Tone::Dim, 2),
-    ];
-    let mut inner = canvas.framed(y0, room, title);
-    if lines.is_empty() {
-        inner.line(0, 0, vec![Seg::new("подписок нет", Tone::Dim, 0)]);
-        return;
-    }
-    let capacity = room.saturating_sub(FRAME);
-    let total = lines.len();
-    let shown = if total > capacity {
-        capacity.saturating_sub(1)
-    } else {
-        total
-    };
-    for (row, segs) in lines.into_iter().take(shown).enumerate() {
-        inner.line(row, 0, segs);
-    }
-    if shown < total {
-        let text = format!("… и ещё строк: {}", total - shown);
-        inner.line(shown, 0, vec![Seg::new(text, Tone::Dim, 0)]);
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Kind {
-    Marker,
-    Sub,
-    Name,
-    Status,
-    Latency,
-    Failures,
-    Speed,
-    Traffic,
-    Error,
-}
-
-struct Spec {
-    kind: Kind,
-    title: &'static str,
-    min: usize,
-    natural: usize,
-    right: bool,
-}
-
-struct Col {
-    kind: Kind,
-    title: &'static str,
-    width: usize,
-    right: bool,
-}
-
-/// Колонки в порядке важности: на узком экране последние пропадают первыми. Ошибка
-/// уходит раньше трафика, трафик раньше скорости. Скорость есть только когда её
-/// измерили, и она пустая у всех узлов, кроме выбранного.
-fn specs(nodes: &[&Node], speed: &str) -> Vec<Spec> {
-    let (mut sub, mut name, mut error, mut traffic) = (0_usize, 0_usize, 0_usize, 0_usize);
-    for node in nodes {
-        sub = sub.max(display_width(&node.subscription));
-        name = name.max(display_width(&node.name));
-        error = error.max(node.last_error.as_deref().map_or(0, display_width));
-        traffic = traffic.max(display_width(&render::node_traffic(node)));
-    }
-    let name = name.clamp(4, 48);
-    let error = error.min(80);
-    let traffic = traffic.max(6);
-    let speed_width = if speed.is_empty() {
-        0
-    } else {
-        display_width(speed).max(display_width("Скорость"))
-    };
-    let spec = |kind, title, min, natural, right| Spec {
-        kind,
-        title,
-        min,
-        natural,
-        right,
-    };
-    vec![
-        spec(Kind::Marker, "", 1, 1, false),
-        spec(Kind::Name, "Узел", name.min(12), name, false),
-        spec(Kind::Status, "Статус", STATUS_WIDTH, STATUS_WIDTH, false),
-        spec(Kind::Latency, "Задержка", 8, 8, true),
-        spec(Kind::Sub, "Подписка", 8, sub.clamp(8, 20), false),
-        spec(Kind::Failures, "Сбои", 7, 7, true),
-        spec(Kind::Speed, "Скорость", speed_width, speed_width, false),
-        spec(Kind::Traffic, "Трафик", traffic, traffic, false),
-        spec(Kind::Error, "Ошибка", error.min(12), error, false),
-    ]
-}
-
-/// Берёт колонки, пока помещаются минимальные ширины, и раздаёт остаток тем,
-/// что могут расти: имени, подписке и ошибке.
-fn columns(nodes: &[&Node], speed: &str, width: usize) -> Vec<Col> {
-    let mut chosen: Vec<(Spec, usize)> = Vec::new();
-    let mut used = 0;
-    for spec in specs(nodes, speed) {
-        if spec.natural == 0 {
-            continue;
-        }
-        let need = spec.min + if chosen.is_empty() { 0 } else { GAP };
-        if used + need > width {
-            break;
-        }
-        used += need;
-        let start = spec.min;
-        chosen.push((spec, start));
-    }
-    let mut extra = width.saturating_sub(used);
-    for kind in [Kind::Name, Kind::Sub, Kind::Error] {
-        if let Some((spec, current)) = chosen.iter_mut().find(|(spec, _)| spec.kind == kind) {
-            let add = extra.min(spec.natural.saturating_sub(*current));
-            *current += add;
-            extra -= add;
-        }
-    }
-    let mut cols: Vec<Col> = chosen
-        .into_iter()
-        .map(|(spec, width)| Col {
-            kind: spec.kind,
-            title: spec.title,
-            width,
-            right: spec.right,
-        })
-        .collect();
-    cols.sort_by_key(|col| col.kind);
-    cols
-}
-
-fn cell(kind: Kind, node: &Node, speed: &str) -> (String, Tone) {
-    match kind {
-        Kind::Marker => {
-            let (mark, tone) = render::node_marker(node);
-            (mark.to_owned(), tone)
-        }
-        Kind::Sub => (node.subscription.clone(), Tone::Plain),
-        Kind::Name => {
-            let tone = if node.selected {
-                Tone::Bold
-            } else {
-                Tone::Plain
-            };
-            (node.name.clone(), tone)
-        }
-        Kind::Status => {
-            let (text, tone) = render::node_status_mark(node.status);
-            (text.to_owned(), tone)
-        }
-        Kind::Latency => (
-            render::latency_text(node.latency_ms),
-            delay_tone(node.latency_ms),
-        ),
-        Kind::Failures => {
-            let tone = if node.failures > 0 {
-                Tone::Yellow
-            } else {
-                Tone::Dim
-            };
-            (node.failures.to_string(), tone)
-        }
-        Kind::Speed if node.selected => (speed.to_owned(), Tone::Plain),
-        Kind::Speed => (String::new(), Tone::Plain),
-        Kind::Error => (node.last_error.clone().unwrap_or_default(), Tone::Red),
-        Kind::Traffic => (render::node_traffic(node), Tone::Dim),
-    }
-}
-
-fn draw_row(
-    canvas: &mut Canvas<'_>,
-    y: usize,
-    cols: &[Col],
-    node: &Node,
-    speed: &str,
-    current: bool,
-) {
-    let marked = highlight();
-    if current {
-        canvas.fill(y, marked);
-    }
-    let mut x = 0;
-    for col in cols {
-        let (text, tone) = cell(col.kind, node, speed);
-        let text = truncate(&text, col.width);
-        let shift = if col.right {
-            col.width.saturating_sub(display_width(&text))
-        } else {
-            0
-        };
-        if current {
-            canvas.put_style(x + shift, y, &text, col.width, marked);
-        } else {
-            canvas.put(x + shift, y, &text, col.width, tone);
-        }
-        x += col.width + GAP;
-    }
-}
-
-fn draw_titles(canvas: &mut Canvas<'_>, y: usize, cols: &[Col]) {
-    let mut x = 0;
-    for col in cols {
-        let shift = if col.right {
-            col.width.saturating_sub(display_width(col.title))
-        } else {
-            0
-        };
-        canvas.put(x + shift, y, col.title, col.width, Tone::Dim);
-        x += col.width + GAP;
-    }
-}
-
-fn nodes_title(app: &App, rows: usize, notes: &[&str]) -> Vec<Seg> {
-    let total = app.nodes.len();
-    let shown = app.visible.len();
-    let count = if shown < total {
-        format!("показано {shown} из {total}")
-    } else if shown > rows {
-        format!(
-            "{}–{} из {shown}",
-            app.offset + 1,
-            (app.offset + rows).min(shown)
-        )
-    } else {
-        format!("всего {total}")
-    };
-    let mut segs = vec![
-        Seg::new("Узлы", Tone::Bold, 0),
-        Seg::new(count, Tone::Dim, 2),
-    ];
-    let text = app.filter.text.trim();
-    if !text.is_empty() {
-        segs.push(Seg::new(format!("фильтр: «{text}»"), Tone::Yellow, 0));
-    }
-    if let Some(name) = &app.filter.subscription {
-        segs.push(Seg::new(format!("подписка: {name}"), Tone::Yellow, 0));
-    }
-    segs.extend(notes.iter().map(|note| Seg::new(*note, Tone::Yellow, 3)));
-    segs
-}
-
-fn nodes_section(canvas: &mut Canvas<'_>, y0: usize, room: usize, app: &mut App, notes: &[&str]) {
-    let rows = room.saturating_sub(FRAME + 1);
-    app.set_rows(rows);
-    let mut inner = canvas.framed(y0, room, nodes_title(app, rows, notes));
-    if app.visible.is_empty() {
-        let (text, tone) = if app.nodes.is_empty() {
-            (
-                "Узлов нет: подписки ещё не получены или в них нет узлов",
-                Tone::Dim,
-            )
-        } else {
-            ("Под фильтр ничего не подошло: Esc — сбросить", Tone::Yellow)
-        };
-        inner.line(0, 0, vec![Seg::new(text, tone, 0)]);
-        return;
-    }
-    let shown: Vec<&Node> = app
-        .visible
-        .iter()
-        .filter_map(|index| app.nodes.get(*index))
-        .collect();
-    let speed = app.speed().map_or_else(String::new, |speed| {
-        render::speed_line(speed.down, speed.up)
-    });
-    let cols = columns(&shown, &speed, inner.width);
-    draw_titles(&mut inner, 0, &cols);
-    for (row, node) in shown.iter().skip(app.offset).take(rows).enumerate() {
-        let current = app.offset + row == app.cursor;
-        draw_row(&mut inner, 1 + row, &cols, node, &speed, current);
-    }
-}
-
-fn log_section(canvas: &mut Canvas<'_>, y0: usize, room: usize, app: &App, zone: &TimeZone) {
-    let mut title = vec![Seg::new("Журнал", Tone::Bold, 0)];
-    if is_utc(zone) {
-        title.push(Seg::new("время UTC", Tone::Dim, 1));
-    }
-    let mut inner = canvas.framed(y0, room, title);
-    if app.log.is_empty() {
-        inner.line(0, 0, vec![Seg::new("пока пусто", Tone::Dim, 0)]);
-        return;
-    }
-    let capacity = room.saturating_sub(FRAME);
-    let first = app.log.len().saturating_sub(capacity);
-    for (row, entry) in app.log.iter().skip(first).enumerate() {
-        let segs = vec![
-            Seg::new(format_moment(entry.at, app.now, zone), Tone::Dim, 0),
-            Seg::new(entry.text.clone(), entry.tone, 0),
-        ];
-        inner.line(row, 0, segs);
-    }
-}
-
-fn filter_hint(app: &App) -> Vec<Seg> {
-    vec![
-        Seg::new(format!("/{}█", app.filter.text), Tone::Bold, 0),
-        Seg::new("Enter — применить, Esc — сбросить и выйти", Tone::Dim, 1),
-    ]
+    ("работает", Tone::Green)
 }
 
 /// Подсказки «клавиша описание»: клавиша жирным, описание тусклым.
-fn normal_hints() -> Vec<Seg> {
-    // Справка и выход отбрасываются последними: без них экран не объяснить.
-    [
-        ("↑↓ выбор", 1),
-        ("Enter закрепить", 1),
-        ("a авто", 2),
-        ("u обновить", 3),
-        ("U подписку", 5),
-        ("/ фильтр", 2),
-        ("Tab подписка", 6),
-        ("? справка", 0),
-        ("q выход", 0),
-    ]
-    .into_iter()
-    .map(|(text, priority)| Seg::new(text, Tone::Dim, priority))
-    .collect()
+fn normal_hints(app: &App) -> Vec<Seg> {
+    let items: &[(&str, u8)] = match app.tab {
+        Tab::Overview => &[
+            ("u обновить", 1),
+            ("a автовыбор", 3),
+            ("2 узлы", 2),
+            ("? справка", 0),
+            ("q выход", 0),
+        ],
+        Tab::Nodes if app.details => &[
+            ("Esc назад", 0),
+            ("p закрепить", 1),
+            ("? справка", 0),
+            ("q выход", 0),
+        ],
+        Tab::Nodes => &[
+            ("↑↓ выбор", 1),
+            ("Enter подробности", 2),
+            ("p закрепить", 1),
+            ("d мёртвые", 3),
+            ("s подписка", 4),
+            ("/ поиск", 3),
+            ("? справка", 0),
+            ("q выход", 0),
+        ],
+        Tab::Subscriptions => &[
+            ("↑↓ выбор", 1),
+            ("Enter подробности", 2),
+            ("u обновить", 1),
+            ("? справка", 0),
+            ("q выход", 0),
+        ],
+        Tab::Journal => &[
+            ("↑↓ листать", 1),
+            ("w предупреждения", 2),
+            ("End к концу", 3),
+            ("? справка", 0),
+            ("q выход", 0),
+        ],
+        Tab::Settings => &[("Enter переключить", 1), ("? справка", 0), ("q выход", 0)],
+    };
+    items
+        .iter()
+        .map(|(text, priority)| Seg::new(*text, Tone::Dim, *priority))
+        .collect()
 }
 
 fn keys_line(canvas: &mut Canvas<'_>, y: usize, hints: Vec<Seg>) {
@@ -697,6 +410,13 @@ fn keys_line(canvas: &mut Canvas<'_>, y: usize, hints: Vec<Seg>) {
             x += 1 + display_width(desc);
         }
     }
+}
+
+fn filter_hint(app: &App) -> Vec<Seg> {
+    vec![
+        Seg::new(format!("/{}█", app.filter.text), Tone::Bold, 0),
+        Seg::new("Enter — применить, Esc — сбросить и выйти", Tone::Dim, 1),
+    ]
 }
 
 fn bottom(canvas: &mut Canvas<'_>, app: &App) {
@@ -721,7 +441,7 @@ fn bottom(canvas: &mut Canvas<'_>, app: &App) {
     if app.input == InputMode::Filter {
         canvas.line(hints_y, 0, filter_hint(app));
     } else {
-        keys_line(canvas, hints_y, normal_hints());
+        keys_line(canvas, hints_y, normal_hints(app));
     }
 }
 
@@ -741,6 +461,14 @@ fn help(canvas: &mut Canvas<'_>) {
     canvas.line(5 + HELP.len(), 0, close);
 }
 
+/// Подписи подписок в таблице и подсказках; нужны и вкладкам.
+pub(super) fn subscription_title(count: usize) -> Vec<Seg> {
+    vec![
+        Seg::new("Подписки", Tone::Bold, 0),
+        Seg::new(format!("всего {count}"), Tone::Dim, 2),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
@@ -750,14 +478,13 @@ mod tests {
     use ratatui::buffer::{Buffer, Cell};
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::style::{Color, Modifier};
-    use raycat_proto::{CurrentNode, Event, Mode, NodeStatus, Nodes, Status};
+    use raycat_proto::{CurrentNode, Event, Mode, Node, NodeStatus, Nodes, Status};
 
-    use super::super::app::{Msg, Snapshot};
+    use super::super::app::{Msg, Snapshot, Tab};
     use super::*;
 
     const NOW: u64 = 1_790_596_800;
     const DAY: u64 = 86_400;
-    const GIB: u64 = 1024 * 1024 * 1024;
 
     fn node(name: &str, status: NodeStatus) -> Node {
         Node {
@@ -888,100 +615,67 @@ mod tests {
         app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
     }
 
-    #[test]
-    fn a_full_screen_shows_everything_that_matters() {
-        let mut app = sample_app();
-        let s = |n: usize| " ".repeat(n);
-        let d = |n: usize| "─".repeat(n);
-        let expected = vec![
-            format!(
-                "raycat · шлюз · ● подключено · kill switch ●{}время работы 5 мин 12 с",
-                s(13)
-            ),
-            "▶ main/NL-1  31 мс  закреплён  выбран лучший живой узел".to_owned(),
-            format!("╭─ Подписки · всего 1 {}╮", d(57)),
-            format!(
-                "│ main  узлов: 3  ▱▱▱▱▱▱▱▱▱▱ 0% 3.0 МиБ/100.0 ГиБ{}│",
-                s(30)
-            ),
-            format!("╰{}╯", d(78)),
-            format!("╭─ Узлы · всего 3 {}╮", d(61)),
-            format!(
-                "│    Подписка  Узел  Статус{}Задержка     Сбои  Трафик{}│",
-                s(9),
-                s(18)
-            ),
-            format!(
-                "│ ★  main      NL-1  ● жив{}31 мс{}0  ↑10.0 КиБ ↓200.0 КиБ{}│",
-                s(13),
-                s(8),
-                s(4)
-            ),
-            format!(
-                "│    main      DE-2  ● жив{}45 мс{}0  ↑10.0 КиБ ↓200.0 КиБ{}│",
-                s(13),
-                s(8),
-                s(4)
-            ),
-            format!(
-                "│    main      US-3  ✗ не отвечает{}—{}3  ↑10.0 КиБ ↓200.0 КиБ{}│",
-                s(9),
-                s(8),
-                s(4)
-            ),
-            format!("│{}│", s(78)),
-            format!("│{}│", s(78)),
-            format!("│{}│", s(78)),
-            format!("│{}│", s(78)),
-            format!("╰{}╯", d(78)),
-            format!("╭─ Журнал · время UTC {}╮", d(57)),
-            format!("│ 12:00:00  подключено к демону, версия 0.1.0{}│", s(34)),
-            format!("╰{}╯", d(78)),
-            "готов".to_owned(),
-            "↑↓ выбор  Enter закрепить  a авто  u обновить  / фильтр  ? справка  q выход"
-                .to_owned(),
-        ];
-        let lines = screen(&mut app, 80, 20);
-        assert_eq!(lines, expected, "\n{}", lines.join("\n"));
+    fn on_nodes(app: &mut App) {
+        press(app, KeyCode::Char('2'));
+    }
+
+    fn has_line(lines: &[String], text: &str) -> bool {
+        lines.iter().any(|line| line.contains(text))
     }
 
     #[test]
-    fn the_selected_row_is_highlighted_and_follows_the_cursor() {
+    fn the_tab_row_names_every_tab_and_is_clickable() {
         let mut app = sample_app();
-        let terminal = paint(&mut app, 80, 20, false);
-        let buffer = terminal.backend().buffer();
-        let reversed = |y: u16| {
-            buffer[(5, y)]
-                .style()
-                .add_modifier
-                .contains(Modifier::REVERSED)
-        };
-        assert!(reversed(7));
-        assert!(!reversed(8));
-        press(&mut app, KeyCode::Down);
-        let terminal = paint(&mut app, 80, 20, false);
-        let buffer = terminal.backend().buffer();
+        let lines = screen(&mut app, 100, 30);
+        for word in ["1 Обзор", "2 Узлы", "3 Подписки", "4 Журнал", "5 Настройки"]
+        {
+            assert!(lines[0].contains(word), "{word}: {:?}", lines[0]);
+        }
         assert!(
-            !buffer[(5, 7)]
-                .style()
-                .add_modifier
-                .contains(Modifier::REVERSED)
-        );
-        assert!(
-            buffer[(5, 8)]
-                .style()
-                .add_modifier
-                .contains(Modifier::REVERSED)
+            app.hits
+                .iter()
+                .any(|hit| hit.target == Target::Tab(Tab::Journal))
         );
     }
 
     #[test]
-    fn without_a_daemon_the_screen_says_so() {
+    fn the_overview_shows_the_connection_the_subscriptions_and_the_buttons() {
+        let mut app = sample_app();
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "● подключено"), "{lines:?}");
+        assert!(has_line(&lines, "Подписки · всего 1"), "{lines:?}");
+        assert!(has_line(&lines, "[u] Обновить подписки"), "{lines:?}");
+        assert!(has_line(&lines, "работает"), "{lines:?}");
+        assert!(has_line(&lines, "[a] Автовыбор"), "{lines:?}");
+        assert!(app.hits.iter().any(|hit| hit.target == Target::UpdateAll));
+    }
+
+    #[test]
+    fn the_nodes_tab_shows_country_reason_and_the_safe_names() {
+        let mut nodes = sample_nodes();
+        nodes[0].name = "🇩🇪 Германия".to_owned();
+        let mut app = app_with(sample_status(), nodes);
+        on_nodes(&mut app);
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "DE Германия"), "{lines:?}");
+        assert!(has_line(&lines, "Страна"), "{lines:?}");
+        assert!(has_line(&lines, "Причина"), "{lines:?}");
+        assert!(has_line(&lines, "не отвечает (тайм-аут)"), "{lines:?}");
+        assert!(app.hits.iter().any(|hit| hit.target == Target::NodeRow(0)));
+    }
+
+    #[test]
+    fn speed_below_one_kilobit_is_a_dash() {
+        assert_eq!(speed_label(27, 23), "↓ — ↑ —");
+        assert_eq!(speed_label(5_200_000, 300), "↓ 5.2 Мбит/с ↑ —");
+    }
+
+    #[test]
+    fn without_a_daemon_the_banner_sits_under_the_tabs() {
         let mut app = App::new(NOW);
         let lines = screen(&mut app, 80, 20);
-        assert_eq!(lines[0], "raycat · ● подключение…");
-        assert_eq!(lines[1], "данных от демона ещё нет");
-        assert!(lines.iter().any(|line| line.contains("Узлов нет")));
+        assert_eq!(lines[1], "raycat · ● подключение…");
+        assert_eq!(lines[2], "данных от демона ещё нет");
         assert!(lines.last().unwrap().contains("q выход"));
 
         app.apply(Msg::Down {
@@ -990,12 +684,11 @@ mod tests {
         });
         let lines = screen(&mut app, 80, 20);
         assert_eq!(
-            lines[0],
+            lines[1],
             "демон недоступен: демон не запущен: сокета /run/raycat/raycat.sock нет"
         );
-        assert_eq!(lines[1], "повторное подключение через 2 с");
-        assert_eq!(lines[2], "raycat · ● нет связи");
-        assert!(lines.iter().any(|line| line.contains("демон недоступен")));
+        assert_eq!(lines[2], "повторное подключение через 2 с");
+        assert_eq!(lines[3], "raycat · ● нет связи");
     }
 
     #[test]
@@ -1008,12 +701,12 @@ mod tests {
         let terminal = paint(&mut app, 80, 24, false);
         let buffer = terminal.backend().buffer();
         let lines = rows(buffer);
-        assert_eq!(lines[0], "демон недоступен: обрыв связи");
-        assert_eq!(lines[1], "повторное подключение через 1 с");
-        assert!(lines.iter().any(|line| line.contains("NL-1")));
+        assert_eq!(lines[1], "демон недоступен: обрыв связи");
+        assert_eq!(lines[2], "повторное подключение через 1 с");
+        assert!(has_line(&lines, "NL-1"));
         let dimmed = |y: u16| buffer[(0, y)].style().add_modifier.contains(Modifier::DIM);
-        assert!(!dimmed(0));
-        assert!(dimmed(2));
+        assert!(!dimmed(1));
+        assert!(dimmed(4));
     }
 
     #[test]
@@ -1027,14 +720,14 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let lines = rows(buffer);
         assert_eq!(
-            lines[2],
+            lines[3],
             format!(
                 "raycat · шлюз · ● нет связи · kill switch ●{}время работы 5 мин 12 с",
                 " ".repeat(14)
             )
         );
-        assert_eq!(buffer[(16, 2)].symbol(), "●");
-        assert_eq!(buffer[(16, 2)].style().fg, Some(Color::LightRed));
+        assert_eq!(buffer[(16, 3)].symbol(), "●");
+        assert_eq!(buffer[(16, 3)].style().fg, Some(Color::LightRed));
     }
 
     #[test]
@@ -1045,38 +738,22 @@ mod tests {
             retry_in: Duration::from_secs(1),
         });
         let lines = screen(&mut app, 44, 20);
-        assert!(lines[0].starts_with("демон недоступен: слово"));
-        assert!(lines[1].starts_with("слово"));
-        assert!(lines[2].ends_with('…'), "{:?}", lines[2]);
-        assert_eq!(lines[3], "повторное подключение через 1 с");
+        assert!(lines[1].starts_with("демон недоступен: слово"));
+        assert!(lines[2].starts_with("слово"));
+        assert!(lines[3].ends_with('…'), "{:?}", lines[3]);
+        assert_eq!(lines[4], "повторное подключение через 1 с");
     }
 
     #[test]
-    fn a_narrow_terminal_hides_columns_and_cuts_names() {
-        let mut nodes = sample_nodes();
-        nodes[0].name = "Германия, Франкфурт, очень длинное имя узла".to_owned();
-        let mut app = app_with(sample_status(), nodes);
-        let lines = screen(&mut app, 44, 20);
-        for line in &lines {
-            assert!(display_width(line) <= 44, "{line:?}");
-        }
-        let header = lines.iter().find(|line| line.contains("Статус")).unwrap();
-        assert!(!header.contains("Подписка"), "{header:?}");
-        assert!(!header.contains("Сбои"), "{header:?}");
-        assert!(header.contains("Задержка"), "{header:?}");
-        let long = lines.iter().find(|line| line.contains("Германия")).unwrap();
-        assert!(long.starts_with("│ ★  Германия, Ф…"), "{long:?}");
-    }
-
-    #[test]
-    fn the_smallest_supported_terminal_still_shows_the_table() {
+    fn the_smallest_supported_terminal_keeps_the_hints() {
         let mut app = sample_app();
         let lines = screen(&mut app, 44, 12);
         for line in &lines {
             assert!(display_width(line) <= 44, "{line:?}");
         }
-        assert!(lines.iter().any(|line| line.contains("NL-1")));
-        assert_eq!(lines.last().unwrap(), "↑↓ выбор  ? справка  q выход");
+        assert!(lines[0].contains("1 Обзор"));
+        assert!(lines.last().unwrap().contains("? справка"));
+        assert!(lines.last().unwrap().contains("q выход"));
     }
 
     #[test]
@@ -1103,26 +780,123 @@ mod tests {
     }
 
     #[test]
-    fn hidden_sections_are_named_in_the_nodes_title() {
+    fn help_replaces_the_screen_and_lists_the_new_keys() {
         let mut app = sample_app();
-        let lines = screen(&mut app, 80, 12);
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.starts_with("╭─ Узлы · 1–2 из 3 · (журнал скрыт: мало строк) ")),
-            "{lines:?}"
+        press(&mut app, KeyCode::Char('?'));
+        let lines = screen(&mut app, 80, 24);
+        assert_eq!(lines[0], "raycat tui: клавиши");
+        let text = lines.join("\n");
+        for word in ["Enter", "PgUp", "Shift+Tab", "Esc", "Ctrl+C", "закрепить"] {
+            assert!(text.contains(word), "{word}: {text}");
+        }
+        assert!(text.contains("▶ выбран   ★ закреплён вручную"));
+        let narrow = screen(&mut app, 44, 12);
+        for line in &narrow {
+            assert!(display_width(line) <= 44, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn progress_and_results_show_in_the_status_line() {
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('u'));
+        app.set_now(NOW + 5);
+        let lines = screen(&mut app, 80, 20);
+        assert_eq!(lines[18], "⟳ Обновление всех подписок… 5 с");
+        app.apply(Msg::Updated(Err("демон не ответил вовремя".to_owned())));
+        let lines = screen(&mut app, 80, 20);
+        assert_eq!(
+            lines[18],
+            "Не удалось обновить подписки: демон не ответил вовремя"
         );
+    }
+
+    #[test]
+    fn the_status_line_says_ready_only_when_connected_and_idle() {
+        let mut app = App::new(NOW);
+        assert_eq!(screen(&mut app, 80, 20)[18], "");
+        let app = &mut sample_app();
+        assert_eq!(screen(app, 80, 20)[18], "готов");
         app.apply(Msg::Down {
             reason: "обрыв связи".to_owned(),
             retry_in: Duration::from_secs(1),
         });
-        let lines = screen(&mut app, 80, 12);
-        assert!(
-            lines.iter().any(|line| line.starts_with(
-                "╭─ Узлы · всего 3 · (подписки скрыты) · (журнал скрыт: мало строк) "
-            )),
-            "{lines:?}"
+        assert_eq!(screen(app, 80, 20)[18], "");
+    }
+
+    #[test]
+    fn colors_follow_the_palette_and_vanish_without_it() {
+        let mut app = sample_app();
+        let colored = paint(&mut app, 80, 20, true);
+        let has_color = |terminal: &Terminal<TestBackend>| {
+            any_cell(terminal.backend().buffer(), |cell| {
+                !matches!(cell.style().fg, None | Some(Color::Reset))
+            })
+        };
+        assert!(has_color(&colored));
+        let plain = paint(&mut app, 80, 20, false);
+        assert!(!has_color(&plain));
+    }
+
+    #[test]
+    fn latency_is_colored_by_its_thresholds() {
+        assert_eq!(delay_tone(Some(31)), Tone::Green);
+        assert_eq!(delay_tone(Some(149)), Tone::Green);
+        assert_eq!(delay_tone(Some(150)), Tone::Yellow);
+        assert_eq!(delay_tone(Some(399)), Tone::Yellow);
+        assert_eq!(delay_tone(Some(400)), Tone::Red);
+        assert_eq!(delay_tone(None), Tone::Dim);
+    }
+
+    #[test]
+    fn a_proxy_screen_has_no_kill_switch() {
+        let mut status = sample_status();
+        status.mode = Mode::Proxy;
+        status.kill_switch = None;
+        let mut app = app_with(status, sample_nodes());
+        let lines = screen(&mut app, 80, 20);
+        assert!(lines[1].starts_with("raycat · прокси · ● подключено"));
+        assert!(!lines[1].contains("kill switch"));
+    }
+
+    #[test]
+    fn a_warning_about_a_stopped_xray_and_kill_switch_is_loud() {
+        let mut status = sample_status();
+        status.xray = XrayStatus {
+            running: false,
+            pid: None,
+            restarts: 3,
+            api_silent_secs: None,
+            api_stuck: false,
+        };
+        status.kill_switch = Some(false);
+        status.node = None;
+        let mut app = app_with(status, Vec::new());
+        let lines = screen(&mut app, 80, 20);
+        assert_eq!(
+            lines[1],
+            "raycat · шлюз · ● подключено · xray не запущен · kill switch ●"
         );
+        assert_eq!(lines[2], "узел: не выбран, узлов пока нет");
+
+        let mut status = sample_status();
+        status.xray.restarts = 2;
+        let mut app = app_with(status, sample_nodes());
+        let lines = screen(&mut app, 80, 20);
+        assert_eq!(
+            lines[1],
+            "raycat · шлюз · ● подключено · xray перезапускался: 2 · kill switch ●"
+        );
+    }
+
+    #[test]
+    fn a_stuck_xray_is_a_problem_in_the_header() {
+        let mut status = sample_status();
+        status.xray.api_stuck = true;
+        status.xray.api_silent_secs = Some(120);
+        let mut app = app_with(status, sample_nodes());
+        let lines = screen(&mut app, 80, 20);
+        assert!(lines[1].contains("xray не отвечает (120 с)"));
     }
 
     #[test]
@@ -1135,27 +909,26 @@ mod tests {
         let terminal = paint(&mut app, 80, 24, true);
         let buffer = terminal.backend().buffer();
         let lines = rows(buffer);
-        assert_eq!(lines[0], "демон недоступен: raycat не запущен");
-        assert_eq!(lines[1], "Запустите службу: sudo systemctl start raycat");
-        assert_eq!(lines[2], "повторное подключение через 1 с");
-        assert_eq!(buffer[(0, 0)].style().fg, Some(Color::LightRed));
-        assert_ne!(buffer[(0, 1)].style().fg, Some(Color::LightRed));
+        assert_eq!(lines[1], "демон недоступен: raycat не запущен");
+        assert_eq!(lines[2], "Запустите службу: sudo systemctl start raycat");
+        assert_eq!(lines[3], "повторное подключение через 1 с");
+        assert_eq!(buffer[(0, 1)].style().fg, Some(Color::LightRed));
+        assert_ne!(buffer[(0, 2)].style().fg, Some(Color::LightRed));
     }
 
     #[test]
-    fn flag_emoji_in_names_keep_the_columns_aligned() {
+    fn a_flag_in_a_name_is_a_code_and_the_status_column_stays_aligned() {
         let mut nodes = sample_nodes();
         nodes[0].name = "🇩🇪 Германия".to_owned();
         let mut app = app_with(sample_status(), nodes);
-        let lines = screen(&mut app, 80, 20);
-        let flagged = lines.iter().find(|line| line.contains("🇩🇪")).unwrap();
-        assert!(flagged.contains("🇩🇪 Германия"), "{flagged:?}");
-        assert!(flagged.contains("жив"));
+        on_nodes(&mut app);
+        let lines = screen(&mut app, 100, 30);
+        let flagged = lines
+            .iter()
+            .find(|line| line.contains("DE Германия"))
+            .unwrap();
         let plain = lines.iter().find(|line| line.contains("DE-2")).unwrap();
-        let status_at = |line: &str| {
-            let head = &line[..line.find("жив").unwrap()];
-            display_width(head)
-        };
+        let status_at = |line: &str| display_width(&line[..line.find("жив").unwrap()]);
         assert_eq!(status_at(flagged), status_at(plain));
     }
 
@@ -1175,6 +948,7 @@ mod tests {
             level: "warn".to_owned(),
             message: "x\x1b[2Jy".to_owned(),
         }));
+        on_nodes(&mut app);
         let terminal = paint(&mut app, 120, 30, false);
         let buffer = terminal.backend().buffer();
         assert!(!any_cell(buffer, |cell| cell
@@ -1182,416 +956,38 @@ mod tests {
             .chars()
             .any(char::is_control)));
         let lines = rows(buffer);
-        assert!(lines.iter().any(|line| line.contains("NL [31m-1")));
-        assert!(lines.iter().any(|line| line.contains("пан [1Aель")));
+        assert!(has_line(&lines, "NL [31m-1"), "{lines:?}");
     }
 
     #[test]
-    fn filter_prompt_and_title_show_what_is_applied() {
+    fn frames_have_rounded_corners_on_the_subscriptions_tab() {
         let mut app = sample_app();
-        press(&mut app, KeyCode::Char('/'));
-        for c in "de".chars() {
-            press(&mut app, KeyCode::Char(c));
-        }
-        let lines = screen(&mut app, 80, 20);
-        assert!(
-            lines.last().unwrap().starts_with("/de█"),
-            "{:?}",
-            lines.last()
-        );
-        assert!(
-            lines
-                .last()
-                .unwrap()
-                .ends_with("Enter — применить, Esc — сбросить и выйти")
-        );
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.starts_with("╭─ Узлы · показано 1 из 3 · фильтр: «de» "))
-        );
-        assert!(lines.iter().any(|line| line.contains("DE-2")));
-        assert!(!lines.iter().any(|line| line.contains("US-3")));
-
-        press(&mut app, KeyCode::Esc);
-        press(&mut app, KeyCode::Tab);
-        let lines = screen(&mut app, 80, 20);
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.starts_with("╭─ Узлы · всего 3 · подписка: main ")),
-            "{lines:?}"
-        );
-
-        let mut empty = sample_app();
-        press(&mut empty, KeyCode::Char('/'));
-        press(&mut empty, KeyCode::Char('я'));
-        let lines = screen(&mut empty, 80, 20);
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("Под фильтр ничего не подошло"))
-        );
-    }
-
-    #[test]
-    fn a_long_list_scrolls_with_the_cursor() {
-        let nodes: Vec<Node> = (0..40)
-            .map(|index| node(&format!("N{index:02}"), NodeStatus::Alive))
-            .collect();
-        let mut app = app_with(sample_status(), nodes);
-        let lines = screen(&mut app, 80, 20);
-        assert!(lines.iter().any(|line| line.contains("N00")));
-        assert!(!lines.iter().any(|line| line.contains("N39")));
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.starts_with("╭─ Узлы · 1–7 из 40 ")),
-            "{lines:?}"
-        );
-        press(&mut app, KeyCode::End);
-        let lines = screen(&mut app, 80, 20);
-        assert!(lines.iter().any(|line| line.contains("N39")));
-        assert!(!lines.iter().any(|line| line.contains("N00")));
-        assert!(
-            lines.iter().any(|line| line.contains("34–40 из 40")),
-            "{lines:?}"
-        );
-    }
-
-    #[test]
-    fn progress_and_results_show_in_the_status_line() {
-        let mut app = sample_app();
-        press(&mut app, KeyCode::Char('u'));
-        app.set_now(NOW + 5);
-        let lines = screen(&mut app, 80, 20);
-        assert_eq!(lines[18], "⟳ Обновление всех подписок… 5 с");
-        press(&mut app, KeyCode::Char('U'));
-        assert_eq!(app.update.as_ref().unwrap().target, None);
-
-        app.apply(Msg::Updated(Err("демон не ответил вовремя".to_owned())));
-        let lines = screen(&mut app, 80, 20);
-        assert_eq!(
-            lines[18],
-            "Не удалось обновить подписки: демон не ответил вовремя"
-        );
-
-        press(&mut app, KeyCode::Char('U'));
-        let lines = screen(&mut app, 80, 20);
-        assert_eq!(lines[18], "⟳ Обновление подписки «main»… 0 с");
-    }
-
-    #[test]
-    fn subscription_trouble_gets_its_own_line() {
-        let mut status = sample_status();
-        status.subscriptions[0].last_error = Some("панель ответила 403".to_owned());
-        status.subscriptions[0].updating = true;
-        let mut app = app_with(status, sample_nodes());
-        let lines = screen(&mut app, 200, 24);
-        let at = lines
-            .iter()
-            .position(|line| line.starts_with("╭─ Подписки"))
-            .unwrap();
-        assert!(
-            lines[at + 1].contains("⟳ идёт обновление"),
-            "{:?}",
-            lines[at + 1]
-        );
-        assert!(
-            lines[at + 2].starts_with("│   ✗ панель ответила 403"),
-            "{:?}",
-            lines[at + 2]
-        );
-    }
-
-    #[test]
-    fn the_expiry_outlives_the_update_time_on_a_narrow_line() {
-        let mut app = sample_app();
-        let lines = screen(&mut app, 100, 20);
-        let line = lines
-            .iter()
-            .find(|line| line.starts_with("│ main"))
-            .unwrap();
-        assert!(line.contains("осталось 40 дн"), "{line:?}");
-        assert!(!line.contains("обновлена"), "{line:?}");
-    }
-
-    #[test]
-    fn the_log_shows_the_latest_entries_with_their_time() {
-        let mut app = sample_app();
-        for index in 0..30 {
-            app.set_now(NOW + index);
-            app.apply(Msg::Event(Event::Warning {
-                level: "warn".to_owned(),
-                message: format!("запись {index}"),
-            }));
-        }
-        let lines = screen(&mut app, 80, 30);
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("12:00:29  WARN: запись 29"))
-        );
-        assert!(!lines.iter().any(|line| line.contains("запись 0")));
-    }
-
-    #[test]
-    fn help_replaces_the_screen_and_lists_every_key() {
-        let mut app = sample_app();
-        press(&mut app, KeyCode::Char('?'));
-        let lines = screen(&mut app, 80, 24);
-        assert_eq!(lines[0], "raycat tui: клавиши");
-        let text = lines.join("\n");
-        for word in [
-            "Enter",
-            "PgUp",
-            "Home",
-            "Tab",
-            "Esc",
-            "Ctrl+C",
-            "U  ",
-            "закрепить",
-        ] {
-            assert!(text.contains(word), "{word}: {text}");
-        }
-        assert!(text.contains("▶ выбран   ★ закреплён вручную"));
-        assert!(text.contains("обновить подписку (выбранную Tab или узла под курсором)"));
-        assert!(!text.contains("Подписки"));
-        let narrow = screen(&mut app, 44, 12);
-        for line in &narrow {
-            assert!(display_width(line) <= 44, "{line:?}");
-        }
-    }
-
-    #[test]
-    fn colors_follow_the_palette_and_vanish_without_it() {
-        let mut app = sample_app();
-        let colored = paint(&mut app, 80, 20, true);
-        let has_color = |terminal: &Terminal<TestBackend>| {
-            any_cell(terminal.backend().buffer(), |cell| {
-                !matches!(cell.style().fg, None | Some(Color::Reset))
-            })
-        };
-        assert!(has_color(&colored));
-        let plain = paint(&mut app, 80, 20, false);
-        assert!(!has_color(&plain));
-    }
-
-    #[test]
-    fn frames_are_rounded_and_grey() {
-        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('3'));
         let terminal = paint(&mut app, 80, 20, true);
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, 2)].symbol(), "╭");
-        assert_eq!(buffer[(79, 2)].symbol(), "╮");
-        assert_eq!(buffer[(0, 3)].symbol(), "│");
-        assert_eq!(buffer[(0, 4)].symbol(), "╰");
-        assert_eq!(buffer[(0, 2)].style().fg, Some(Color::DarkGray));
+        assert_eq!(buffer[(0, 4)].symbol(), "╭");
+        assert_eq!(buffer[(79, 4)].symbol(), "╮");
+        assert_eq!(buffer[(0, 4)].style().fg, Some(Color::DarkGray));
     }
 
     #[test]
-    fn latency_is_colored_by_its_thresholds() {
-        assert_eq!(delay_tone(Some(31)), Tone::Green);
-        assert_eq!(delay_tone(Some(149)), Tone::Green);
-        assert_eq!(delay_tone(Some(150)), Tone::Yellow);
-        assert_eq!(delay_tone(Some(399)), Tone::Yellow);
-        assert_eq!(delay_tone(Some(400)), Tone::Red);
-        assert_eq!(delay_tone(None), Tone::Dim);
+    fn the_header_hides_the_uptime_when_it_does_not_fit() {
+        let mut app = sample_app();
+        app.set_now(NOW);
+        let lines = screen(&mut app, 60, 20);
+        assert!(!lines[1].contains("время работы"), "{:?}", lines[1]);
     }
 
     #[test]
-    fn node_status_has_a_mark_and_a_color() {
-        assert_eq!(
-            render::node_status_mark(NodeStatus::Alive),
-            ("● жив", Tone::Green)
-        );
-        assert_eq!(
-            render::node_status_mark(NodeStatus::Dead),
-            ("✗ не отвечает", Tone::Red)
-        );
-        assert_eq!(
-            render::node_status_mark(NodeStatus::Unknown),
-            ("○ не проверен", Tone::Dim)
-        );
-    }
-
-    #[test]
-    fn a_proxy_screen_has_no_kill_switch() {
-        let mut status = sample_status();
-        status.mode = Mode::Proxy;
-        status.kill_switch = None;
-        let mut app = app_with(status, sample_nodes());
-        let lines = screen(&mut app, 80, 20);
-        assert!(lines[0].starts_with("raycat · прокси · ● подключено"));
-        assert!(!lines[0].contains("kill switch"));
-    }
-
-    #[test]
-    fn a_warning_about_a_stopped_xray_and_kill_switch_is_loud() {
-        let mut status = sample_status();
-        status.xray = XrayStatus {
-            running: false,
-            pid: None,
-            restarts: 3,
-            api_silent_secs: None,
-            api_stuck: false,
-        };
-        status.kill_switch = Some(false);
-        status.node = None;
-        let mut app = app_with(status, Vec::new());
-        let lines = screen(&mut app, 80, 20);
-        assert_eq!(
-            lines[0],
-            "raycat · шлюз · ● подключено · xray не запущен · kill switch ●"
-        );
-        assert_eq!(lines[1], "узел: не выбран, узлов пока нет");
-
-        let mut status = sample_status();
-        status.xray.restarts = 2;
-        let mut app = app_with(status, sample_nodes());
-        let lines = screen(&mut app, 80, 20);
-        assert_eq!(
-            lines[0],
-            "raycat · шлюз · ● подключено · xray перезапускался: 2 · kill switch ●"
-        );
-    }
-
-    #[test]
-    fn a_stuck_xray_is_a_problem_in_the_header() {
-        let mut status = sample_status();
-        status.xray.api_stuck = true;
-        status.xray.api_silent_secs = Some(120);
-        let mut app = app_with(status, sample_nodes());
-        let lines = screen(&mut app, 80, 20);
-        assert!(lines[0].contains("xray не отвечает (120 с)"));
-    }
-
-    #[test]
-    fn the_layout_plan_never_exceeds_the_body() {
-        for body in 0..60 {
-            for subs in [0, 2, 9] {
-                for log in [2, 8] {
-                    let layout = plan(body, subs, log);
-                    assert_eq!(layout.subs + layout.nodes + layout.log, body);
-                    assert!(layout.nodes >= body.min(NODES_MIN));
+    fn the_layout_stays_inside_the_terminal_on_every_tab() {
+        let mut app = sample_app();
+        for key in ['1', '2', '3', '4', '5'] {
+            press(&mut app, KeyCode::Char(key));
+            for (width, height) in [(44_u16, 12_u16), (80, 20), (120, 40)] {
+                for line in screen(&mut app, width, height) {
+                    assert!(display_width(&line) <= usize::from(width), "{line:?}");
                 }
             }
         }
-    }
-
-    #[test]
-    fn columns_are_chosen_by_priority_and_fit_the_width() {
-        let nodes = sample_nodes();
-        let refs: Vec<&Node> = nodes.iter().collect();
-        for speed in ["", "↓ 5.2 Мбит/с ↑ 0.3 Мбит/с"] {
-            for width in 24..160 {
-                let cols = columns(&refs, speed, width);
-                let total: usize = cols.iter().map(|col| col.width).sum::<usize>()
-                    + GAP * cols.len().saturating_sub(1);
-                assert!(total <= width, "{width}: {total}");
-                assert!(cols.iter().any(|col| col.kind == Kind::Name));
-            }
-        }
-        let wide = columns(&refs, "", 200);
-        assert!(wide.iter().any(|col| col.kind == Kind::Traffic));
-        let narrow = columns(&refs, "", 30);
-        assert!(!narrow.iter().any(|col| col.kind == Kind::Traffic));
-    }
-
-    fn kinds(cols: &[Col]) -> Vec<Kind> {
-        cols.iter().map(|col| col.kind).collect()
-    }
-
-    #[test]
-    fn the_speed_column_stays_after_traffic_and_errors_leave_first() {
-        let nodes = sample_nodes();
-        let refs: Vec<&Node> = nodes.iter().collect();
-        let speed = "↓ 5.2 Мбит/с ↑ 0.3 Мбит/с";
-        let tight = kinds(&columns(&refs, speed, 78));
-        assert!(tight.contains(&Kind::Speed), "{tight:?}");
-        assert!(!tight.contains(&Kind::Traffic), "{tight:?}");
-        assert!(!tight.contains(&Kind::Error), "{tight:?}");
-        let wide = kinds(&columns(&refs, speed, 200));
-        assert!(
-            wide.contains(&Kind::Speed) && wide.contains(&Kind::Error),
-            "{wide:?}"
-        );
-        assert!(!kinds(&columns(&refs, "", 200)).contains(&Kind::Speed));
-    }
-
-    #[test]
-    fn the_speed_shows_only_on_the_selected_node() {
-        let mut moved = sample_nodes();
-        moved[0].uplink_bytes = Some(85_240);
-        moved[0].downlink_bytes = Some(1_504_800);
-        let t0 = Instant::now();
-        let mut app = App::new(NOW);
-        app.apply(snapshot_at(sample_status(), sample_nodes(), t0));
-        app.apply(snapshot_at(
-            sample_status(),
-            moved,
-            t0 + Duration::from_secs(2),
-        ));
-        let lines = screen(&mut app, 120, 24);
-        assert!(lines.iter().any(|line| line.contains("Скорость")));
-        let selected = lines.iter().find(|line| line.starts_with("│ ★")).unwrap();
-        assert!(
-            selected.contains("↓ 5.2 Мбит/с ↑ 0.3 Мбит/с"),
-            "{selected:?}"
-        );
-        let other = lines.iter().find(|line| line.contains("DE-2")).unwrap();
-        assert!(!other.contains("Мбит/с"), "{other:?}");
-        assert!(lines[1].contains("31 мс  ↓ 5.2 Мбит/с ↑ 0.3 Мбит/с  закреплён"));
-    }
-
-    #[test]
-    fn the_traffic_bar_fills_by_percent_and_turns_yellow_then_red() {
-        let total = Some(100 * GIB);
-        let cells = |filled: usize| format!("{}{}", "▰".repeat(filled), "▱".repeat(10 - filled));
-        let case = |percent: u64, filled: usize, tone: Tone| {
-            let seg = traffic_seg(percent * GIB, total);
-            let text = format!(
-                "{} {percent}% {}/{}",
-                cells(filled),
-                format_bytes(percent * GIB),
-                format_bytes(100 * GIB)
-            );
-            assert_eq!(seg.text, text);
-            assert_eq!(seg.tone, tone, "{percent}%");
-        };
-        case(0, 0, Tone::Green);
-        case(30, 3, Tone::Green);
-        case(79, 7, Tone::Green);
-        case(80, 8, Tone::Yellow);
-        case(94, 9, Tone::Yellow);
-        case(95, 9, Tone::Red);
-        case(100, 10, Tone::Red);
-        case(120, 10, Tone::Red);
-        assert_eq!(bar(30), "▰▰▰▱▱▱▱▱▱▱");
-        assert_eq!(bar(0), "▱▱▱▱▱▱▱▱▱▱");
-    }
-
-    #[test]
-    fn a_subscription_without_a_limit_shows_only_the_volume() {
-        let mib = 1024 * 1024;
-        let plain = traffic_seg(3 * mib, Some(0));
-        assert_eq!(plain.text, "3.0 МиБ (без ограничения)");
-        assert_eq!(plain.tone, Tone::Plain);
-        let unknown = traffic_seg(3 * mib, None);
-        assert_eq!(unknown.text, "3.0 МиБ");
-        assert_eq!(unknown.tone, Tone::Plain);
-    }
-
-    #[test]
-    fn the_status_line_says_ready_only_when_connected_and_idle() {
-        let mut app = App::new(NOW);
-        assert_eq!(screen(&mut app, 80, 20)[18], "");
-        let app = &mut sample_app();
-        assert_eq!(screen(app, 80, 20)[18], "готов");
-        app.apply(Msg::Down {
-            reason: "обрыв связи".to_owned(),
-            retry_in: Duration::from_secs(1),
-        });
-        assert_eq!(screen(app, 80, 20)[18], "");
     }
 }

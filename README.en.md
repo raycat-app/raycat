@@ -232,28 +232,42 @@ The `--config PATH` option is available for `daemon`, `check`, `fetch` and `iden
 
 ### TUI
 
-`raycat tui` shows the state in real time: the header (mode, whether xray runs, the kill switch,
-the current node and the reason it was chosen), the "Subscriptions", "Nodes" and "Log" sections
-(the last 200 events) and a hint line at the bottom. The `▶` marker is on the selected node, and
-`★` is on the node pinned by hand. The TUI requires a terminal and a window of at least 44×12. If
-the daemon is unavailable, the screen shows the reason and reconnects by itself.
+`raycat tui` is a full-screen interface with the tabs `Overview`, `Nodes`, `Subscriptions`, `Log`
+and `Settings`. Switch tabs with a click, the keys `1`–`5`, `Tab`, `Shift+Tab`, `←` and `→`.
+
+- **Overview**: the connection state, the current node, subscriptions briefly, the latest events.
+- **Nodes**: a table with the `▶` marker (selected) and `★` (pinned by hand), country, status and
+  the failure reason in Russian. Filters: `d` hides dead nodes, `s` filters by subscription, `/`
+  searches. `Enter` opens node details, `p` or a double click pins the node.
+- **Subscriptions**: a list with traffic, expiry and status; `Enter` shows details and the full error.
+- **Log**: local time, long messages wrap; `w` shows only warnings and errors.
+- **Settings**: the daemon state and the "Names in labels" switch. Node names show the country code
+  instead of the flag (`🇩🇪 Германия` → `DE Германия`), so the rows do not shift in different
+  terminals. The "as is" mode shows names unchanged. The choice is saved to
+  `$XDG_CONFIG_HOME/raycat/tui.toml` (or `~/.config/raycat/tui.toml`). Other settings are changed
+  in the daemon's settings file.
+
+The TUI requires a terminal of at least 44×12. If the daemon is unavailable, the screen shows the
+reason and reconnects by itself.
 
 | Key | Action |
 | --- | --- |
-| `↑` `↓`, `j` `k` | select a node |
-| `PgUp` `PgDn` | page up and down |
-| `Home` `End`, `g` `G` | to the top and to the bottom |
-| `Enter` | pin the selected node |
+| `1`–`5`, `Tab`, `←` `→` | switch tab; `Shift+Tab` goes back |
+| `↑` `↓`, `j` `k`, `PgUp` `PgDn`, `Home` `End`, `g` `G` | select a row and scroll |
+| `Enter` | node or subscription details; on "Settings", toggle the view |
+| `p` | pin the selected node (on "Nodes", a double click also pins) |
 | `a` | return to automatic selection |
-| `u` | update all subscriptions |
-| `U` | update the subscription chosen with `Tab`; without a subscription filter, the subscription of the node under the cursor |
-| `/` | filter by text (`Enter` applies, `Esc` clears) |
-| `Tab`, `Shift+Tab` | filter by subscription, cycling |
-| `Esc` | clear the filters (in search mode, only the text) |
+| `u` | update all subscriptions (on "Subscriptions", the selected one) |
+| `d` | hide dead nodes (Nodes tab) |
+| `s` | filter by subscription (Nodes tab) |
+| `/` | search nodes (`Enter` applies, `Esc` clears) |
+| `w` | in the log, only warnings and errors |
+| `Esc` | close the details and clear the filters; at the top level, quit |
 | `?` or `F1` | help; any key closes it |
 | `q`, `Ctrl+C` | quit |
 
-In filter mode, letters, including `q`, go into the search line.
+Mouse: a click on a tab, a row or a button; the wheel scrolls; a double click on a node pins it.
+In search mode, letters, including `q`, go into the search line.
 
 ## Settings
 
