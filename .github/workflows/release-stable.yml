@@ -234,23 +234,18 @@ jobs:
           echo "$REASON" >> "$GITHUB_STEP_SUMMARY"
 
   xray:
-    name: Выпуск xray ${{ needs.xray-plan.outputs.version }}
+    name: Архивы xray ${{ needs.xray-plan.outputs.version }}
     needs: xray-plan
     # Без !cancelled() GitHub добавляет success(), который учитывает и пропущенный promote
     # (он транзитивная зависимость), и задача молча пропускается.
     if: ${{ !cancelled() && needs.xray-plan.outputs.update == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 60
     permissions:
-      contents: write
-      packages: write
-      id-token: write
-      attestations: write
+      contents: read
     env:
       GH_TOKEN: ${{ github.token }}
       REPOSITORY: ${{ github.repository }}
-      BINFMT_IMAGE: tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
-      DRY_RUN: ${{ inputs.dry_run || github.ref != 'refs/heads/main' }}
       LAST_TAG: ${{ needs.xray-plan.outputs.last_tag }}
       LAST_SHA: ${{ needs.xray-plan.outputs.last_sha }}
       VERSION: ${{ needs.xray-plan.outputs.version }}
@@ -276,12 +271,85 @@ jobs:
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$LAST_SHA")
           export SOURCE_DATE_EPOCH
           bash .github/release/xray-repack.sh "${LAST_TAG#v}" "$VERSION" stable-last xray-files release
-      - name: qemu
-        run: docker run --privileged --rm "$BINFMT_IMAGE" --install arm64,arm
-      - name: Образы
-        env:
-          SMOKE_COMMIT: ${{ needs.xray-plan.outputs.last_sha }}
-        run: bash .github/release/xray-images.sh "$VERSION" release images
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: xray-release
+          path: release
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+
+  images:
+    name: Образ ${{ matrix.image }}
+    needs: [xray-plan, xray]
+    if: ${{ !cancelled() && needs.xray.result == 'success' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: amd64
+            runner: ubuntu-24.04
+          - image: arm64
+            runner: ubuntu-24.04-arm
+          - image: arm64-noaes
+            runner: ubuntu-24.04-arm
+    env:
+      SMOKE_COMMIT: ${{ needs.xray-plan.outputs.last_sha }}
+      VERSION: ${{ needs.xray-plan.outputs.version }}
+      IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: xray-release
+          path: release
+      - name: Образ
+        run: bash .github/release/xray-images.sh "$VERSION" release images "$IMAGE"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-${{ matrix.image }}
+          path: images
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+
+  publish:
+    name: Выпуск xray ${{ needs.xray-plan.outputs.version }}
+    needs: [xray-plan, xray, images]
+    if: ${{ !cancelled() && needs.xray.result == 'success' && needs.images.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      DRY_RUN: ${{ inputs.dry_run || github.ref != 'refs/heads/main' }}
+      LAST_TAG: ${{ needs.xray-plan.outputs.last_tag }}
+      LAST_SHA: ${{ needs.xray-plan.outputs.last_sha }}
+      VERSION: ${{ needs.xray-plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: xray-release
+          path: release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: image-*
+          path: images
+          merge-multiple: true
       - name: Локальный реестр
         if: ${{ env.DRY_RUN == 'true' }}
         run: |
