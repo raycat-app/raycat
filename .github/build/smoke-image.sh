@@ -2,14 +2,16 @@
 # Дымовая проверка собранного образа raycat:ci. Запускать из корня репозитория.
 #   ARCH=arm64-noaes XRAY_BUILD=noaes bash .github/build/smoke-image.sh
 # ARCH нужен для строки в сводке, XRAY_BUILD=noaes включает проверку версии Go.
+# SMOKE_COMMIT — коммит, из которого собран raycat (по умолчанию GITHUB_SHA).
 set -euo pipefail
 
 image=raycat:ci
 xray=/usr/libexec/raycat/xray
+commit=${SMOKE_COMMIT:-$GITHUB_SHA}
 
 version_line=$(docker run --rm "$image" --version)
 echo "$version_line"
-[[ "$version_line" == *" (${GITHUB_SHA:0:7})" ]]
+[[ "$version_line" == *" (${commit:0:7})" ]]
 healthcheck=$(docker image inspect -f '{{json .Config.Healthcheck.Test}}' "$image")
 test "$healthcheck" = '["CMD","raycat","health"]'
 socket=$(docker run --rm --entrypoint printenv "$image" RAYCAT_SOCKET)

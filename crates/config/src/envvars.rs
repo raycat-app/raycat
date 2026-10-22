@@ -2,8 +2,8 @@ use crate::error::Problems;
 use crate::load::Env;
 use crate::raw::{Raw, RawSubscription};
 use crate::validate::{
-    APP_HINT, BOOL_HINT, LEVEL_HINT, MODE_HINT, PLATFORM_HINT, parse_app, parse_bool, parse_level,
-    parse_mode_kind, parse_platform,
+    APP_VALUES, BOOL_HINT, LEVEL_VALUES, MODE_VALUES, PLATFORM_VALUES, options_problem, parse_app,
+    parse_bool, parse_level, parse_mode_kind, parse_platform,
 };
 
 pub(crate) const CONFIG: &str = "RAYCAT_CONFIG";
@@ -20,7 +20,21 @@ pub(crate) const PROXY_AUTH: &str = "RAYCAT_PROXY_AUTH";
 pub(crate) const PROXY_AUTH_FILE: &str = "RAYCAT_PROXY_AUTH_FILE";
 const LOG: &str = "RAYCAT_LOG";
 
-const ENV_SUBSCRIPTION_NAME: &str = "main";
+/// Какой ключ задаёт каждая переменная, в виде пути из вывода `raycat config`.
+pub(crate) const KEYS: [(&str, &str); 12] = [
+    (SUBSCRIPTION, "subscription[0].url"),
+    (SUBSCRIPTION_FILE, "subscription[0].url"),
+    (APP, "subscription[0].app"),
+    (PLATFORM, "subscription[0].platform"),
+    (SEED, "device.seed"),
+    (MODE, "mode.type"),
+    (LISTEN, "mode.listen"),
+    (KILL_SWITCH, "mode.kill_switch"),
+    (LAN, "mode.lan"),
+    (PROXY_AUTH, "mode.auth"),
+    (PROXY_AUTH_FILE, "mode.auth"),
+    (LOG, "log.level"),
+];
 
 /// Пустая переменная считается незаданной: `${VAR:-}` в compose не должен
 /// молча выключать, например, kill switch.
@@ -65,10 +79,7 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
     }
     if url.is_some() || url_file.is_some() || app.is_some() || platform.is_some() {
         if raw.subscription.is_empty() {
-            raw.subscription.push(RawSubscription {
-                name: Some(ENV_SUBSCRIPTION_NAME.to_owned()),
-                ..RawSubscription::default()
-            });
+            raw.subscription.push(RawSubscription::default());
         }
         if let Some(first) = raw.subscription.first_mut() {
             if let Some(url) = url {
@@ -79,7 +90,7 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
                 first.url = None;
             }
             if let Some(app) = app {
-                set_text(&mut first.app, APP, app, parse_app, APP_HINT, p);
+                set_text(&mut first.app, APP, app, parse_app, APP_VALUES, p);
             }
             if let Some(platform) = platform {
                 set_text(
@@ -87,7 +98,7 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
                     PLATFORM,
                     platform,
                     parse_platform,
-                    PLATFORM_HINT,
+                    PLATFORM_VALUES,
                     p,
                 );
             }
@@ -102,7 +113,7 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
             MODE,
             mode,
             parse_mode_kind,
-            MODE_HINT,
+            MODE_VALUES,
             p,
         );
     }
@@ -123,7 +134,7 @@ pub(crate) fn apply(raw: &mut Raw, env: &Env, p: &mut Problems) {
     }
     apply_proxy_auth(raw, env, p);
     if let Some(level) = get(LOG) {
-        set_text(&mut raw.log.level, LOG, level, parse_level, LEVEL_HINT, p);
+        set_text(&mut raw.log.level, LOG, level, parse_level, LEVEL_VALUES, p);
     }
 }
 
@@ -151,12 +162,12 @@ fn set_text<T>(
     key: &str,
     value: &str,
     parse: fn(&str) -> Option<T>,
-    hint: &str,
+    options: &[&str],
     p: &mut Problems,
 ) {
     if parse(value).is_some() {
         *slot = Some(value.to_owned());
     } else {
-        p.add(key, hint);
+        p.add(key, options_problem(options, value));
     }
 }

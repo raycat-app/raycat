@@ -60,7 +60,7 @@ pub(crate) struct RawDevice {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawSubscription {
-    /// Имя подписки для команд и `selection.pin`: от 1 до 64 символов, без `/` и управляющих символов. Имена не повторяются. Обязательно.
+    /// Имя подписки для команд и `selection.pin`: от 1 до 64 символов, без `/` и управляющих символов. Имена не повторяются. Не задано: `main` для первой подписки, `backup` для второй, дальше `3`, `4`…
     pub(crate) name: Option<String>,
     /// Ссылка подписки: `https://…` (`http://` только с `allow_http = true`), до 2048 символов, без логина и пароля. Обязательна, если не задан `url_file`. Это секрет.
     pub(crate) url: Option<String>,

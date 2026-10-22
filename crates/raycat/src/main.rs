@@ -77,6 +77,7 @@ fn run(matches: &ArgMatches) -> Result<()> {
         "health" => return ctl::health(&env),
         "tui" => return tui::run(&env),
         "init" => return init::run(sub, &env),
+        "config" => return commands::show_config(sub, &env),
         "completions" => return manual::completions(sub),
         "man" => return manual::man(),
         "help" => return cli::show_help(sub),

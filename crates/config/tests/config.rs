@@ -718,11 +718,34 @@ fn missing_required_subscription_fields() {
     ] {
         assert!(has(&list, field), "{list:?}");
     }
-    let list = problems(
+    let config = parse(
         "[[subscription]]\nurl = \"https://sub.example.com/x/abcd\"\napp = \"happ\"\nplatform = \"windows\"\n",
     );
+    assert_eq!(config.subscriptions[0].name, "main");
+}
+
+#[test]
+fn subscription_names_default_by_position() {
+    let block = "[[subscription]]\nurl = \"https://sub.example.com/x/abcd\"\napp = \"happ\"\nplatform = \"windows\"\n";
+    let config = parse(&block.repeat(4));
+    let names: Vec<&str> = config
+        .subscriptions
+        .iter()
+        .map(|subscription| subscription.name.as_str())
+        .collect();
+    assert_eq!(names, ["main", "backup", "3", "4"]);
+}
+
+#[test]
+fn default_name_clash_is_explained() {
+    let text = "[[subscription]]\nname = \"backup\"\nurl = \"https://sub.example.com/x/abcd\"\napp = \"happ\"\nplatform = \"windows\"\n\n[[subscription]]\nurl = \"https://sub.example.com/x/wxyz\"\napp = \"happ\"\nplatform = \"windows\"\n";
+    let list = problems(text);
     assert_eq!(list.len(), 1, "{list:?}");
-    assert!(has(&list, "subscription[0].name"), "{list:?}");
+    assert!(has(&list, "subscription[1].name"), "{list:?}");
+    assert!(
+        list[0].contains("«backup» по умолчанию уже занято: задайте name"),
+        "{list:?}"
+    );
 }
 
 #[test]
@@ -869,13 +892,14 @@ fn syntax_and_type_errors() {
     let message = unknown.unwrap_err().to_string();
     assert!(message.contains("не удалось разобрать"), "{message}");
     assert!(
-        message.contains("неизвестный ключ `subscriptions`"),
+        message.contains("неизвестный ключ «subscriptions» — может быть, «subscription»?"),
         "{message}"
     );
 
     let unknown = Config::from_toml_str(&format!("{OK_SUB}\n[log]\nlvl = \"info\"\n"), &Env::new());
     let message = unknown.unwrap_err().to_string();
-    assert!(message.contains("неизвестный ключ `lvl`"), "{message}");
+    assert!(message.contains("неизвестный ключ «lvl»"), "{message}");
+    assert!(!message.contains("может быть"), "{message}");
 
     let broken = Config::from_toml_str("[[subscription]\n", &Env::new());
     assert!(matches!(broken, Err(Error::Parse(_))));
@@ -1165,6 +1189,220 @@ fn file_errors() {
     let error = Config::load(Some(&broken), &Env::new(), false).unwrap_err();
     assert!(matches!(error, Error::Parse(_)), "{error:?}");
     std::fs::remove_file(broken).unwrap();
+}
+
+const EXAMPLE: &str = include_str!("../../../deploy/config.example.toml");
+
+#[test]
+fn the_example_file_loads_with_the_defaults() {
+    let config = parse(EXAMPLE);
+    assert_eq!(config.subscriptions.len(), 1);
+    assert_eq!(config.subscriptions[0].name, "main");
+    assert_eq!(
+        (
+            config.subscriptions[0].app,
+            config.subscriptions[0].platform
+        ),
+        (App::Happ, Platform::Windows)
+    );
+    assert_eq!(
+        config.mode,
+        Mode::Proxy {
+            listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 7890)
+        }
+    );
+    assert_eq!(config.warnings, Vec::<String>::new());
+}
+
+#[test]
+fn unknown_keys_are_compared_with_their_own_section() {
+    let text = "[[subscription]]\nurl = \"https://sub.example.com/x/abcd\"\napp = \"happ\"\nplatform = \"windows\"\nallow_htp = true\n";
+    let message = Config::from_toml_str(text, &Env::new())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message.contains("неизвестный ключ «allow_htp» — может быть, «allow_http»?"),
+        "{message}"
+    );
+    let message = Config::from_toml_str("[selection]\nfailure = 3\n", &Env::new())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message.contains("неизвестный ключ «failure» — может быть, «failures»?"),
+        "{message}"
+    );
+}
+
+#[test]
+fn enum_values_get_a_hint_for_a_typo() {
+    let list = problems(&format!("{OK_SUB}\n[mode]\ntype = \"gatewai\"\n"));
+    assert_eq!(
+        list,
+        ["mode.type: допустимо: proxy или gateway — может быть, «gateway»?"]
+    );
+    let list = problems(
+        "[[subscription]]\nname = \"a\"\nurl = \"https://sub.example.com/x/abcd\"\napp = \"hap\"\nplatform = \"windows\"\n",
+    );
+    assert_eq!(
+        list,
+        ["subscription[0].app: допустимо: happ или incy — может быть, «happ»?"]
+    );
+    let vars = env(&[
+        ("RAYCAT_SUBSCRIPTION", "https://sub.example.com/x/abcd"),
+        ("RAYCAT_APP", "happ"),
+        ("RAYCAT_PLATFORM", "windows"),
+        ("RAYCAT_MODE", "gatewy"),
+    ]);
+    assert_eq!(
+        problems_with_env("", &vars),
+        ["RAYCAT_MODE: допустимо: proxy или gateway — может быть, «gateway»?"]
+    );
+}
+
+#[test]
+fn happ_encrypted_links_are_explained_without_the_link() {
+    let list = problems(
+        "[[subscription]]\nname = \"a\"\nurl = \"happ://crypt3/SECRETLINK42\"\napp = \"happ\"\nplatform = \"windows\"\n",
+    );
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert!(has(&list, "subscription[0].url"), "{list:?}");
+    assert!(
+        list[0].contains("это зашифрованная ссылка Happ (happ://crypt…)"),
+        "{list:?}"
+    );
+    assert!(
+        list[0].contains("обычную ссылку подписки https://…"),
+        "{list:?}"
+    );
+    assert!(!list[0].contains("SECRETLINK42"), "{list:?}");
+
+    let vars = env(&[
+        ("RAYCAT_SUBSCRIPTION", "happ://crypt5/SECRETLINK42"),
+        ("RAYCAT_APP", "happ"),
+        ("RAYCAT_PLATFORM", "windows"),
+    ]);
+    let list = problems_with_env("", &vars);
+    assert!(has(&list, "subscription[0].url"), "{list:?}");
+    assert!(
+        list.iter().all(|line| !line.contains("SECRETLINK42")),
+        "{list:?}"
+    );
+}
+
+#[test]
+fn effective_settings_show_every_value_with_its_source() {
+    let text = format!("{OK_SUB}\n[device]\nseed = \"SEEDSECRET\"\n\n[mode]\ntype = \"gateway\"\n");
+    let path = temp_file("effective", text.as_bytes());
+    let vars = env(&[("RAYCAT_LOG", "debug")]);
+    let shown = raycat_config::effective(Some(path.as_path()), &vars, false).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    for line in [
+        "name = \"основная\"  # из файла\n",
+        "url = \"https://sub.example.com/…1234\"  # из файла\n",
+        "type = \"gateway\"  # из файла\n",
+        "kill_switch = true\n",
+        "level = \"debug\"  # из RAYCAT_LOG\n",
+        "seed = \"***\"  # из файла\n",
+        "failures = 3\n",
+        "# hostname: не задано, значение выбирает raycat\n",
+        "[log]\n",
+    ] {
+        assert!(shown.contains(line), "нет строки {line:?}");
+    }
+    assert!(
+        !shown.contains("SEEDSECRET") && !shown.contains("AbCdEfGh1234"),
+        "секрет попал в вывод effective"
+    );
+}
+
+#[test]
+fn effective_settings_hide_the_proxy_password() {
+    let text = format!("{OK_SUB}\n[mode]\nauth = \"alice:hunter2hunter2\"\n");
+    let path = temp_file("effective-auth", text.as_bytes());
+    let shown = raycat_config::effective(Some(path.as_path()), &Env::new(), false).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(
+        shown.contains("auth = \"alice:***\"  # из файла\n"),
+        "пароль не замаскирован"
+    );
+    assert!(!shown.contains("hunter2"), "пароль попал в вывод effective");
+}
+
+#[test]
+fn effective_settings_without_a_file_come_from_the_environment() {
+    let vars = env(&[
+        ("RAYCAT_SUBSCRIPTION", "https://sub.example.com/x/ZzZz0007"),
+        ("RAYCAT_APP", "happ"),
+        ("RAYCAT_PLATFORM", "windows"),
+    ]);
+    let shown = raycat_config::effective(None, &vars, false).unwrap();
+    assert!(
+        shown.contains("# Файла нет"),
+        "нет пометки об отсутствии файла"
+    );
+    assert!(
+        shown.contains("url = \"https://sub.example.com/…0007\"  # из RAYCAT_SUBSCRIPTION\n"),
+        "нет строки url из переменной"
+    );
+    assert!(
+        !shown.contains("ZzZz0007"),
+        "ссылка попала в вывод effective"
+    );
+}
+
+/// Раскомментирование любой строки-ключа примера (вместе с закомментированным заголовком её
+/// таблицы) не ломает разбор: ключ попадает в свою таблицу, а не в соседнюю.
+#[test]
+fn uncommenting_any_key_of_the_example_keeps_the_file_parseable() {
+    let lines: Vec<&str> = EXAMPLE.lines().collect();
+    let mut checked = 0;
+    for (index, line) in lines.iter().enumerate() {
+        if !is_commented_key(line) {
+            continue;
+        }
+        let mut changed: Vec<String> = lines.iter().map(|text| (*text).to_owned()).collect();
+        changed[index] = uncommented(line);
+        if let Some(header) = commented_header_above(&lines, index) {
+            changed[header] = uncommented(lines[header]);
+        }
+        let text = format!("{}\n", changed.join("\n"));
+        let result = Config::from_toml_str(&text, &Env::new());
+        assert!(
+            !matches!(result, Err(Error::Parse(_))),
+            "{line}: {result:?}"
+        );
+        checked += 1;
+    }
+    assert!(checked >= 30, "раскомментировано строк: {checked}");
+}
+
+/// `# ключ = значение`: закомментированный ключ, который можно раскомментировать.
+fn is_commented_key(line: &str) -> bool {
+    let Some(body) = line.strip_prefix("# ") else {
+        return false;
+    };
+    let Some((key, _)) = body.split_once(" = ") else {
+        return false;
+    };
+    !key.is_empty() && key.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+}
+
+fn uncommented(line: &str) -> String {
+    line.strip_prefix("# ").unwrap_or(line).to_owned()
+}
+
+/// Ближайший закомментированный заголовок `# [таблица]` выше строки. Если раньше встретился
+/// раскомментированный заголовок, таблица уже открыта, и свой заголовок не нужен.
+fn commented_header_above(lines: &[&str], index: usize) -> Option<usize> {
+    for above in (0..index).rev() {
+        if lines[above].starts_with('[') {
+            return None;
+        }
+        if lines[above].starts_with("# [") {
+            return Some(above);
+        }
+    }
+    None
 }
 
 #[test]

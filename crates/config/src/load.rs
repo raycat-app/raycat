@@ -7,6 +7,7 @@ use crate::envvars;
 use crate::error::{Error, Problems};
 use crate::model::Config;
 use crate::raw::Raw;
+use crate::suggest;
 use crate::validate;
 
 /// Переменные окружения: `std::env::vars().collect()`.
@@ -19,11 +20,8 @@ impl Config {
     /// из окружения. Ошибки проверки собираются списком. `root` — процесс работает
     /// от root: от этого зависит подсказка, если файл не читается.
     pub fn load(path: Option<&Path>, env: &Env, root: bool) -> Result<Self, Error> {
-        let path = path
-            .map(Path::to_path_buf)
-            .or_else(|| envvars::value(env, envvars::CONFIG).map(PathBuf::from));
-        let text = match path {
-            Some(path) => read(&path, root)?,
+        let text = match settings_path(path, env) {
+            Some(file) => read(&file, root)?,
             None => String::new(),
         };
         Self::from_toml_str(&text, env)
@@ -40,7 +38,14 @@ impl Config {
     }
 }
 
-fn read(path: &Path, root: bool) -> Result<String, Error> {
+/// Файл настроек: явный путь, иначе `RAYCAT_CONFIG`. `None` — файла нет, настройки берутся
+/// из окружения.
+pub(crate) fn settings_path(path: Option<&Path>, env: &Env) -> Option<PathBuf> {
+    path.map(Path::to_path_buf)
+        .or_else(|| envvars::value(env, envvars::CONFIG).map(PathBuf::from))
+}
+
+pub(crate) fn read(path: &Path, root: bool) -> Result<String, Error> {
     let fail = |source: io::Error| Error::Read {
         path: path.to_path_buf(),
         source,
@@ -74,22 +79,31 @@ fn parse(text: &str) -> Result<Raw, Error> {
 }
 
 fn describe(message: &str) -> String {
-    let quoted = |prefix: &str| {
-        message
-            .strip_prefix(prefix)
-            .and_then(|rest| rest.split('`').next())
-            .map(str::to_owned)
-    };
-    if let Some(name) = quoted("unknown field `") {
-        format!("неизвестный ключ `{name}`")
-    } else if let Some(name) = quoted("missing field `") {
-        format!("не хватает обязательного ключа `{name}`")
+    if let Some(rest) = message.strip_prefix("unknown field `") {
+        return unknown_key(rest);
+    }
+    if let Some(name) = message
+        .strip_prefix("missing field `")
+        .and_then(|rest| rest.split('`').next())
+    {
+        format!("не хватает обязательного ключа «{name}»")
     } else if message.starts_with("duplicate key") {
         "ключ указан дважды".to_owned()
     } else if message.starts_with("invalid type") || message.starts_with("invalid value") {
         "значение неподходящего типа или вне допустимого набора".to_owned()
     } else {
         format!("ошибка синтаксиса TOML ({message})")
+    }
+}
+
+/// `rest` — сообщение serde после «unknown field»: имя ключа и перечень допустимых ключей
+/// этой секции (часть «expected one of»). Подсказка выбирается из этого перечня.
+fn unknown_key(rest: &str) -> String {
+    let (name, tail) = rest.split_once('`').unwrap_or((rest, ""));
+    let expected: Vec<&str> = tail.split('`').skip(1).step_by(2).collect();
+    match suggest::nearest(name, &expected) {
+        Some(near) => format!("неизвестный ключ «{name}» — может быть, «{near}»?"),
+        None => format!("неизвестный ключ «{name}»"),
     }
 }
 
