@@ -34,6 +34,10 @@ rep() {
   bash "$dir/report.sh" "$1"
 }
 
+close() {
+  bash "$dir/close.sh" "$1"
+}
+
 # Фикстуры: выдуманные крейты alpha, beta, gamma, delta и идентификаторы RUSTSEC-2099-…
 
 cat >"$work/mixed.jsonl" <<'EOF'
@@ -100,6 +104,25 @@ EOF
 check "отчёт: все ошибки уровня error с крейтами" "$expected" "$(rep "$work/mixed.jsonl")"
 check "отчёт: предупреждения не попадают" "- ошибок уровня error в отчёте нет" "$(rep "$work/warn.jsonl")"
 check "отчёт: идентификатор RustSec назван" yes "$(contains "$(rep "$work/nograph.jsonl")" "(RUSTSEC-2099-0004)")"
+
+cat >"$work/issues.json" <<'EOF'
+[
+  {"number":21,"title":"Зависимости: не удалось исправить автоматически"},
+  {"number":22,"title":"Зависимости: что-то другое"},
+  {"number":23,"title":"Зависимости: PR бота не прошёл проверки"}
+]
+EOF
+
+echo '[]' >"$work/no-issues.json"
+
+check "закрытие: только issue бота по заголовку" $'21\n23' "$(close "$work/issues.json")"
+check "закрытие: открытых issue бота нет" "" "$(close "$work/no-issues.json")"
+
+if bash "$dir/close.sh" "$work/missing.json" >/dev/null 2>&1; then
+  check "закрытие: нет файла со списком — ошибка" error ok
+else
+  check "закрытие: нет файла со списком — ошибка" error error
+fi
 
 if [ "$failures" -gt 0 ]; then
   echo "провалено проверок: $failures"

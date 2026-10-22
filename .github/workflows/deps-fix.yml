@@ -5,6 +5,7 @@ name: Исправление зависимостей
 # и открывает PR «fix: обновление уязвимых зависимостей (…)» с меткой «безопасность»: такие исправления
 # продвигаются в stable без выдержки. Обязательные проверки бот запускает сам и сливает PR после зелёных.
 # Если исправить не удалось или PR не прошёл проверки, заводится issue с отчётом cargo-deny (одно).
+# Когда cargo deny на main снова проходит, открытые issue бота закрываются.
 # Разбор отчёта и тесты — в .github/deps.
 #
 # События GITHUB_TOKEN не запускают другие workflow, поэтому обязательные проверки ruleset («Итог» из
@@ -255,6 +256,30 @@ jobs:
           gh pr merge "$PR" -R "$REPO" --squash --match-head-commit "$SHA" --subject "$title (#$PR)" --body "$body"
       - name: Выпуск после слияния
         run: gh workflow run ci.yml -R "$REPO" --ref main
+
+  close:
+    name: Закрытие issue
+    needs: scan
+    if: ${{ needs.scan.outputs.failed == 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Закрытие issue бота
+        run: |
+          gh issue list -R "$REPO" --state open --label зависимости --limit 200 --json number,title > "$RUNNER_TEMP/issues.json"
+          bash .github/deps/close.sh "$RUNNER_TEMP/issues.json" > "$RUNNER_TEMP/close.txt"
+          while read -r number; do
+            gh issue close "$number" -R "$REPO" --comment "На main снова чисто, закрываю."
+          done < "$RUNNER_TEMP/close.txt"
 
   report:
     name: Отчёт об ошибке
