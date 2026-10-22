@@ -15,8 +15,9 @@ use raycat_subscription::redact;
 use crate::cli;
 use crate::paths;
 
-const SCHEMA_LINE: &str =
-    "#:schema https://raw.githubusercontent.com/raycat-app/raycat/main/deploy/config.schema.json";
+/// Пример настроек из репозитория: мастер пишет его же, с подставленными ответами.
+const TEMPLATE: &str = include_str!("../../../deploy/config.example.toml");
+const TEMPLATE_URL: &str = "https://example.com/sub/REPLACE-WITH-YOUR-LINK";
 const SYSTEMD_DIR: &str = "/run/systemd/system";
 const SUBSCRIPTION_NAME: &str = "main";
 const MAX_LINK_FILE_BYTES: usize = 4096;
@@ -34,12 +35,6 @@ const MODE_OPTIONS: [&str; 3] = [
 ];
 const PLATFORM_HINT: &str =
     "Если провайдер не отдаст узлы, попробуйте другую платформу: raycat init --force";
-const DEVICE_HINT: &str = "
-# Одно и то же слово даёт одно и то же устройство у провайдера на любом сервере.
-# Без него устройство создаётся при первом запуске и хранится в /var/lib/raycat.
-# [device]
-# seed = \"любое слово или фраза\"
-";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppChoice {
@@ -508,59 +503,35 @@ fn write_attributes(attributes: &libc::termios) -> io::Result<()> {
     }
 }
 
+/// Пример с ответами мастера: меняются только строки ссылки, приложения, платформы и режима.
 fn render(answers: &Answers) -> String {
-    let mut text = format!(
-        "{SCHEMA_LINE}
-# Настройки raycat, созданы командой raycat init.
-# После правки: sudo systemctl restart raycat
-# Проверка файла и подписок: sudo raycat check
-# Описание всех ключей: https://github.com/raycat-app/raycat#настройки
-
-[[subscription]]
-name = \"{SUBSCRIPTION_NAME}\"
-# Ссылка подписки работает как пароль: никому её не показывайте.
-url = {}
-# Приложение и платформа, которые принимает провайдер. Изменить: raycat init --force
-app = \"{}\"
-platform = \"{}\"
-
-",
-        toml_string(&answers.url),
-        answers.app.key(),
-        answers.platform.key(),
+    let mode = match answers.mode {
+        ModeChoice::Proxy => "type = \"proxy\"",
+        ModeChoice::Gateway => "type = \"gateway\"",
+        ModeChoice::GatewayLan => "type = \"gateway\"\nlan = true",
+    };
+    let text = replace_line(
+        TEMPLATE,
+        &format!("url = \"{TEMPLATE_URL}\""),
+        &format!("url = {}", toml_string(&answers.url)),
     );
-    text.push_str(mode_block(answers.mode));
-    text.push_str(DEVICE_HINT);
-    text
+    let text = replace_line(
+        &text,
+        "app = \"happ\"",
+        &format!("app = \"{}\"", answers.app.key()),
+    );
+    let text = replace_line(
+        &text,
+        "platform = \"windows\"",
+        &format!("platform = \"{}\"", answers.platform.key()),
+    );
+    replace_line(&text, "type = \"proxy\"", mode)
 }
 
-fn mode_block(mode: ModeChoice) -> &'static str {
-    match mode {
-        ModeChoice::Proxy => {
-            "[mode]
-# Прокси для программ на этом сервере: HTTP и SOCKS5.
-type = \"proxy\"
-listen = \"127.0.0.1:7890\"
-"
-        }
-        ModeChoice::Gateway => {
-            "[mode]
-# Весь исходящий трафик сервера и его контейнеров идёт через VPN. Нужны nftables и iproute2.
-type = \"gateway\"
-# Не пускать трафик мимо VPN, пока он недоступен.
-kill_switch = true
-"
-        }
-        ModeChoice::GatewayLan => {
-            "[mode]
-# Трафик сервера и устройств локальной сети идёт через VPN. Нужны nftables и iproute2.
-type = \"gateway\"
-kill_switch = true
-# Устройства локальной сети тоже проходят через шлюз.
-lan = true
-"
-        }
-    }
+/// Заменяет строку целиком: она ищется между переводами строк, поэтому закомментированная
+/// `# app = …` в примере не затрагивается.
+fn replace_line(text: &str, line: &str, replacement: &str) -> String {
+    text.replacen(&format!("\n{line}\n"), &format!("\n{replacement}\n"), 1)
 }
 
 fn toml_string(value: &str) -> String {
@@ -690,17 +661,40 @@ mod tests {
     }
 
     #[test]
-    fn render_names_the_subscription_and_the_proxy() {
+    fn render_fills_the_example_with_the_answers() {
         let text = render(&answers(
-            AppChoice::Happ,
-            PlatformChoice::Windows,
-            ModeChoice::Proxy,
+            AppChoice::Incy,
+            PlatformChoice::Android,
+            ModeChoice::GatewayLan,
         ));
-        assert!(text.starts_with(SCHEMA_LINE));
-        assert!(text.contains("\n[[subscription]]\nname = \"main\"\n"));
-        assert!(text.contains(&format!("url = \"{URL}\"\n")));
-        assert!(text.contains("app = \"happ\"\nplatform = \"windows\"\n"));
-        assert!(text.contains("type = \"proxy\"\nlisten = \"127.0.0.1:7890\"\n"));
+        assert!(text.starts_with("#:schema https://"));
+        assert!(text.contains(&format!("\nurl = \"{URL}\"\n")));
+        assert!(text.contains("\napp = \"incy\"\nplatform = \"android\"\n"));
+        assert!(text.contains("\ntype = \"gateway\"\nlan = true\n"));
+        assert!(!text.contains("REPLACE-WITH-YOUR-LINK"));
+    }
+
+    #[test]
+    fn the_template_with_the_example_answers_is_the_example() {
+        let answers = Answers {
+            url: TEMPLATE_URL.to_owned(),
+            app: AppChoice::Happ,
+            platform: PlatformChoice::Windows,
+            mode: ModeChoice::Proxy,
+        };
+        assert_eq!(render(&answers), TEMPLATE);
+    }
+
+    #[test]
+    fn every_replaced_line_occurs_once_in_the_example() {
+        for line in [
+            format!("url = \"{TEMPLATE_URL}\""),
+            "app = \"happ\"".to_owned(),
+            "platform = \"windows\"".to_owned(),
+            "type = \"proxy\"".to_owned(),
+        ] {
+            assert_eq!(TEMPLATE.matches(&format!("\n{line}\n")).count(), 1, "{line}");
+        }
     }
 
     #[test]
@@ -710,15 +704,14 @@ mod tests {
             PlatformChoice::Windows,
             ModeChoice::Gateway,
         ));
-        assert!(gateway.contains("type = \"gateway\"\n"));
-        assert!(gateway.contains("kill_switch = true\n"));
-        assert!(!gateway.contains("lan = true"));
+        assert!(gateway.contains("\ntype = \"gateway\"\n"));
+        assert!(!gateway.contains("\nlan = true\n"));
         let lan = render(&answers(
             AppChoice::Happ,
             PlatformChoice::Windows,
             ModeChoice::GatewayLan,
         ));
-        assert!(lan.contains("lan = true"));
+        assert!(lan.contains("\ntype = \"gateway\"\nlan = true\n"));
     }
 
     #[test]

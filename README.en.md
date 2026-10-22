@@ -213,6 +213,7 @@ running service through a socket and do not read the settings file. Help: `rayca
 | `raycat init [--force]` | Setup wizard: asks for the subscription link, the app, the platform and the mode, and writes `/etc/raycat/config.toml` (or `--config`). Without a terminal, use the flags, see `raycat init --help`. |
 | `raycat daemon` | Runs in the foreground: fetches subscriptions and keeps xray running. This is how the service and the container start. |
 | `raycat check` | Validates the settings, builds the xray config from the subscription cache and runs `xray run -test`. The cache is needed: the daemon must have fetched a subscription. |
+| `raycat config [--path]` | Shows the effective settings as the daemon sees them: every value with its default and its source (the file or an environment variable). Secrets are hidden. `--path` prints only the path to the settings file. |
 | `raycat fetch <subscription>` | Fetches a subscription once and shows the response, the provider's information and the nodes. Applies and saves nothing. |
 | `raycat identity` | Shows the device emulated for each subscription. The HWID is printed in full: do not publish this output. |
 | `raycat status [--json]` | Daemon state: mode, xray, current node, subscriptions. |
@@ -260,7 +261,13 @@ For autocompletion and hints in the editor (VS Code with Even Better TOML, Taplo
 
 The settings file is TOML. In the service it is `/etc/raycat/config.toml`; in Docker, it is the
 mounted file. An unknown key is an error, so a typo does not go unnoticed. raycat shows all
-errors at once, with the field names. The file must be no larger than 1 MiB.
+errors at once, with the field names, and suggests the closest valid name: `unknown key «subscriptions» — maybe «subscription»?`.
+The file must be no larger than 1 MiB.
+
+`raycat config` shows the effective values as the daemon sees them: every value with its default
+and its source (the file or an environment variable). Secrets are hidden. `raycat config --path`
+prints only the path to the settings file. The starting file created by the installer and
+`raycat init` is the same example with your answers filled in: [`deploy/config.example.toml`](deploy/config.example.toml).
 
 Durations are written as `500ms`, `30s`, `5m`, `6h`, `1d`; combinations are allowed (`1h30m`).
 Sizes: `B`, `KiB`, `MiB`, `GiB` (`MB` is not understood). Case does not matter for units and for
@@ -291,8 +298,8 @@ The first subscription is the main one. The others are backups, in the order the
 
 | Key | Default | Allowed | What it does |
 | --- | --- | --- | --- |
-| `name` | required | 1–64 characters, no `/` and no control characters; names must be unique | The subscription name in commands (`raycat fetch`, `raycat update`) and in `selection.pin` |
-| `url` | required unless `url_file` is set | `https://…`; `http://` only with `allow_http = true`; up to 2048 characters; no login or password in the link | The subscription link. It is a secret: it is shortened in logs. Variable: `RAYCAT_SUBSCRIPTION` (first subscription only) |
+| `name` | `main` for the first subscription, `backup` for the second, then `3`, `4`… | 1–64 characters, no `/` and no control characters; names must be unique | The subscription name in commands (`raycat fetch`, `raycat update`) and in `selection.pin` |
+| `url` | required unless `url_file` is set | `https://…`; `http://` only with `allow_http = true`; up to 2048 characters; no login or password in the link | The subscription link. It is a secret: it is shortened in logs. Encrypted `happ://crypt…` links are not decrypted by raycat: ask the provider for a plain `https://` link. Variable: `RAYCAT_SUBSCRIPTION` (first subscription only) |
 | `url_file` | not set | path to a file up to 4 KiB containing one link; cannot be set together with `url` | A link read from a file, for example a Docker secret. Variable: `RAYCAT_SUBSCRIPTION_FILE` |
 | `allow_http` | `false` | `true`, `false` | Allows `http://` for this subscription. Over http the link and the response are sent in the clear |
 | `app` | required | `happ`, `incy` | The app that raycat emulates. Variable: `RAYCAT_APP` (first subscription only) |

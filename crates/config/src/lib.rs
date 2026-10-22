@@ -7,11 +7,14 @@ mod load;
 mod model;
 mod pattern;
 mod raw;
+mod show;
+mod suggest;
 mod units;
 mod validate;
 
 pub use error::{Error, Problem};
 pub use load::Env;
+pub use show::effective;
 pub use model::{
     Action, App, Config, DEFAULT_UPDATE_INTERVAL, Device, Dns, DomainMatch, Lan, LogLevel, Logging,
     Mode, Pin, Platform, ProxyAuth, Routing, Rule, Secret, Selection, Subscription, TcpCongestion,

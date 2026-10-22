@@ -19,6 +19,7 @@ use crate::pattern::Pattern;
 use crate::raw::{
     Raw, RawDevice, RawDns, RawLog, RawRouting, RawRule, RawSelection, RawSubscription, RawXray,
 };
+use crate::suggest;
 use crate::units::{format_duration, format_size, parse_duration, parse_size};
 
 const MAX_NAME_CHARS: usize = 64;
@@ -59,17 +60,18 @@ const DEFAULT_LISTEN: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOS
 const DEFAULT_XRAY_PATH: &str = "/usr/libexec/raycat/xray";
 const DEFAULT_MEMORY_LIMIT: u64 = 96 << 20;
 
-pub(crate) const APP_HINT: &str = "допустимо: happ или incy";
-pub(crate) const PLATFORM_HINT: &str = "допустимо: windows или android";
-pub(crate) const MODE_HINT: &str = "допустимо: proxy или gateway";
+pub(crate) const APP_VALUES: &[&str] = &["happ", "incy"];
+pub(crate) const PLATFORM_VALUES: &[&str] = &["windows", "android"];
+pub(crate) const MODE_VALUES: &[&str] = &["proxy", "gateway"];
+pub(crate) const LEVEL_VALUES: &[&str] = &["error", "warn", "info", "debug"];
+const ACTION_VALUES: &[&str] = &["direct", "proxy", "block"];
+const HAPP_ENCRYPTED: &str = "это зашифрованная ссылка Happ (happ://crypt…): raycat её не расшифровывает. Попросите у провайдера обычную ссылку подписки https://… (её обычно дают для других приложений)";
 pub(crate) const LISTEN_HINT: &str = "ожидается адрес вида 127.0.0.1:7890 или [::1]:7890";
-pub(crate) const LEVEL_HINT: &str = "допустимо: error, warn, info или debug";
 pub(crate) const BOOL_HINT: &str = "ожидается true или false (также 1/0, yes/no, on/off)";
 const AUTH_HINT: &str = "ожидается «логин:пароль» или off";
 const CONGESTION_HINT: &str = "допустимо: auto, off или имя алгоритма ядра (bbr, cubic): латиница, цифры, «-» и «_», до 15 символов";
 const IP_HINT: &str = "ожидается IP-адрес, например 1.1.1.1";
 const DURATION_HINT: &str = "ожидается длительность вроде 500ms, 30s, 5m, 6h или 1d";
-const ACTION_HINT: &str = "допустимо: direct, proxy или block";
 const DOMAIN_HINT: &str = "ожидается имя вида example.ru или *.example.ru";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,7 +285,10 @@ fn subscription(
     p: &mut Problems,
 ) -> Option<Subscription> {
     let at = |key: &str| format!("subscription[{index}].{key}");
-    let name = name(&at("name"), raw.name.as_deref(), names, p);
+    let name = match raw.name.as_deref() {
+        Some(value) => name(&at("name"), value, names, p),
+        None => default_name(&at("name"), index, names, p),
+    };
     let allow_http = raw.allow_http == Some(true);
     let url = match (raw.url.as_deref(), raw.url_file.as_deref()) {
         (Some(url), None) => link_field(&at("url"), url, allow_http, "", p),
@@ -296,12 +301,12 @@ fn subscription(
             None
         }
     };
-    let app = required(&at("app"), raw.app.as_deref(), parse_app, APP_HINT, p);
+    let app = required(&at("app"), raw.app.as_deref(), parse_app, APP_VALUES, p);
     let platform = required(
         &at("platform"),
         raw.platform.as_deref(),
         parse_platform,
-        PLATFORM_HINT,
+        PLATFORM_VALUES,
         p,
     );
     if let (Some(App::Incy), Some(Platform::Windows)) = (app, platform) {
@@ -328,16 +333,30 @@ fn subscription(
     })
 }
 
-fn name(
+/// Имя по умолчанию: `main` для первой подписки, `backup` для второй, дальше номер.
+fn default_name(
     field: &str,
-    value: Option<&str>,
+    index: usize,
     names: &mut HashSet<String>,
     p: &mut Problems,
 ) -> Option<String> {
-    let Some(value) = value else {
-        p.add(field, "не указано");
-        return None;
+    let value = match index {
+        0 => "main".to_owned(),
+        1 => "backup".to_owned(),
+        _ => (index + 1).to_string(),
     };
+    if names.insert(value.clone()) {
+        Some(value)
+    } else {
+        p.add(
+            field,
+            format!("имя «{value}» по умолчанию уже занято: задайте name"),
+        );
+        None
+    }
+}
+
+fn name(field: &str, value: &str, names: &mut HashSet<String>, p: &mut Problems) -> Option<String> {
     if value.trim().is_empty() {
         p.add(field, "имя не может быть пустым");
         return None;
@@ -369,6 +388,10 @@ fn link_field(
     p: &mut Problems,
 ) -> Option<Secret> {
     let value = value.trim();
+    if link::is_happ_encrypted(value) {
+        p.add(field, format!("{prefix}{HAPP_ENCRYPTED}"));
+        return None;
+    }
     let scheme = match link::check(value) {
         Ok(scheme) => scheme,
         Err(message) => {
@@ -422,14 +445,39 @@ fn required<T>(
     field: &str,
     value: Option<&str>,
     parse: fn(&str) -> Option<T>,
-    hint: &str,
+    options: &[&str],
     p: &mut Problems,
 ) -> Option<T> {
     let Some(value) = value else {
-        p.add(field, format!("не указано ({hint})"));
+        p.add(field, format!("не указано ({})", options_problem(options, "")));
         return None;
     };
-    parsed(field, value, parse, hint, p)
+    choice(field, value, parse, options, p)
+}
+
+/// Значение из перечня: при ошибке в сообщении перечень и, если значение похоже на один
+/// из вариантов, подсказка.
+fn choice<T>(
+    field: &str,
+    value: &str,
+    parse: fn(&str) -> Option<T>,
+    options: &[&str],
+    p: &mut Problems,
+) -> Option<T> {
+    let result = parse(value);
+    if result.is_none() {
+        p.add(field, options_problem(options, value));
+    }
+    result
+}
+
+/// Текст ошибки для значения вне перечня. Введённое значение в текст не попадает.
+pub(crate) fn options_problem(options: &[&str], value: &str) -> String {
+    let text = format!("допустимо: {}", suggest::join_or(options));
+    match suggest::nearest(value.trim(), options) {
+        Some(near) => format!("{text} — может быть, «{near}»?"),
+        None => text,
+    }
 }
 
 fn parsed<T>(
@@ -583,7 +631,7 @@ fn pin(value: &str, names: &HashSet<String>, p: &mut Problems) -> Option<Pin> {
 fn mode(raw: &Raw, p: &mut Problems) -> Mode {
     let kind = match raw.mode.kind.as_deref() {
         None => Some(ModeKind::Proxy),
-        Some(value) => parsed("mode.type", value, parse_mode_kind, MODE_HINT, p),
+        Some(value) => choice("mode.type", value, parse_mode_kind, MODE_VALUES, p),
     };
     match kind {
         Some(ModeKind::Gateway) => Mode::Gateway {
@@ -899,7 +947,7 @@ fn log(raw: &RawLog, p: &mut Problems) -> Logging {
     let level = match raw.level.as_deref() {
         None => LogLevel::Info,
         Some(value) => {
-            parsed("log.level", value, parse_level, LEVEL_HINT, p).unwrap_or(LogLevel::Info)
+            choice("log.level", value, parse_level, LEVEL_VALUES, p).unwrap_or(LogLevel::Info)
         }
     };
     Logging { level }
@@ -939,7 +987,7 @@ fn rule(index: usize, raw: &RawRule, warnings: &mut Vec<String>, p: &mut Problem
         &at("action"),
         raw.action.as_deref(),
         parse_action,
-        ACTION_HINT,
+        ACTION_VALUES,
         p,
     );
     action.map(|action| Rule {

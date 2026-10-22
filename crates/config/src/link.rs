@@ -9,6 +9,11 @@ pub(crate) enum Scheme {
     Https,
 }
 
+/// Зашифрованная ссылка Happ (`happ://crypt…`): её нельзя разобрать без ключа приложения.
+pub(crate) fn is_happ_encrypted(url: &str) -> bool {
+    url.trim().to_ascii_lowercase().starts_with("happ://crypt")
+}
+
 pub(crate) fn check(url: &str) -> Result<Scheme, &'static str> {
     if url.is_empty() {
         return Err("ссылка пустая");
@@ -157,6 +162,14 @@ mod tests {
             mask("  https://example.com/sub/wxyz#frag "),
             "https://example.com/…wxyz"
         );
+    }
+
+    #[test]
+    fn recognizes_encrypted_happ_links() {
+        assert!(is_happ_encrypted("happ://crypt3/abcdef"));
+        assert!(is_happ_encrypted("  HAPP://CRYPT5/abc"));
+        assert!(!is_happ_encrypted("https://sub.example.com/x"));
+        assert!(!is_happ_encrypted("happ://add/abc"));
     }
 
     #[test]
