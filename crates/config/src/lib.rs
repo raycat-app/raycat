@@ -7,6 +7,8 @@ mod load;
 mod model;
 mod pattern;
 mod raw;
+mod show;
+mod suggest;
 mod units;
 mod validate;
 
@@ -18,6 +20,7 @@ pub use model::{
     Xray,
 };
 pub use pattern::Pattern;
+pub use show::effective;
 
 #[cfg(feature = "schema")]
 #[doc(hidden)]

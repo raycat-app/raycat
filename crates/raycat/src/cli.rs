@@ -101,6 +101,7 @@ fn base_command() -> Command {
             )
             .arg(config_option()),
         )
+        .subcommand(config_command())
         .subcommand(
             subcommand(
                 "fetch",
@@ -235,6 +236,25 @@ fn init_command() -> Command {
             .long("lan")
             .action(ArgAction::SetTrue)
             .help("Шлюз для сервера и устройств локальной сети (то же, что --mode gateway с локальной сетью)")
+            .help_heading(OPTIONS),
+    )
+}
+
+fn config_command() -> Command {
+    subcommand(
+        "config",
+        "Итоговые настройки: все значения, как их видит демон, с источником; секреты скрыты",
+        "raycat config [ПАРАМЕТРЫ]",
+    )
+    .after_help(
+        "Примеры:\n  sudo raycat config\n  raycat config --path\n  raycat config --config ./config.toml",
+    )
+    .arg(config_option())
+    .arg(
+        Arg::new("path")
+            .long("path")
+            .action(ArgAction::SetTrue)
+            .help("Только путь к файлу настроек")
             .help_heading(OPTIONS),
     )
 }
@@ -697,7 +717,7 @@ mod tests {
                 .get_arguments()
                 .any(|arg| arg.get_long() == Some("config"))
         };
-        for name in ["daemon", "check", "fetch", "identity", "init"] {
+        for name in ["daemon", "check", "config", "fetch", "identity", "init"] {
             assert!(takes_config(name), "{name}");
         }
         for name in [
@@ -724,6 +744,20 @@ mod tests {
         let none = command().try_get_matches_from(["raycat", "check"]).unwrap();
         let (_, sub) = none.subcommand().unwrap();
         assert_eq!(config_path(sub), None);
+    }
+
+    #[test]
+    fn config_takes_the_path_flag() {
+        let matches = command()
+            .try_get_matches_from(["raycat", "config", "--path"])
+            .unwrap();
+        let (name, sub) = matches.subcommand().unwrap();
+        assert_eq!(name, "config");
+        assert!(sub.get_flag("path"));
+        let matches = command()
+            .try_get_matches_from(["raycat", "config"])
+            .unwrap();
+        assert!(!matches.subcommand().unwrap().1.get_flag("path"));
     }
 
     #[test]
@@ -836,6 +870,7 @@ mod tests {
             "Параметры",
             "daemon",
             "check",
+            "config",
             "fetch",
             "identity",
             "init",

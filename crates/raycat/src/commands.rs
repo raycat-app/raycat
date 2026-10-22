@@ -1,16 +1,20 @@
-//! Команды для человека: `check`, `fetch`, `identity`.
+//! Команды для человека: `check`, `config`, `fetch`, `identity`.
 
 use std::fs;
 use std::io::{self, Write as _};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use raycat_config::{Config, Routing, Subscription};
+use clap::ArgMatches;
+use raycat_config::{Config, Env, Routing, Subscription};
 use raycat_http::{Response, Url, redact};
 use raycat_subscription::{ProviderInfo, analyze, redact as redact_text, redact_in};
 use raycat_xray::Node;
 use serde_json::Value;
 
+use crate::cli;
 use crate::daemon::free_port;
+use crate::paths;
 use crate::plan;
 use crate::speedtest;
 use crate::store::Store;
@@ -348,6 +352,20 @@ pub(crate) fn identity(config: &Config, store: &Store) -> Result<()> {
         }
         say!("  устройство выведено из: {}", source.origin().describe());
     }
+    Ok(())
+}
+
+/// `raycat config`: итоговые настройки; с `--path` только путь к файлу настроек.
+pub(crate) fn show_config(sub: &ArgMatches, env: &Env) -> Result<()> {
+    let explicit = cli::config_path(sub).map(PathBuf::as_path);
+    if sub.get_flag("path") {
+        let path = paths::config_file(explicit, env, Path::exists)
+            .unwrap_or_else(|| PathBuf::from(paths::DEFAULT_CONFIG));
+        say!("{}", path.display());
+        return Ok(());
+    }
+    let text = raycat_config::effective(explicit, env, paths::is_root())?;
+    let _ = io::stdout().lock().write_all(text.as_bytes());
     Ok(())
 }
 
