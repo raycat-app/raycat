@@ -1336,12 +1336,18 @@ fn effective_settings_without_a_file_come_from_the_environment() {
         ("RAYCAT_PLATFORM", "windows"),
     ]);
     let shown = raycat_config::effective(None, &vars, false).unwrap();
-    assert!(shown.contains("# Файла нет"), "нет пометки об отсутствии файла");
+    assert!(
+        shown.contains("# Файла нет"),
+        "нет пометки об отсутствии файла"
+    );
     assert!(
         shown.contains("url = \"https://sub.example.com/…0007\"  # из RAYCAT_SUBSCRIPTION\n"),
         "нет строки url из переменной"
     );
-    assert!(!shown.contains("ZzZz0007"), "ссылка попала в вывод effective");
+    assert!(
+        !shown.contains("ZzZz0007"),
+        "ссылка попала в вывод effective"
+    );
 }
 
 /// Раскомментирование любой строки-ключа примера (вместе с закомментированным заголовком её
@@ -1361,7 +1367,10 @@ fn uncommenting_any_key_of_the_example_keeps_the_file_parseable() {
         }
         let text = format!("{}\n", changed.join("\n"));
         let result = Config::from_toml_str(&text, &Env::new());
-        assert!(!matches!(result, Err(Error::Parse(_))), "{line}: {result:?}");
+        assert!(
+            !matches!(result, Err(Error::Parse(_))),
+            "{line}: {result:?}"
+        );
         checked += 1;
     }
     assert!(checked >= 30, "раскомментировано строк: {checked}");
