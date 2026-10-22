@@ -459,7 +459,7 @@ impl App {
             Target::SubFilter => self.next_subscription(),
             Target::Search => self.input = InputMode::Filter,
             Target::WarningsToggle => self.journal_warnings = !self.journal_warnings,
-            Target::NamesToggle => return self.toggle_names(),
+            Target::NamesToggle => return Some(self.toggle_names()),
         }
         None
     }
@@ -711,13 +711,11 @@ impl App {
     }
 
     fn update_selected(&mut self) -> Option<Effect> {
-        match self.subscription_names().get(self.sub_cursor).cloned() {
-            Some(name) => self.start_update(Some(name)),
-            None => {
-                self.notify(Tone::Yellow, "Нет подписки для обновления", NOTICE_SECS);
-                None
-            }
-        }
+        let Some(name) = self.subscription_names().get(self.sub_cursor).cloned() else {
+            self.notify(Tone::Yellow, "Нет подписки для обновления", NOTICE_SECS);
+            return None;
+        };
+        self.start_update(Some(name))
     }
 
     fn start_update(&mut self, target: Option<String>) -> Option<Effect> {
@@ -733,14 +731,14 @@ impl App {
         Some(Effect::Update(target))
     }
 
-    fn toggle_names(&mut self) -> Option<Effect> {
+    fn toggle_names(&mut self) -> Effect {
         self.names = match self.names {
             NameStyle::Country => NameStyle::AsIs,
             NameStyle::AsIs => NameStyle::Country,
         };
         let text = format!("Значки в именах: {}", names_label(self.names));
         self.notify(Tone::Green, &text, NOTICE_SECS);
-        Some(Effect::SaveNames(self.names))
+        Effect::SaveNames(self.names)
     }
 
     fn toggle_dead(&mut self) {
@@ -797,7 +795,7 @@ impl App {
                 }
             }
             Tab::Subscriptions => self.details = !self.details,
-            Tab::Settings => return self.toggle_names(),
+            Tab::Settings => return Some(self.toggle_names()),
             Tab::Overview | Tab::Journal => {}
         }
         None

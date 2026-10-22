@@ -485,7 +485,6 @@ mod tests {
 
     const NOW: u64 = 1_790_596_800;
     const DAY: u64 = 86_400;
-    const GIB: u64 = 1024 * 1024 * 1024;
 
     fn node(name: &str, status: NodeStatus) -> Node {
         Node {

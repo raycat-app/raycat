@@ -16,7 +16,7 @@ mod svg;
 mod view;
 
 use std::io::{self, IsTerminal as _};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -62,7 +62,7 @@ pub(crate) fn run(env: &Env) -> Result<()> {
     let palette = Palette::new(Term::detect(env).color());
     let prefs = prefs::path(env);
     let names = prefs.as_deref().map_or(NameStyle::default(), prefs::load);
-    let settings = paths::config_file(None, env, |path| path.exists()).map_or_else(
+    let settings = paths::config_file(None, env, Path::exists).map_or_else(
         || paths::DEFAULT_CONFIG.to_owned(),
         |path| path.display().to_string(),
     );
