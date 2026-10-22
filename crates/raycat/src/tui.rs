@@ -1,14 +1,16 @@
 //! `raycat tui`: полноэкранный интерфейс поверх API демона. Он ничего не меняет
-//! сам: закрепление и обновление подписок идут через те же вызовы, что и у
-//! команд CLI. Настройки и каталог состояния не нужны, только путь сокета.
+//! в демоне сам: закрепление и обновление подписок идут через те же вызовы, что и у
+//! команд CLI. Вид интерфейса хранится в его собственном файле настроек.
 //!
 //! Состояние (`app`) отделено от отрисовки (`view`) и от связи с демоном (`link`):
-//! ожидание идёт в одном `select!` по клавишам, сообщениям связи и таймеру, поэтому
+//! ожидание идёт в одном `select!` по клавишам, мыши, сообщениям связи и таймеру, поэтому
 //! без событий интерфейс не потребляет процессор.
 
 mod app;
 mod canvas;
 mod link;
+mod pages;
+mod prefs;
 #[cfg(test)]
 mod svg;
 mod view;
@@ -17,11 +19,14 @@ use std::io::{self, IsTerminal as _};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, Event as TermEvent};
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event as TermEvent,
+};
+use ratatui::crossterm::execute;
 use raycat_config::Env;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::{Notify, mpsc};
@@ -31,6 +36,7 @@ use self::app::{App, Effect, Msg};
 use self::canvas::Palette;
 use self::link::Timing;
 use crate::client::Client;
+use crate::names::NameStyle;
 use crate::paths;
 use crate::term::Term;
 use crate::util::now_unix;
@@ -38,6 +44,13 @@ use crate::util::now_unix;
 const INPUT_POLL: Duration = Duration::from_millis(250);
 const TICK: Duration = Duration::from_secs(1);
 const QUEUE: usize = 64;
+
+/// Что нужно интерфейсу от окружения, кроме сокета.
+struct Setup {
+    prefs: Option<PathBuf>,
+    names: NameStyle,
+    settings: String,
+}
 
 pub(crate) fn run(env: &Env) -> Result<()> {
     if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
@@ -47,15 +60,26 @@ pub(crate) fn run(env: &Env) -> Result<()> {
     }
     let socket = paths::client_socket(env, paths::is_root())?;
     let palette = Palette::new(Term::detect(env).color());
+    let prefs = prefs::path(env);
+    let names = prefs.as_deref().map_or(NameStyle::default(), prefs::load);
+    let settings = paths::config_file(None, env, |path| path.exists()).map_or_else(
+        || paths::DEFAULT_CONFIG.to_owned(),
+        |path| path.display().to_string(),
+    );
+    let setup = Setup {
+        prefs,
+        names,
+        settings,
+    };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("не удалось запустить среду выполнения")?;
-    runtime.block_on(session(socket, palette))
+    runtime.block_on(session(socket, palette, setup))
 }
 
-/// Полноэкранный режим: терминал возвращается в обычное состояние при любом
-/// выходе, включая ошибку; при панике это делает обработчик ratatui.
+/// Полноэкранный режим: мышь и терминал возвращаются в обычное состояние при любом
+/// выходе, включая ошибку; при панике мышь выключает обработчик, поставленный здесь.
 struct Screen {
     terminal: DefaultTerminal,
 }
@@ -67,12 +91,20 @@ impl Screen {
                 let _ = ratatui::try_restore();
             })
             .context("не удалось перейти в полноэкранный режим")?;
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let _ = execute!(io::stdout(), DisableMouseCapture);
+            previous(info);
+        }));
+        // Без мыши интерфейс работает и с клавиатуры, поэтому ошибку не показываем.
+        let _ = execute!(io::stdout(), EnableMouseCapture);
         Ok(Self { terminal })
     }
 }
 
 impl Drop for Screen {
     fn drop(&mut self) {
+        let _ = execute!(io::stdout(), DisableMouseCapture);
         let _ = ratatui::try_restore();
     }
 }
@@ -151,6 +183,7 @@ struct Runner {
     client: Arc<Client>,
     inbox: mpsc::Sender<Msg>,
     refresh: Arc<Notify>,
+    prefs: Option<PathBuf>,
 }
 
 impl Runner {
@@ -158,16 +191,17 @@ impl Runner {
         let client = Arc::clone(&self.client);
         let inbox = self.inbox.clone();
         let refresh = Arc::clone(&self.refresh);
+        let prefs = self.prefs.clone();
         tokio::spawn(async move {
             refresh.notify_one();
-            let msg = link::perform(&client, effect).await;
+            let msg = link::perform(&client, effect, prefs.as_deref()).await;
             let _ = inbox.send(msg).await;
             refresh.notify_one();
         });
     }
 }
 
-async fn session(socket: PathBuf, palette: Palette) -> Result<()> {
+async fn session(socket: PathBuf, palette: Palette, setup: Setup) -> Result<()> {
     let client = Arc::new(Client::new(socket));
     let (inbox, mut messages) = mpsc::channel::<Msg>(QUEUE);
     let refresh = Arc::new(Notify::new());
@@ -184,10 +218,13 @@ async fn session(socket: PathBuf, palette: Palette) -> Result<()> {
         client,
         inbox,
         refresh,
+        prefs: setup.prefs,
     };
     let mut ticks = interval(TICK);
     ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut app = App::new(now_unix());
+    app.names = setup.names;
+    app.settings_path = setup.settings;
     while !app.quit {
         screen
             .terminal
@@ -202,9 +239,12 @@ async fn session(socket: PathBuf, palette: Palette) -> Result<()> {
         app.set_now(now_unix());
         match wake {
             Wake::Input(Some(Ok(event))) => {
-                if let TermEvent::Key(key) = event
-                    && let Some(effect) = app.handle_key(key)
-                {
+                let effect = match event {
+                    TermEvent::Key(key) => app.handle_key(key),
+                    TermEvent::Mouse(mouse) => app.handle_mouse(mouse, Instant::now()),
+                    _ => None,
+                };
+                if let Some(effect) = effect {
                     runner.dispatch(effect);
                 }
             }

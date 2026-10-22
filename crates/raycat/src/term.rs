@@ -4,6 +4,7 @@
 use std::io::{self, IsTerminal as _};
 
 use raycat_config::Env;
+use unicode_width::UnicodeWidthChar as _;
 
 const GAP: &str = "  ";
 const FALLBACK_WIDTH: usize = 80;
@@ -91,30 +92,9 @@ fn terminal_width(env: &Env) -> usize {
         .unwrap_or(FALLBACK_WIDTH)
 }
 
-/// Ширина символа в ячейках терминала: без таблиц Unicode, по основным диапазонам.
-/// Пара региональных индикаторов (флаг) занимает две ячейки, как и в терминалах.
+/// Ширина символа в ячейках терминала по таблицам Unicode; управляющие символы — 0.
 pub(crate) fn char_width(c: char) -> usize {
-    match u32::from(c) {
-        0x0300..=0x036F
-        | 0x200B..=0x200F
-        | 0x2060
-        | 0x20D0..=0x20FF
-        | 0xFE00..=0xFE0F
-        | 0x1F3FB..=0x1F3FF => 0,
-        0x1100..=0x115F
-        | 0x2E80..=0xA4CF
-        | 0xAC00..=0xD7A3
-        | 0xF900..=0xFAFF
-        | 0xFE30..=0xFE6F
-        | 0xFF00..=0xFF60
-        | 0xFFE0..=0xFFE6
-        | 0x1F300..=0x1F64F
-        | 0x1F680..=0x1F6FF
-        | 0x1F900..=0x1F9FF
-        | 0x1FA70..=0x1FAFF
-        | 0x20000..=0x3FFFD => 2,
-        _ => 1,
-    }
+    c.width().unwrap_or(0)
 }
 
 pub(crate) fn display_width(text: &str) -> usize {

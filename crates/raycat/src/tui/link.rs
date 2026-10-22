@@ -1,6 +1,7 @@
 //! Связь с демоном: поток событий, обновление снимка состояния и действия
 //! пользователя. Задачи не трогают терминал и общаются с интерфейсом сообщениями.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,7 +11,9 @@ use tokio::task::JoinHandle;
 use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep_until};
 
 use super::app::{Effect, Msg, Snapshot};
+use super::prefs;
 use crate::client::{Client, EventStream};
+use crate::names::NameStyle;
 
 const EVENT_QUEUE: usize = 64;
 const STREAM_CLOSED: &str = "демон закрыл поток событий: возможно, он остановлен";
@@ -213,7 +216,7 @@ async fn send_snapshot(client: &Client, inbox: &mpsc::Sender<Msg>) -> Option<Out
 }
 
 /// Выполняет действие пользователя; ошибка превращается в текст для строки состояния.
-pub(super) async fn perform(client: &Client, effect: Effect) -> Msg {
+pub(super) async fn perform(client: &Client, effect: Effect, prefs: Option<&Path>) -> Msg {
     match effect {
         Effect::Pin(id) => Msg::Pinned(client.pin(&id).await.map_err(|error| error.to_string())),
         Effect::Unpin => Msg::Pinned(client.unpin().await.map_err(|error| error.to_string())),
@@ -223,6 +226,17 @@ pub(super) async fn perform(client: &Client, effect: Effect) -> Msg {
                 .await
                 .map_err(|error| error.to_string()),
         ),
+        Effect::SaveNames(style) => Msg::Saved(save_names(prefs, style).await),
+    }
+}
+
+async fn save_names(path: Option<&Path>, style: NameStyle) -> Result<(), String> {
+    let Some(path) = path.map(Path::to_path_buf) else {
+        return Err("не найден каталог настроек: задайте HOME или XDG_CONFIG_HOME".to_owned());
+    };
+    match tokio::task::spawn_blocking(move || prefs::save(&path, style)).await {
+        Ok(result) => result.map_err(|error| error.to_string()),
+        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -560,17 +574,17 @@ mod tests {
         let fake = start(temp.path().join("raycat.sock"), true);
         let client = Client::new(fake.socket.clone());
 
-        let Msg::Pinned(Ok(pinned)) = perform(&client, Effect::Pin("main/NL-1".to_owned())).await
+        let Msg::Pinned(Ok(pinned)) = perform(&client, Effect::Pin("main/NL-1".to_owned()), None).await
         else {
             panic!("ожидался ответ о закреплении");
         };
         assert_eq!(pinned.node.as_deref(), Some("main/NL-1"));
-        let Msg::Pinned(Ok(unpinned)) = perform(&client, Effect::Unpin).await else {
+        let Msg::Pinned(Ok(unpinned)) = perform(&client, Effect::Unpin, None).await else {
             panic!("ожидался ответ о снятии закрепления");
         };
         assert_eq!(unpinned.node, None);
         let Msg::Updated(Err(error)) =
-            perform(&client, Effect::Update(Some("main".to_owned()))).await
+            perform(&client, Effect::Update(Some("main".to_owned())), None).await
         else {
             panic!("ожидалась ошибка обновления");
         };
