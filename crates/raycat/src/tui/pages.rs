@@ -446,7 +446,7 @@ fn specs(nodes: &[&Node], speed: &str, style: NameStyle) -> Vec<Spec> {
         right,
     };
     vec![
-        spec(Kind::Marker, "", 1, 1, false),
+        spec(Kind::Marker, "", 2, 2, false),
         spec(Kind::Name, "Узел", name.min(12), name, false),
         spec(Kind::Status, "Статус", STATUS_WIDTH, STATUS_WIDTH, false),
         spec(Kind::Latency, "Задержка", 8, 8, true),

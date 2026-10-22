@@ -8,7 +8,6 @@ use raycat_proto::{SubscriptionStatus, XrayStatus};
 use super::app::{App, Hit, InputMode, Link, Tab, Target};
 use super::canvas::{Canvas, GAP, Palette, Seg, fit, highlight, wrap};
 use super::pages;
-use crate::names::{NameStyle, country_code, display_name};
 use crate::render;
 use crate::term::{Tone, display_width, pad};
 use crate::util::{format_bytes, local_zone};
@@ -21,7 +20,6 @@ const BANNER_HINT_LINES: usize = 2;
 const BAR_CELLS: usize = 10;
 /// Скорость ниже этого значения бит/с показывается как «—».
 const MIN_SPEED: u64 = 1_000;
-pub(super) const HEADER_LINES: usize = 2;
 /// Строки, которые всегда остаются телу вкладки.
 pub(super) const BODY_MIN: usize = 3;
 
@@ -156,15 +154,13 @@ fn banner(canvas: &mut Canvas<'_>, app: &App, y0: usize, limit: usize) -> usize 
     count
 }
 
+/// Общая строка состояния. Узел, задержка и скорость — в карточке обзора.
 fn header(canvas: &mut Canvas<'_>, app: &App, y: usize, limit: usize) -> usize {
-    let count = limit.min(HEADER_LINES);
-    if count > 0 {
-        header_top(canvas, app, y);
+    if limit == 0 {
+        return 0;
     }
-    if count > 1 {
-        header_node(canvas, app, y + 1);
-    }
-    count
+    header_top(canvas, app, y);
+    1
 }
 
 fn link_seg(link: &Link) -> Seg {
@@ -217,55 +213,6 @@ fn header_top(canvas: &mut Canvas<'_>, app: &App, y: usize) {
     if end + GAP + width <= canvas.width {
         canvas.put(canvas.width - width, y, &text, width, Tone::Dim);
     }
-}
-
-/// Текущий узел: имя, задержка, скорость и выбор. Код страны выводится отдельно только
-/// в режиме «как есть»: в режиме кода он уже стоит вместо флага.
-fn header_node(canvas: &mut Canvas<'_>, app: &App, y: usize) {
-    let Some(status) = &app.status else {
-        canvas.line(
-            y,
-            0,
-            vec![Seg::new("данных от демона ещё нет", Tone::Dim, 0)],
-        );
-        return;
-    };
-    let Some(node) = &status.node else {
-        canvas.line(
-            y,
-            0,
-            vec![Seg::new("узел: не выбран, узлов пока нет", Tone::Yellow, 0)],
-        );
-        return;
-    };
-    let mut segs = vec![Seg::new(
-        format!("▶ {}", display_name(&node.name, app.names)),
-        Tone::Bold,
-        0,
-    )];
-    if app.names == NameStyle::AsIs
-        && let Some(code) = country_code(&node.name)
-    {
-        segs.push(Seg::new(code, Tone::Plain, 1));
-    }
-    segs.push(Seg::new(
-        render::latency_text(node.latency_ms),
-        delay_tone(node.latency_ms),
-        0,
-    ));
-    if let Some(speed) = app.speed() {
-        segs.push(Seg::new(speed_label(speed.down, speed.up), Tone::Plain, 1));
-    }
-    let choice = if node.pinned {
-        "закреплён"
-    } else {
-        "авто"
-    };
-    segs.push(Seg::new(choice, Tone::Dim, 0));
-    if let Some(reason) = &node.reason {
-        segs.push(Seg::new(reason.clone(), Tone::Dim, 0));
-    }
-    canvas.line(y, 0, segs);
 }
 
 /// Без данных задержка тусклая, иначе цвет по порогам из `render`.
@@ -675,7 +622,7 @@ mod tests {
         let mut app = App::new(NOW);
         let lines = screen(&mut app, 80, 20);
         assert_eq!(lines[1], "raycat · ● подключение…");
-        assert_eq!(lines[2], "данных от демона ещё нет");
+        assert!(has_line(&lines, "данных от демона ещё нет"), "{lines:?}");
         assert!(lines.last().unwrap().contains("q выход"));
 
         app.apply(Msg::Down {
@@ -877,7 +824,7 @@ mod tests {
             lines[1],
             "raycat · шлюз · ● подключено · xray не запущен · kill switch ●"
         );
-        assert_eq!(lines[2], "узел: не выбран, узлов пока нет");
+        assert!(has_line(&lines, "узел не выбран"), "{lines:?}");
 
         let mut status = sample_status();
         status.xray.restarts = 2;
@@ -965,9 +912,9 @@ mod tests {
         press(&mut app, KeyCode::Char('3'));
         let terminal = paint(&mut app, 80, 20, true);
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, 4)].symbol(), "╭");
-        assert_eq!(buffer[(79, 4)].symbol(), "╮");
-        assert_eq!(buffer[(0, 4)].style().fg, Some(Color::DarkGray));
+        assert_eq!(buffer[(0, 3)].symbol(), "╭");
+        assert_eq!(buffer[(79, 3)].symbol(), "╮");
+        assert_eq!(buffer[(0, 3)].style().fg, Some(Color::DarkGray));
     }
 
     #[test]

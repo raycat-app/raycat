@@ -543,7 +543,7 @@ impl App {
             Msg::Connected => self.link = Link::Up,
             Msg::Snapshot(snapshot) => self.set_snapshot(*snapshot),
             Msg::Event(event) => {
-                let (tone, text) = render::event_text(&event);
+                let (tone, text) = render::event_text(&event, self.names);
                 self.push_log(tone, &text);
             }
             Msg::Down { reason, retry_in } => self.on_down(&reason, retry_in),
