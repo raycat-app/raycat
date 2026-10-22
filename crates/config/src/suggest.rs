@@ -58,7 +58,7 @@ mod tests {
         );
         assert_eq!(nearest("hap", &["happ", "incy"]), Some("happ"));
         assert_eq!(nearest("INCY", &["happ", "incy"]), Some("incy"));
-        assert_eq!(nearest("gatway", &["proxy", "gateway"]), Some("gateway"));
+        assert_eq!(nearest("gatewai", &["proxy", "gateway"]), Some("gateway"));
     }
 
     #[test]

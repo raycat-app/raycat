@@ -1235,7 +1235,7 @@ fn unknown_keys_are_compared_with_their_own_section() {
 
 #[test]
 fn enum_values_get_a_hint_for_a_typo() {
-    let list = problems(&format!("{OK_SUB}\n[mode]\ntype = \"gatway\"\n"));
+    let list = problems(&format!("{OK_SUB}\n[mode]\ntype = \"gatewai\"\n"));
     assert_eq!(
         list,
         ["mode.type: допустимо: proxy или gateway — может быть, «gateway»?"]
