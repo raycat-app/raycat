@@ -14,11 +14,13 @@ def category:
   elif ((files | length) > 0)
        and (files | all(startswith("crates/emulation/profiles/") or startswith("crates/emulation/captures/")))
   then "emulation"
+  elif ((files | length) > 0) and (files | all(startswith("crates/routing/data/")))
+  then "data"
   else "code" end;
 
 def wait_seconds:
   if . == "hotfix" or . == "xray" then 0
-  elif . == "emulation" then 86400
+  elif . == "emulation" or . == "data" then 86400
   else 259200 end;
 
 def hours: ((. / 3600) | ceil);

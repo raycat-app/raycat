@@ -33,7 +33,6 @@ jobs:
           gh pr edit "$PR" --title "$title"
           printf 'title=%s\n' "$title" >> "$GITHUB_OUTPUT"
       - name: Автослияние после зелёного CI
-        if: ${{ steps.meta.outputs.update-type != 'version-update:semver-major' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.html_url }}

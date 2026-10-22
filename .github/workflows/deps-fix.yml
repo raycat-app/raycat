@@ -1,0 +1,319 @@
+name: Исправление зависимостей
+
+# Каждые 3 часа cargo deny проверяет уязвимости (RustSec) и отозванные версии на main. Если проверка
+# падает, бот точечно обновляет пакеты из отчёта (cargo update -p), а если этого мало, весь Cargo.lock,
+# и открывает PR «fix: обновление уязвимых зависимостей (…)» с меткой «безопасность»: такие исправления
+# продвигаются в stable без выдержки. Обязательные проверки бот запускает сам и сливает PR после зелёных.
+# Если исправить не удалось или PR не прошёл проверки, заводится issue с отчётом cargo-deny (одно).
+# Разбор отчёта и тесты — в .github/deps.
+#
+# События GITHUB_TOKEN не запускают другие workflow, поэтому обязательные проверки ruleset («Итог» из
+# ci.yml и «Заголовок PR» из pr-title.yml) бот запускает сам через workflow_dispatch на ветке PR и
+# публикует их результат статусами коммита с теми же именами.
+
+on:
+  schedule:
+    - cron: "23 */3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: deps-fix
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    name: Проверка на main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    outputs:
+      failed: ${{ steps.deny.outputs.failed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-deny
+      - name: cargo deny на main
+        id: deny
+        run: |
+          if cargo deny --config .cargo/deny.toml --log-level warn --format json --manifest-path ./Cargo.toml --all-features check advisories 2> "$RUNNER_TEMP/deny.jsonl"; then
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Отчёт в описании запуска
+        if: ${{ steps.deny.outputs.failed == 'true' }}
+        run: bash .github/deps/report.sh "$RUNNER_TEMP/deny.jsonl" >> "$GITHUB_STEP_SUMMARY"
+      - name: Артефакт отчёта
+        if: ${{ steps.deny.outputs.failed == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deny-main
+          path: ${{ runner.temp }}/deny.jsonl
+          if-no-files-found: error
+          retention-days: 7
+
+  fix:
+    name: Обновление и PR
+    needs: scan
+    if: ${{ needs.scan.outputs.failed == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    outputs:
+      pr: ${{ steps.pr.outputs.number }}
+      sha: ${{ steps.pr.outputs.sha }}
+      branch: ${{ steps.pr.outputs.branch }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-deny
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: deny-main
+          path: ${{ runner.temp }}/main
+      - name: Открытый PR бота
+        id: open
+        run: |
+          open=$(gh pr list -R "$REPO" --state open --limit 200 --json headRefName --jq '[.[] | select(.headRefName | startswith("bot/deps-fix-"))] | length')
+          if [ "$open" != 0 ]; then
+            echo "::notice::открыт PR бота исправления зависимостей, новый не открывается"
+          fi
+          echo "open=$open" >> "$GITHUB_OUTPUT"
+      - name: Пакеты из отчёта
+        id: select
+        if: ${{ steps.open.outputs.open == '0' }}
+        run: |
+          bash .github/deps/select.sh "$RUNNER_TEMP/main/deny.jsonl" > "$RUNNER_TEMP/selected.json"
+          count=$(jq '.specs | length' "$RUNNER_TEMP/selected.json")
+          [ "$count" -gt 0 ] || { echo "::error::в отчёте нет уязвимых или отозванных пакетов, которые можно обновить"; exit 1; }
+          echo "пакеты: $(jq -r '.specs | join(", ")' "$RUNNER_TEMP/selected.json")"
+      - name: Обновление Cargo.lock
+        id: update
+        if: ${{ steps.open.outputs.open == '0' }}
+        run: |
+          check() {
+            cargo deny --config .cargo/deny.toml --log-level warn --format json --manifest-path ./Cargo.toml --all-features check advisories 2> "$RUNNER_TEMP/deny-after.jsonl"
+          }
+          mode=точечное
+          while IFS= read -r spec; do
+            cargo update --quiet -p "$spec" || echo "::warning::cargo update -p $spec не сработал"
+          done < <(jq -r '.specs[]' "$RUNNER_TEMP/selected.json")
+          fixed=true
+          if ! check; then
+            mode=полное
+            cargo update --quiet
+            check || fixed=false
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "fixed=$fixed" >> "$GITHUB_OUTPUT"
+          [ "$fixed" = true ] || { echo "::error::cargo deny находит проблемы и после полного обновления Cargo.lock"; exit 1; }
+      - name: Коммит, ветка и pull request
+        id: pr
+        if: ${{ steps.open.outputs.open == '0' }}
+        env:
+          MODE: ${{ steps.update.outputs.mode }}
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo "::notice::Cargo.lock не изменился, PR не нужен"
+            exit 0
+          fi
+          title=$(jq -r '.title' "$RUNNER_TEMP/selected.json")
+          branch="bot/deps-fix-$(date -u +%Y-%m-%d)"
+          {
+            echo "Зависимости обновлены автоматически: cargo deny на main нашёл уязвимые или отозванные версии."
+            echo
+            echo "- пакеты: $(jq -r '.specs | join(", ")' "$RUNNER_TEMP/selected.json")"
+            echo "- обновление: $MODE"
+            echo "- прогон: $RUN_URL"
+            echo
+            echo "Отчёт cargo-deny до обновления:"
+            echo
+            bash .github/deps/report.sh "$RUNNER_TEMP/main/deny.jsonl"
+            echo
+            echo "Изменения Cargo.lock:"
+            echo
+            echo '```diff'
+            git diff -U0 -- Cargo.lock | grep '^[+-][^+-]' || true
+            echo '```'
+          } > "$RUNNER_TEMP/body.md"
+          { echo "$title"; echo; cat "$RUNNER_TEMP/body.md"; } > "$RUNNER_TEMP/message.txt"
+          git config user.name sleepyhead-dev
+          git config user.email 184401951+sleepyhead-dev@users.noreply.github.com
+          git switch -c "$branch"
+          git add Cargo.lock
+          git commit -q -F "$RUNNER_TEMP/message.txt"
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push --force origin "$branch"
+          base=$(gh api "repos/$REPO" --jq .default_branch)
+          output=$(gh pr create -R "$REPO" --base "$base" --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md" --label безопасность)
+          number=$(printf '%s\n' "$output" | tail -n 1)
+          number=${number##*/}
+          [[ "$number" =~ ^[0-9]+$ ]] || { echo "::error::номер PR не определён"; exit 1; }
+          {
+            echo "number=$number"
+            echo "sha=$(git rev-parse HEAD)"
+            echo "branch=$branch"
+          } >> "$GITHUB_OUTPUT"
+      - name: Артефакт проверки после обновления
+        if: ${{ always() && steps.open.outputs.open == '0' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deny-after
+          path: ${{ runner.temp }}/deny-after.jsonl
+          if-no-files-found: ignore
+          retention-days: 7
+
+  verify:
+    name: Проверки и слияние
+    needs: fix
+    if: ${{ needs.fix.outputs.pr != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ needs.fix.outputs.pr }}
+      SHA: ${{ needs.fix.outputs.sha }}
+      BRANCH: ${{ needs.fix.outputs.branch }}
+    steps:
+      - name: Запуск обязательных проверок
+        run: |
+          gh workflow run ci.yml -R "$REPO" --ref "$BRANCH"
+          gh workflow run pr-title.yml -R "$REPO" --ref "$BRANCH" -f "pr=$PR"
+      - name: Ожидание проверок
+        run: |
+          find_run() {
+            local id
+            for _ in $(seq 1 30); do
+              id=$(gh run list -R "$REPO" --workflow "$1" --branch "$BRANCH" --event workflow_dispatch --limit 20 --json databaseId,headSha |
+                jq -r --arg sha "$SHA" '[.[] | select(.headSha == $sha)][0].databaseId // empty')
+              if [ -n "$id" ]; then
+                echo "$id"
+                return 0
+              fi
+              sleep 10
+            done
+            return 1
+          }
+          # Проверки ручных запусков к PR не привязываются, а ruleset ждёт проверки с
+          # именами «Итог» и «Заголовок PR»: результат прогона бот публикует статусом
+          # коммита с тем же именем.
+          publish() {
+            local url
+            url=$(gh run view "$2" -R "$REPO" --json url --jq .url)
+            gh api -X POST "repos/$REPO/statuses/$SHA" -f state="$3" -f context="$1" \
+              -f description="Результат ручного запуска workflow" -f target_url="$url" --jq .state
+          }
+          title_run=$(find_run pr-title.yml)
+          ci_run=$(find_run ci.yml)
+          echo "заголовок PR: прогон $title_run, CI: прогон $ci_run"
+          failed=0
+          title_state=success
+          ci_state=success
+          gh run watch "$title_run" -R "$REPO" --exit-status --interval 20 > /dev/null || title_state=failure
+          gh run watch "$ci_run" -R "$REPO" --exit-status --interval 30 > /dev/null || ci_state=failure
+          publish "Заголовок PR" "$title_run" "$title_state"
+          publish "Итог" "$ci_run" "$ci_state"
+          [ "$title_state" = success ] && [ "$ci_state" = success ] || failed=1
+          exit "$failed"
+      - name: Ruleset засчитывает проверки
+        run: |
+          for _ in $(seq 1 20); do
+            if gh pr checks "$PR" -R "$REPO" --required; then
+              exit 0
+            fi
+            sleep 15
+          done
+          exit 1
+      - name: Слияние
+        run: |
+          title=$(gh pr view "$PR" -R "$REPO" --json title --jq .title)
+          body=$(gh pr view "$PR" -R "$REPO" --json body --jq .body)
+          gh pr merge "$PR" -R "$REPO" --squash --match-head-commit "$SHA" --subject "$title (#$PR)" --body "$body"
+      - name: Выпуск после слияния
+        run: gh workflow run ci.yml -R "$REPO" --ref main
+
+  report:
+    name: Отчёт об ошибке
+    needs: [scan, fix, verify]
+    if: ${{ always() && (needs.fix.result == 'failure' || needs.verify.result == 'failure') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      FIX: ${{ needs.fix.result }}
+      VERIFY: ${{ needs.verify.result }}
+      PR: ${{ needs.fix.outputs.pr }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: deny-main
+          path: ${{ runner.temp }}/main
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: deny-after
+          path: ${{ runner.temp }}/after
+      - name: Issue
+        run: |
+          if [ "$VERIFY" = failure ]; then
+            title="Зависимости: PR бота не прошёл проверки"
+          else
+            title="Зависимости: не удалось исправить автоматически"
+          fi
+          report="$RUNNER_TEMP/after/deny-after.jsonl"
+          [ -s "$report" ] || report="$RUNNER_TEMP/main/deny.jsonl"
+          {
+            echo "Автоматическое исправление зависимостей не дошло до слияния."
+            echo
+            echo "- исправление: $FIX"
+            if [ -n "$PR" ]; then
+              echo "- PR: #$PR"
+            fi
+            echo "- проверки PR и слияние: $VERIFY"
+            echo "- прогон: $RUN_URL"
+            echo
+            echo "Отчёт cargo-deny:"
+            echo
+            bash .github/deps/report.sh "$report" || echo "- отчёт не получен"
+          } > "$RUNNER_TEMP/body.md"
+          existing=$(gh issue list -R "$REPO" --state open --label зависимости --json number,title |
+            jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" -R "$REPO" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh issue create -R "$REPO" --title "$title" --body-file "$RUNNER_TEMP/body.md" --label зависимости --label безопасность
+          fi
