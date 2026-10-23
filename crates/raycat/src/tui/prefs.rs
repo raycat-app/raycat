@@ -138,7 +138,7 @@ mod tests {
     fn masks_are_split_by_commas() {
         let prefs = parse("hidden = \"Обход*,  Резерв* , \"\n");
         assert_eq!(prefs.hidden, ["Обход*", "Резерв*"]);
-        assert!(split_masks("  , ").is_empty());
+        assert_eq!(split_masks("  , "), Vec::<String>::new());
     }
 
     #[test]
