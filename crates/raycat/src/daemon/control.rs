@@ -8,7 +8,7 @@ use raycat_proto::{
     CurrentNode, Event, Mode as ApiMode, Node as ApiNode, NodeStatus, Nodes, Pinned, Status,
     SubscriptionStatus, UpdateResult, Updates, XrayStatus,
 };
-use raycat_select::{Decision, Status as SelectStatus};
+use raycat_select::{Decision, Reason, Status as SelectStatus};
 use raycat_subscription::Usage;
 use raycat_xray_api::{ApiError, XrayApi};
 use tokio::sync::oneshot;
@@ -242,10 +242,15 @@ impl Daemon {
         }
         if decision.changed {
             info!("узел: {}", decision.reason);
+            // Имя закреплённого узла уже стоит в событии как «до → после».
+            let reason = match &decision.reason {
+                Reason::Pinned { .. } => "закреплён вручную".to_owned(),
+                other => other.to_string(),
+            };
             self.shared.emit(Event::NodeChanged {
                 from: decision.previous_id.clone(),
                 to: decision.selected_id.clone(),
-                reason: decision.reason.to_string(),
+                reason,
             });
         }
         match decision.selected {

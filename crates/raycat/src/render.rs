@@ -10,7 +10,7 @@ use raycat_proto::{
     SubscriptionStatus, Updates, XrayState, XrayStatus,
 };
 
-use crate::names::{NameStyle, display_name};
+use crate::names::{NameStyle, display_name, node_reason};
 use crate::term::{Align, Cell, Column, Term, Tone, display_width, pad, table, truncate};
 use crate::util::{format_bytes, format_date, format_duration, format_moment, sanitize};
 
@@ -345,14 +345,13 @@ fn node_columns() -> Vec<Column> {
     ]
 }
 
-/// Маркер строки узла: закреплён, выбран или пусто.
+/// Маркер строки узла: текущий — `▶`, закреплённый — `★`, оба — `▶★`.
 pub(crate) fn node_marker(node: &Node) -> (&'static str, Tone) {
-    if node.pinned {
-        ("★", Tone::Yellow)
-    } else if node.selected {
-        ("▶", Tone::Green)
-    } else {
-        ("", Tone::Plain)
+    match (node.selected, node.pinned) {
+        (true, true) => ("▶★", Tone::Green),
+        (true, false) => ("▶", Tone::Green),
+        (false, true) => ("★", Tone::Yellow),
+        (false, false) => ("", Tone::Plain),
     }
 }
 
@@ -385,11 +384,11 @@ pub(crate) fn latency_tone(latency_ms: Option<u64>) -> Tone {
     }
 }
 
-fn error_text(error: Option<&str>) -> String {
-    match error {
-        Some(text) => truncate(&sanitize(text), ERROR_WIDTH),
-        None => String::new(),
-    }
+/// Причина сбоя человеческими словами; сырой текст остаётся в `--json`.
+fn reason_text(error: Option<&str>) -> String {
+    error
+        .and_then(node_reason)
+        .map_or_else(String::new, |reason| truncate(reason, ERROR_WIDTH))
 }
 
 fn node_row(node: &Node) -> Vec<Cell> {
@@ -413,7 +412,7 @@ fn node_row(node: &Node) -> Vec<Cell> {
         Cell::new(latency_text(node.latency_ms), latency_tone(node.latency_ms)),
         Cell::new(node.failures.to_string(), failures_tone),
         Cell::new(node_traffic(node), Tone::Plain),
-        Cell::new(error_text(node.last_error.as_deref()), Tone::Red),
+        Cell::new(reason_text(node.last_error.as_deref()), Tone::Red),
     ]
 }
 
@@ -595,8 +594,14 @@ fn node_or_dash(node: Option<&str>) -> String {
     )
 }
 
-/// Текст события без времени и его тон; строки от провайдера очищены.
-pub(crate) fn event_text(event: &Event) -> (Tone, String) {
+/// Текст события без времени и его тон. Весь текст, включая имена узлов, проходит ту же
+/// нормализацию, что и имена: флаги становятся кодами стран, эмодзи убираются.
+pub(crate) fn event_text(event: &Event, style: NameStyle) -> (Tone, String) {
+    let (tone, text) = event_body(event);
+    (tone, display_name(&text, style))
+}
+
+fn event_body(event: &Event) -> (Tone, String) {
     match event {
         Event::Hello { version } => (
             Tone::Dim,
@@ -662,7 +667,7 @@ pub(crate) fn event_line(
     zone: &TimeZone,
     event: &Event,
 ) -> String {
-    let (tone, text) = event_text(event);
+    let (tone, text) = event_text(event, NameStyle::Country);
     format!(
         "{}  {}",
         term.paint(Tone::Dim, &format_moment(time, now, zone)),
@@ -904,15 +909,15 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(
             lines[0],
-            "   Подписка  Узел  Статус  Задержка  Сбои  Трафик                Ошибка"
+            "    Подписка  Узел  Статус  Задержка  Сбои  Трафик                Ошибка"
         );
         assert_eq!(
             lines[1],
-            "★  main      NL-1  ● жив      31 мс     0  ↑10.0 КиБ ↓200.0 КиБ"
+            "▶★  main      NL-1  ● жив      31 мс     0  ↑10.0 КиБ ↓200.0 КиБ"
         );
         assert_eq!(
             lines[2],
-            "   main      DE-2  ● жив      31 мс     0  ↑10.0 КиБ ↓200.0 КиБ"
+            "    main      DE-2  ● жив      31 мс     0  ↑10.0 КиБ ↓200.0 КиБ"
         );
         assert_eq!(
             lines[3],
@@ -951,26 +956,26 @@ mod tests {
     fn the_error_column_goes_first_when_the_width_runs_out() {
         let mut data = sample_nodes();
         data.nodes[2].last_error = Some("тайм-аут".to_owned());
-        // Без колонки «Ошибка» таблица занимает 70 ячеек, с ней — 80.
+        // Без колонки «Ошибка» таблица занимает 70 ячеек, с ней — 94 (причина по-русски).
         let narrow = nodes(Term::new(false, Some(79)), &data, true);
         assert!(!narrow.contains("Ошибка"), "{narrow}");
         assert!(!narrow.contains("тайм-аут"), "{narrow}");
         assert!(!narrow.contains('…'), "{narrow}");
-        let wide = nodes(Term::new(false, Some(80)), &data, true);
+        let wide = nodes(Term::new(false, Some(94)), &data, true);
         assert!(wide.contains("Ошибка"), "{wide}");
         assert!(wide.contains("тайм-аут"), "{wide}");
     }
 
     #[test]
-    fn a_long_error_is_cut_with_an_ellipsis() {
+    fn the_table_shows_the_reason_not_the_raw_error() {
         let mut data = sample_nodes();
-        data.nodes[2].last_error =
-            Some("панель не ответила за отведённое время, попробуйте позже".to_owned());
-        let text = nodes(plain(), &data, true);
-        assert!(
-            text.contains("панель не ответила за отведённое время,…"),
-            "{text}"
+        data.nodes[2].last_error = Some(
+            "the outbound node-007-main is dead: GET request failed: context deadline exceeded"
+                .to_owned(),
         );
+        let text = nodes(plain(), &data, true);
+        assert!(text.contains("не отвечает (тайм-аут)"), "{text}");
+        assert!(!text.contains("outbound"), "{text}");
     }
 
     #[test]
@@ -1181,5 +1186,33 @@ mod tests {
             },
         );
         assert!(!line.contains('\x1b'));
+    }
+
+    #[test]
+    fn event_text_normalizes_flags_in_the_whole_line() {
+        let event = Event::NodeChanged {
+            from: Some("main/DE Германия 1".to_owned()),
+            to: Some("main/🇳🇱 Нидерланды 2".to_owned()),
+            reason: "закреплён вручную: «🇳🇱 Нидерланды 2»".to_owned(),
+        };
+        let (_, text) = event_text(&event, NameStyle::Country);
+        assert_eq!(
+            text,
+            "узел: main/DE Германия 1 → main/NL Нидерланды 2: закреплён вручную: «NL Нидерланды 2»"
+        );
+        let (_, kept) = event_text(&event, NameStyle::AsIs);
+        assert!(kept.contains("🇳🇱 Нидерланды 2"));
+    }
+
+    #[test]
+    fn the_marker_shows_the_current_and_the_pinned_node() {
+        let mut current = node("NL-1", NodeStatus::Alive, true);
+        assert_eq!(node_marker(&current).0, "▶");
+        current.pinned = true;
+        assert_eq!(node_marker(&current).0, "▶★");
+        let mut pinned = node("DE-2", NodeStatus::Alive, false);
+        pinned.pinned = true;
+        assert_eq!(node_marker(&pinned).0, "★");
+        assert_eq!(node_marker(&node("FI-5", NodeStatus::Alive, false)).0, "");
     }
 }
