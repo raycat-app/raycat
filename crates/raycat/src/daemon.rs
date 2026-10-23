@@ -1205,11 +1205,11 @@ mod tests {
         daemon.restart = Restart::Idle;
         let before = daemon.applied.clone();
         let reloaded = daemon
-            .apply_config(parsed(&config_text("", "[selection]\nfailures = 9\n")))
+            .apply_config(&parsed(&config_text("", "[selection]\nfailures = 9\n")))
             .unwrap();
         assert!(reloaded.changed);
         assert!(!reloaded.xray_restart);
-        assert!(reloaded.restart_required.is_empty());
+        assert_eq!(reloaded.restart_required, Vec::<String>::new());
         assert_eq!(daemon.restart, Restart::Idle);
         assert_eq!(daemon.applied, before);
         assert_eq!(daemon.selector.settings().failures, 9);
@@ -1224,7 +1224,7 @@ mod tests {
         assert_eq!(daemon.applied_nodes, 2);
         daemon.restart = Restart::Idle;
         let reloaded = daemon
-            .apply_config(parsed(&config_text("deny = [\"Two\"]\n", "")))
+            .apply_config(&parsed(&config_text("deny = [\"Two\"]\n", "")))
             .unwrap();
         assert!(reloaded.xray_restart);
         assert_eq!(daemon.applied_nodes, 1);
@@ -1237,7 +1237,7 @@ mod tests {
         let proxy = "[mode]\ntype = \"proxy\"\nlisten = \"127.0.0.1:7890\"\n";
         let mut daemon = daemon_with(&["a"], proxy, &temp);
         let reloaded = daemon
-            .apply_config(parsed(&config_text(
+            .apply_config(&parsed(&config_text(
                 "",
                 "[mode]\ntype = \"proxy\"\nlisten = \"127.0.0.1:9999\"\n",
             )))
