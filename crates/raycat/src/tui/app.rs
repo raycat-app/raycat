@@ -1211,21 +1211,20 @@ impl App {
             return None;
         };
         let remove = self.excluding_mask(&node);
-        let choices = match &remove {
-            Some(mask) => vec![mask.clone()],
-            None => {
-                let mut choices = vec![node.name.clone()];
-                let label = display_name(&node.name, NameStyle::Country);
-                let word = without_code(&label)
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or_default();
-                let suggested = format!("{word}*");
-                if !word.is_empty() && !choices.contains(&suggested) {
-                    choices.push(suggested);
-                }
-                choices
+        let choices = if let Some(mask) = &remove {
+            vec![mask.clone()]
+        } else {
+            let mut choices = vec![node.name.clone()];
+            let label = display_name(&node.name, NameStyle::Country);
+            let word = without_code(&label)
+                .split_whitespace()
+                .next()
+                .unwrap_or_default();
+            let suggested = format!("{word}*");
+            if !word.is_empty() && !choices.contains(&suggested) {
+                choices.push(suggested);
             }
+            choices
         };
         self.exclude = Some(ExcludeDialog {
             subscription: node.subscription.clone(),
@@ -1238,9 +1237,7 @@ impl App {
     }
 
     fn exclude_key(&mut self, key: KeyEvent) -> Option<Effect> {
-        let Some(dialog) = self.exclude.as_mut() else {
-            return None;
-        };
+        let dialog = self.exclude.as_mut()?;
         let count = dialog.choices.len();
         match key.code {
             KeyCode::Esc => self.exclude = None,
@@ -1394,7 +1391,7 @@ impl App {
                 });
                 (!hide_dead || alive)
                     && !masked
-                    && !(hide_excluded && excluded)
+                    && (!hide_excluded || !excluded)
                     && subscription.is_none_or(|name| node.subscription == name)
                     && (needle.is_empty() || node.id.to_lowercase().contains(&needle))
             })
