@@ -392,7 +392,7 @@ async fn reload(State(shared): State<Arc<Shared>>) -> Result<Json<Reloaded>, Api
     ask(&shared, |reply| Command::Reload { reply }).await
 }
 
-/// `PATCH /v1/settings`: частичное изменение. Тело не больше 64 КиБ.
+/// Частичное изменение через `PATCH /v1/settings`; размер тела ограничен `PATCH_LIMIT`.
 async fn patch_settings(
     State(shared): State<Arc<Shared>>,
     body: Bytes,

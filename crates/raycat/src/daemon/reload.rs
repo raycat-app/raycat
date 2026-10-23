@@ -381,16 +381,16 @@ impl Daemon {
     /// `PATCH /v1/settings`: проверяет новый текст, пишет файл атомарно и применяет его.
     /// Если проверка не прошла, файл не трогается.
     pub(super) fn patch(&mut self, patch: SettingsPatch) -> Result<Reloaded, Refusal> {
-        let (path, text) = self.file.text()?;
+        let (target, source) = self.file.text()?;
         let changes = patch
             .changes
             .iter()
             .map(change)
             .collect::<Result<Vec<_>, _>>()?;
         let edited =
-            edit::apply(&text, &changes).map_err(|error| Refusal::Invalid(error.to_string()))?;
+            edit::apply(&source, &changes).map_err(|error| Refusal::Invalid(error.to_string()))?;
         let next = self.file.parse(&edited)?;
-        edit::write(&path, &edited).map_err(|error| Refusal::Unavailable(error.to_string()))?;
+        edit::write(&target, &edited).map_err(|error| Refusal::Unavailable(error.to_string()))?;
         self.apply_config(next)
     }
 

@@ -1279,7 +1279,7 @@ mod tests {
             env: Env::new(),
             root: false,
         };
-        let patch = raycat_proto::SettingsPatch {
+        let request = raycat_proto::SettingsPatch {
             changes: vec![raycat_proto::SettingChange {
                 table: Some("selection".to_owned()),
                 subscription: None,
@@ -1287,7 +1287,7 @@ mod tests {
                 value: raycat_proto::SettingValue::Number(9),
             }],
         };
-        let reloaded = daemon.patch(patch).unwrap();
+        let reloaded = daemon.patch(request).unwrap();
         assert!(reloaded.changed);
         assert!(
             std::fs::read_to_string(&path)
@@ -1309,7 +1309,7 @@ mod tests {
             env: Env::new(),
             root: false,
         };
-        let patch = raycat_proto::SettingsPatch {
+        let request = raycat_proto::SettingsPatch {
             changes: vec![raycat_proto::SettingChange {
                 table: Some("selection".to_owned()),
                 subscription: None,
@@ -1318,7 +1318,7 @@ mod tests {
             }],
         };
         assert!(matches!(
-            daemon.patch(patch),
+            daemon.patch(request),
             Err(crate::api::Refusal::Invalid(_))
         ));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
