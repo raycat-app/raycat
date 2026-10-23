@@ -263,6 +263,8 @@ reason and reconnects by itself.
 | `o` | sort nodes in turn: latency, name, subscription, status (click a column header for the direction) |
 | `h` | hidden nodes: masks separated by commas (`Enter` — apply, `Esc` — cancel) |
 | `t` | speed test through the selected node; `Esc` during the test cancels it |
+| `x` | exclude the selected node from autoselection (a `deny` mask of the subscription; pick a variant, `Enter` confirms). An excluded node is marked `⊘`; `x` on it removes the exclusion |
+| `e` | hide or show excluded nodes |
 | `/` | search nodes (`Enter` applies, `Esc` clears) |
 | `w` | in the log, only warnings and errors |
 | `Esc` | close the details and clear the filters; at the top level, quit |
@@ -840,7 +842,7 @@ xhttp_connections = 4       # 1 to 16; not set means the provider's setting
 2. **«демон не запущен» (the daemon is not running), or `raycat status` cannot see the daemon.** Check
    the service: `sudo systemctl status raycat` and `journalctl -u raycat -n 100`. After the first install
    the service does not start by itself: put in the subscription link and run `sudo systemctl start raycat`.
-   After changing the settings, run `sudo systemctl restart raycat`. In a container, read the log with
+   After changing the settings, run `sudo raycat reload`: keys that take effect on the fly apply at once; the others (mode, proxy address, subscription, device) need `sudo systemctl restart raycat`. In a container, read the log with
    `docker compose logs -f raycat`.
 
 3. **«нет прав на сокет … (попробуйте sudo)» (no permission for the socket … (try sudo)).** Client commands

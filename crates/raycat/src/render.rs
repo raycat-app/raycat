@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use jiff::tz::TimeZone;
 use raycat_proto::{
-    CurrentNode, Event, Mode, Node, NodeStatus, Nodes, SpeedtestProgress, SpeedtestResult, Status,
-    SubscriptionStatus, Updates, XrayState, XrayStatus,
+    CurrentNode, Event, Mode, Node, NodeStatus, Nodes, Reloaded, SpeedtestProgress,
+    SpeedtestResult, Status, SubscriptionStatus, Updates, XrayState, XrayStatus,
 };
 
 use crate::names::{NameStyle, display_name, node_reason};
@@ -592,6 +592,25 @@ fn node_or_dash(node: Option<&str>) -> String {
         || "—".to_owned(),
         |name| display_name(name, NameStyle::Country),
     )
+}
+
+/// Итог перечитывания: что применилось и что ждёт перезапуска raycat.
+pub(crate) fn reloaded(reloaded: &Reloaded) -> String {
+    let mut lines = vec![if reloaded.changed {
+        "Настройки применены".to_owned()
+    } else {
+        "Изменений нет: настройки уже действуют".to_owned()
+    }];
+    if reloaded.xray_restart {
+        lines.push("конфиг xray изменился: xray перезапустится".to_owned());
+    }
+    for key in &reloaded.restart_required {
+        lines.push(format!(
+            "нужен перезапуск raycat (systemctl restart raycat или docker compose restart): ключ «{}»",
+            sanitize(key)
+        ));
+    }
+    lines.join("\n")
 }
 
 /// Текст события без времени и его тон. Весь текст, включая имена узлов, проходит ту же
