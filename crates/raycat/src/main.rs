@@ -94,7 +94,12 @@ fn run(matches: &ArgMatches) -> Result<()> {
     match name {
         "daemon" => {
             let socket = paths::socket_path(&env, paths::is_root(), store.root());
-            daemon::run(config, store, socket)
+            let file = daemon::ConfigFile {
+                path: cli::config_path(sub).cloned(),
+                env: env.clone(),
+                root: paths::is_root(),
+            };
+            daemon::run(config, file, store, socket)
         }
         "check" => commands::check(&config, &store),
         "fetch" => {

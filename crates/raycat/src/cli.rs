@@ -344,6 +344,14 @@ fn client_commands(command: Command) -> Command {
             )
             .arg(json_flag()),
         )
+        .subcommand(
+            subcommand(
+                "reload",
+                "Перечитать файл настроек: ключи на лету применяются сразу",
+                "raycat reload",
+            )
+            .after_help("Ключи, которые действуют только после перезапуска raycat, демон перечислит в ответе."),
+        )
         .subcommand(speedtest_command())
         .subcommand(
             subcommand(

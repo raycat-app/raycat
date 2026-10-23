@@ -59,6 +59,28 @@ fn subscription_name(index: usize, table: &Table) -> String {
     }
 }
 
+/// Записан ли ключ в файле (а не взят по умолчанию). Закомментированный образец — не запись.
+pub fn has_key(text: &str, target: &Target, key: &str) -> bool {
+    let Ok(doc) = text.parse::<DocumentMut>() else {
+        return false;
+    };
+    match target {
+        Target::Table(name) => doc
+            .get(name)
+            .and_then(Item::as_table)
+            .is_some_and(|table| table.contains_key(key)),
+        Target::Subscription(name) => doc
+            .get("subscription")
+            .and_then(Item::as_array_of_tables)
+            .is_some_and(|subscriptions| {
+                subscriptions
+                    .iter()
+                    .enumerate()
+                    .any(|(index, table)| subscription_name(index, table) == *name && table.contains_key(key))
+            }),
+    }
+}
+
 /// Применяет изменения к тексту файла. Комментарии и порядок сохраняются.
 pub fn apply(text: &str, changes: &[Change]) -> Result<String, Error> {
     let mut text = text.to_owned();
