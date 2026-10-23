@@ -3,6 +3,9 @@
 //! `spawn_blocking`.
 
 mod control;
+mod reload;
+
+pub(crate) use self::reload::ConfigFile;
 mod measure;
 mod report;
 
@@ -49,12 +52,12 @@ const RESTART_DEBOUNCE: Duration = Duration::from_secs(3);
 type Finished = (usize, Refresh);
 
 /// Блокирует поток до сигнала остановки. `socket` — путь сокета API.
-pub(crate) fn run(config: Config, store: Store, socket: PathBuf) -> Result<()> {
+pub(crate) fn run(config: Config, file: ConfigFile, store: Store, socket: PathBuf) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("не удалось запустить рантайм tokio")?;
-    let result = runtime.block_on(serve(config, store, socket));
+    let result = runtime.block_on(serve(config, file, store, socket));
     // Запрос к панели в spawn_blocking нельзя прервать: не ждём его дольше секунды.
     runtime.shutdown_timeout(Duration::from_secs(1));
     result
@@ -92,7 +95,7 @@ fn initial_status(config: &Config) -> Status {
     }
 }
 
-async fn serve(config: Config, store: Store, socket: PathBuf) -> Result<()> {
+async fn serve(config: Config, file: ConfigFile, store: Store, socket: PathBuf) -> Result<()> {
     match (config.mode, &config.proxy_auth) {
         (Mode::Proxy { listen }, ProxyAuth::Off) if !listen.ip().is_loopback() => {
             warn!("прокси {listen} открыт без пароля (mode.auth = \"off\")");
@@ -104,6 +107,7 @@ async fn serve(config: Config, store: Store, socket: PathBuf) -> Result<()> {
     let (shared, mut commands) = Shared::new(initial_status(&config));
     let mut daemon = Daemon::new(
         config,
+        file,
         store,
         &machine_id,
         free_port()?,
@@ -238,6 +242,10 @@ enum Restart {
 
 struct Daemon {
     config: Config,
+    /// Файл настроек: его перечитывают `POST /v1/reload` и `PATCH /v1/settings`.
+    file: ConfigFile,
+    /// Идентификатор устройства: нужен, чтобы пересоздать подписку при смене её масок.
+    machine_id: String,
     store: Store,
     api_port: u16,
     /// Служебный вход xray для теста скорости: порт и учётные данные только в памяти.
@@ -287,6 +295,7 @@ struct Daemon {
 impl Daemon {
     fn new(
         config: Config,
+        file: ConfigFile,
         store: Store,
         machine_id: &str,
         api_port: u16,
@@ -327,6 +336,8 @@ impl Daemon {
         );
         Ok(Self {
             config,
+            file,
+            machine_id: machine_id.to_owned(),
             store,
             api_port,
             speedtest,
@@ -761,6 +772,7 @@ mod tests {
         let (shared, _commands) = Shared::new(initial_status(&config));
         Daemon::new(
             config,
+            ConfigFile::none(),
             store,
             "0d0af05ee8fd4dc29275718f2ce4dff1",
             10_085,
@@ -1171,5 +1183,162 @@ mod tests {
 
         assert_eq!(provider_news(&mut last, None), None);
         assert!(provider_news(&mut last, Some(&first)).is_some());
+    }
+
+    /// Текст настроек с одной подпиской «a»; `extra_sub` — строки внутри её блока.
+    fn config_text(extra_sub: &str, extra: &str) -> String {
+        format!(
+            "[[subscription]]\nname = \"a\"\nurl = \"https://a.example.com/sub/token1234\"\napp = \"happ\"\nplatform = \"windows\"\npriority = [\"Two\"]\n{extra_sub}{extra}"
+        )
+    }
+
+    fn parsed(text: &str) -> Config {
+        Config::from_toml_str(text, &Env::new()).unwrap()
+    }
+
+    #[test]
+    fn a_selection_change_applies_without_restarting_xray() {
+        let temp = TempDir::new("reload-selection");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished(0, applied(BOTH));
+        daemon.restart = Restart::Idle;
+        let before = daemon.applied.clone();
+        let reloaded = daemon
+            .apply_config(parsed(&config_text("", "[selection]\nfailures = 9\n")))
+            .unwrap();
+        assert!(reloaded.changed);
+        assert!(!reloaded.xray_restart);
+        assert!(reloaded.restart_required.is_empty());
+        assert_eq!(daemon.restart, Restart::Idle);
+        assert_eq!(daemon.applied, before);
+        assert_eq!(daemon.selector.settings().failures, 9);
+    }
+
+    #[test]
+    fn a_deny_removes_nodes_and_restarts_xray_once() {
+        let temp = TempDir::new("reload-deny");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished(0, applied(BOTH));
+        assert_eq!(daemon.applied_nodes, 2);
+        daemon.restart = Restart::Idle;
+        let reloaded = daemon
+            .apply_config(parsed(&config_text("deny = [\"Two\"]\n", "")))
+            .unwrap();
+        assert!(reloaded.xray_restart);
+        assert_eq!(daemon.applied_nodes, 1);
+        assert_ne!(daemon.restart, Restart::Idle);
+    }
+
+    #[test]
+    fn a_key_that_needs_a_restart_is_reported_and_kept() {
+        let temp = TempDir::new("reload-restart-key");
+        let proxy = "[mode]\ntype = \"proxy\"\nlisten = \"127.0.0.1:7890\"\n";
+        let mut daemon = daemon_with(&["a"], proxy, &temp);
+        let reloaded = daemon
+            .apply_config(parsed(&config_text(
+                "",
+                "[mode]\ntype = \"proxy\"\nlisten = \"127.0.0.1:9999\"\n",
+            )))
+            .unwrap();
+        assert_eq!(reloaded.restart_required, ["mode.listen"]);
+        assert_eq!(
+            daemon.config.mode,
+            raycat_config::Mode::Proxy {
+                listen: "127.0.0.1:7890".parse().unwrap()
+            }
+        );
+    }
+
+    #[test]
+    fn a_broken_file_on_reload_keeps_the_running_config() {
+        let temp = TempDir::new("reload-broken");
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, "[[subscription\n").unwrap();
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.file = ConfigFile {
+            path: Some(path),
+            env: Env::new(),
+            root: false,
+        };
+        let before = daemon.config.clone();
+        let error = daemon.reload().unwrap_err();
+        assert!(matches!(error, crate::api::Refusal::Invalid(_)));
+        assert_eq!(daemon.config, before);
+    }
+
+    #[test]
+    fn a_patch_is_written_and_applied() {
+        let temp = TempDir::new("patch-ok");
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, config_text("", "[selection]\nfailures = 3\n")).unwrap();
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.file = ConfigFile {
+            path: Some(path.clone()),
+            env: Env::new(),
+            root: false,
+        };
+        let patch = raycat_proto::SettingsPatch {
+            changes: vec![raycat_proto::SettingChange {
+                table: Some("selection".to_owned()),
+                subscription: None,
+                key: "failures".to_owned(),
+                value: raycat_proto::SettingValue::Number(9),
+            }],
+        };
+        let reloaded = daemon.patch(patch).unwrap();
+        assert!(reloaded.changed);
+        assert!(std::fs::read_to_string(&path).unwrap().contains("failures = 9"));
+        assert_eq!(daemon.selector.settings().failures, 9);
+    }
+
+    #[test]
+    fn a_patch_that_does_not_check_leaves_the_file_alone() {
+        let temp = TempDir::new("patch-bad");
+        let path = temp.path().join("config.toml");
+        let text = config_text("", "[selection]\nfailures = 3\n");
+        std::fs::write(&path, &text).unwrap();
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.file = ConfigFile {
+            path: Some(path.clone()),
+            env: Env::new(),
+            root: false,
+        };
+        let patch = raycat_proto::SettingsPatch {
+            changes: vec![raycat_proto::SettingChange {
+                table: Some("selection".to_owned()),
+                subscription: None,
+                key: "failures".to_owned(),
+                value: raycat_proto::SettingValue::Text("много".to_owned()),
+            }],
+        };
+        assert!(matches!(
+            daemon.patch(patch),
+            Err(crate::api::Refusal::Invalid(_))
+        ));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[test]
+    fn settings_say_where_each_value_comes_from() {
+        let temp = TempDir::new("settings-view");
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, config_text("", "[selection]\nfailures = 3\n")).unwrap();
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.file = ConfigFile {
+            path: Some(path),
+            env: Env::new(),
+            root: false,
+        };
+        let view = daemon.settings();
+        let source = |key: &str| {
+            view.items
+                .iter()
+                .find(|item| item.key == key)
+                .map(|item| item.source.clone())
+        };
+        assert_eq!(source("failures").as_deref(), Some("файл"));
+        assert_eq!(source("ru_direct").as_deref(), Some("по умолчанию"));
     }
 }

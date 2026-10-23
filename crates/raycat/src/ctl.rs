@@ -161,6 +161,7 @@ async fn dispatch(
             let subscription = sub.get_one::<String>("subscription").map(String::as_str);
             update(client, term, json, subscription).await
         }
+        "reload" => reload(client, json).await,
         "speedtest" => speedtest_command(client, term, json, sub).await,
         "events" => events(client, term, json).await,
         other => bail!("неизвестная команда {other}"),
@@ -256,6 +257,16 @@ async fn use_node(client: &Client, term: Term, json: bool, query: &str) -> Resul
             }
         }
         None => out("Закрепление снято: узел выбирается автоматически"),
+    }
+    Ok(())
+}
+
+async fn reload(client: &Client, json: bool) -> Result<()> {
+    let reloaded = client.reload().await?;
+    if json {
+        out(&to_json(&reloaded)?);
+    } else {
+        out(&render::reloaded(&reloaded));
     }
     Ok(())
 }

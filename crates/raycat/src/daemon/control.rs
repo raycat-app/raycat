@@ -38,6 +38,15 @@ impl Daemon {
             } => self.start_update(subscription.as_deref(), reply),
             Command::Speedtest { request, reply } => self.start_speedtest(request, reply),
             Command::SpeedtestRestore { pin, ack } => self.finish_speedtest(pin, ack),
+            Command::Reload { reply } => {
+                let _ = reply.send(self.reload());
+            }
+            Command::Patch { patch, reply } => {
+                let _ = reply.send(self.patch(patch));
+            }
+            Command::Settings { reply } => {
+                let _ = reply.send(Ok(self.settings()));
+            }
         }
     }
 
