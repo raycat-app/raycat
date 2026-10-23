@@ -159,7 +159,7 @@ pub(crate) fn effective(old: &Config, new: &Config) -> Config {
     next.routing = new.routing.clone();
     next.log = new.log;
     next.lan = new.lan.clone();
-    next.warnings = new.warnings.clone();
+    next.warnings.clone_from(&new.warnings);
     next.xray.xhttp_connections = new.xray.xhttp_connections;
     next.mode = match (old.mode, new.mode) {
         (Mode::Gateway { .. }, Mode::Gateway { kill_switch, lan }) => {
@@ -240,50 +240,6 @@ fn change(item: &SettingChange) -> Result<Change, Refusal> {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use raycat_proto::{SettingChange, SettingValue};
-
-    use super::*;
-
-    fn patch_item(table: Option<&str>, key: &str) -> SettingChange {
-        SettingChange {
-            table: table.map(str::to_owned),
-            subscription: None,
-            key: key.to_owned(),
-            value: SettingValue::Bool(true),
-        }
-    }
-
-    #[test]
-    fn only_the_listed_keys_can_be_changed() {
-        assert!(change(&patch_item(Some("routing"), "ru_direct")).is_ok());
-        assert!(change(&patch_item(Some("mode"), "kill_switch")).is_ok());
-        assert!(matches!(
-            change(&patch_item(Some("dns"), "resolvers")),
-            Err(Refusal::Invalid(_))
-        ));
-        assert!(matches!(
-            change(&patch_item(Some("mode"), "listen")),
-            Err(Refusal::Invalid(_))
-        ));
-        let mut masked = patch_item(None, "deny");
-        masked.subscription = Some("main".to_owned());
-        assert!(change(&masked).is_ok());
-        masked.key = "url".to_owned();
-        assert!(matches!(change(&masked), Err(Refusal::Invalid(_))));
-    }
-
-    #[test]
-    fn only_the_mask_keys_of_a_subscription_are_changed_through_the_api() {
-        let mut item = patch_item(None, "allow");
-        item.subscription = Some("backup".to_owned());
-        let change = change(&item).unwrap();
-        assert_eq!(change.target, Target::Subscription("backup".to_owned()));
-        assert_eq!(change.key, "allow");
-    }
-}
-
 fn seconds(duration: Duration) -> String {
     format!("{}s", duration.as_secs())
 }
@@ -303,9 +259,9 @@ fn item(text: &str, target: Target, key: &'static str, value: SettingValue) -> S
     } else {
         "по умолчанию"
     };
-    let (table, subscription) = match &target {
-        Target::Table(table) => (Some((*table).to_owned()), None),
-        Target::Subscription(name) => (None, Some(name.clone())),
+    let (table, subscription) = match target {
+        Target::Table(table) => (Some(table.to_owned()), None),
+        Target::Subscription(name) => (None, Some(name)),
     };
     SettingItem {
         table,
@@ -318,9 +274,9 @@ fn item(text: &str, target: Target, key: &'static str, value: SettingValue) -> S
 
 impl Daemon {
     /// Применяет проверенный конфиг. Ключи на лету — сразу; остальные попадают в ответ.
-    pub(super) fn apply_config(&mut self, next: Config) -> Result<Reloaded, Refusal> {
-        let restart_required = restart_keys(&self.config, &next);
-        let effective = effective(&self.config, &next);
+    pub(super) fn apply_config(&mut self, next: &Config) -> Result<Reloaded, Refusal> {
+        let restart_required = restart_keys(&self.config, next);
+        let effective = effective(&self.config, next);
         if effective == self.config {
             return Ok(Reloaded {
                 changed: false,
@@ -375,7 +331,7 @@ impl Daemon {
     /// конфиге.
     pub(super) fn reload(&mut self) -> Result<Reloaded, Refusal> {
         let next = self.file.load()?;
-        self.apply_config(next)
+        self.apply_config(&next)
     }
 
     /// `PATCH /v1/settings`: проверяет новый текст, пишет файл атомарно и применяет его.
@@ -384,14 +340,14 @@ impl Daemon {
         let (target, source) = self.file.text()?;
         let changes = patch
             .changes
-            .iter()
-            .map(change)
+            .into_iter()
+            .map(|item| change(&item))
             .collect::<Result<Vec<_>, _>>()?;
         let edited =
             edit::apply(&source, &changes).map_err(|error| Refusal::Invalid(error.to_string()))?;
         let next = self.file.parse(&edited)?;
         edit::write(&target, &edited).map_err(|error| Refusal::Unavailable(error.to_string()))?;
-        self.apply_config(next)
+        self.apply_config(&next)
     }
 
     /// `GET /v1/settings`: значения, которые можно менять через API, и откуда они взяты.
@@ -472,5 +428,49 @@ impl Daemon {
             }
         }
         SettingsView { items }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use raycat_proto::{SettingChange, SettingValue};
+
+    use super::*;
+
+    fn patch_item(table: Option<&str>, key: &str) -> SettingChange {
+        SettingChange {
+            table: table.map(str::to_owned),
+            subscription: None,
+            key: key.to_owned(),
+            value: SettingValue::Bool(true),
+        }
+    }
+
+    #[test]
+    fn only_the_listed_keys_can_be_changed() {
+        assert!(change(&patch_item(Some("routing"), "ru_direct")).is_ok());
+        assert!(change(&patch_item(Some("mode"), "kill_switch")).is_ok());
+        assert!(matches!(
+            change(&patch_item(Some("dns"), "resolvers")),
+            Err(Refusal::Invalid(_))
+        ));
+        assert!(matches!(
+            change(&patch_item(Some("mode"), "listen")),
+            Err(Refusal::Invalid(_))
+        ));
+        let mut masked = patch_item(None, "deny");
+        masked.subscription = Some("main".to_owned());
+        assert!(change(&masked).is_ok());
+        masked.key = "url".to_owned();
+        assert!(matches!(change(&masked), Err(Refusal::Invalid(_))));
+    }
+
+    #[test]
+    fn only_the_mask_keys_of_a_subscription_are_changed_through_the_api() {
+        let mut item = patch_item(None, "allow");
+        item.subscription = Some("backup".to_owned());
+        let change = change(&item).unwrap();
+        assert_eq!(change.target, Target::Subscription("backup".to_owned()));
+        assert_eq!(change.key, "allow");
     }
 }
