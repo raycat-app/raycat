@@ -1310,7 +1310,10 @@ impl App {
             }
             Err(error) => {
                 let (cause, _) = split_lines(&error);
-                self.push_log(Tone::Yellow, &format!("настройки демона не получены: {cause}"));
+                self.push_log(
+                    Tone::Yellow,
+                    &format!("настройки демона не получены: {cause}"),
+                );
             }
         }
     }
@@ -1385,7 +1388,9 @@ impl App {
                 let masked = masks.iter().any(|mask| mask.matches(&node.name));
                 let excluded = deny.iter().any(|(name, masks)| {
                     *name == node.subscription
-                        && masks.iter().any(|mask| Pattern::new(mask).matches(&node.name))
+                        && masks
+                            .iter()
+                            .any(|mask| Pattern::new(mask).matches(&node.name))
                 });
                 (!hide_dead || alive)
                     && !masked
