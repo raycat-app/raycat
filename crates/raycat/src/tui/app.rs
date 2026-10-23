@@ -14,7 +14,7 @@ use raycat_proto::{
     SpeedtestProgress, SpeedtestResult, Status, Updates,
 };
 
-use raycat_config::Pattern;
+use raycat_config::{Pattern, escape_literal};
 use raycat_config::names::without_code;
 
 use crate::names::{NameStyle, display_name};
@@ -1214,13 +1214,13 @@ impl App {
         let choices = if let Some(mask) = &remove {
             vec![mask.clone()]
         } else {
-            let mut choices = vec![node.name.clone()];
+            let mut choices = vec![escape_literal(&node.name)];
             let label = display_name(&node.name, NameStyle::Country);
             let word = without_code(&label)
                 .split_whitespace()
                 .next()
                 .unwrap_or_default();
-            let suggested = format!("{word}*");
+            let suggested = format!("{}*", escape_literal(word));
             if !word.is_empty() && !choices.contains(&suggested) {
                 choices.push(suggested);
             }

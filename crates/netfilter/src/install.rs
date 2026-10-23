@@ -43,6 +43,40 @@ pub fn is_installed(rules: &Rules) -> bool {
     installed_with(&System, rules)
 }
 
+/// Заменяет перехват `old` на `new` без окна, в котором трафик идёт мимо. Сначала
+/// ставятся новые правила: таблица nftables меняется одной транзакцией. Потом снимаются
+/// маршруты старых правил, которых в новых нет. Если новые правила не встали, старые
+/// остаются как были, и это ошибка. Неудачное снятие старых маршрутов замену не
+/// отменяет: его текст возвращается в списке предупреждений.
+pub fn replace(old: &Rules, new: &Rules) -> Result<Vec<String>> {
+    replace_with(&System, old, new)
+}
+
+fn replace_with(exec: &dyn Executor, old: &Rules, new: &Rules) -> Result<Vec<String>> {
+    install_with(exec, new)?;
+    let routing_changed = old.intercept_mark != new.intercept_mark
+        || old.route_table != new.route_table
+        || old.rule_priority != new.rule_priority;
+    let mut warnings = Vec::new();
+    for family in [Family::V4, Family::V6] {
+        let before = family_enabled(old, family);
+        let after = family_enabled(new, family);
+        if before && (routing_changed || !after) {
+            if let Err(error) = teardown_routing(exec, old, family) {
+                warnings.push(format!("{error:#}"));
+            }
+        }
+    }
+    Ok(warnings)
+}
+
+fn family_enabled(rules: &Rules, family: Family) -> bool {
+    match family {
+        Family::V4 => true,
+        Family::V6 => rules.intercept_ipv6,
+    }
+}
+
 fn installed_with(exec: &dyn Executor, rules: &Rules) -> bool {
     let table = exec
         .run("nft", &["list", "table", FAMILY, TABLE], None)
@@ -437,6 +471,55 @@ mod tests {
             !fake.calls().iter().any(|call| call.starts_with("nft")),
             "правила без маршрутизации не ставятся"
         );
+    }
+
+    #[test]
+    fn a_failed_replacement_keeps_the_old_routes() {
+        let fake = Fake::new(|line| {
+            if line.starts_with("nft") {
+                failed("syntax error")
+            } else {
+                ok(DEFAULT_RULES)
+            }
+        });
+        let old = Rules::default();
+        let new = Rules {
+            intercept_mark: 0x5254_0001,
+            ..Rules::default()
+        };
+        assert!(replace_with(&fake, &old, &new).is_err());
+        let calls = fake.calls();
+        assert!(
+            !calls
+                .iter()
+                .any(|call| call.contains(" del ") || call.contains("flush")),
+            "{calls:?}"
+        );
+    }
+
+    #[test]
+    fn a_replacement_removes_the_old_routes_after_the_new_rules_are_loaded() {
+        let fake = Fake::new(|line| {
+            if line == "ip -4 rule show" {
+                ok(DEFAULT_RULES)
+            } else {
+                ok("")
+            }
+        });
+        let old = Rules::default();
+        let new = Rules {
+            intercept_mark: 0x5254_0001,
+            ..Rules::default()
+        };
+        let warnings = replace_with(&fake, &old, &new).unwrap();
+        assert!(warnings.is_empty());
+        let calls = fake.calls();
+        let loaded = calls.iter().position(|call| call == "nft -f -").unwrap();
+        let removed = calls
+            .iter()
+            .position(|call| call.contains(" del "))
+            .unwrap();
+        assert!(loaded < removed, "{calls:?}");
     }
 
     #[test]

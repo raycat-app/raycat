@@ -25,7 +25,7 @@ mod ruleset;
 
 pub use cidr::{Cidr, CidrError};
 pub use dns::{dns_leak, dns_leak_message, docker_dns_via_host};
-pub use install::{install, is_installed, remove};
+pub use install::{install, is_installed, remove, replace};
 pub use lan::resolve_lan;
 pub use rules::{
     DEFAULT_BYPASS, DEFAULT_INTERCEPT_MARK, DEFAULT_OWN_MARK, DEFAULT_ROUTE_TABLE,
