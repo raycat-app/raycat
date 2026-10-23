@@ -399,12 +399,24 @@ fn masks_hint(app: &App) -> Vec<Seg> {
 }
 
 /// Диалог исключения занимает строку состояния и строку подсказок.
-fn exclude_lines(canvas: &mut Canvas<'_>, app: &App, dialog: &ExcludeDialog, status_y: usize, hints_y: usize) {
+fn exclude_lines(
+    canvas: &mut Canvas<'_>,
+    app: &App,
+    dialog: &ExcludeDialog,
+    status_y: usize,
+    hints_y: usize,
+) {
     let summary = if dialog.remove {
         let mask = dialog.choices.first().map_or("", String::as_str);
-        format!("Снять исключение «{}»: его исключает маска «{mask}»", dialog.node)
+        format!(
+            "Снять исключение «{}»: его исключает маска «{mask}»",
+            dialog.node
+        )
     } else {
-        let choice = dialog.choices.get(dialog.selected).map_or("", String::as_str);
+        let choice = dialog
+            .choices
+            .get(dialog.selected)
+            .map_or("", String::as_str);
         format!(
             "Исключить «{}» маской «{choice}»: затронет узлов: {}",
             dialog.node,
