@@ -30,6 +30,7 @@ use ratatui::crossterm::execute;
 use raycat_config::Env;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::{Notify, mpsc};
+use tokio::task::AbortHandle;
 use tokio::time::{MissedTickBehavior, interval};
 
 use self::app::{App, Effect, Msg};

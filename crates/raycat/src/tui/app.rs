@@ -313,7 +313,10 @@ fn order(a: &Node, b: &Node, by: SortBy, descending: bool) -> Ordering {
         SortBy::Priority => return Ordering::Equal,
         SortBy::Latency => return latency_order(a, b, descending),
         SortBy::Name => by_name(a, b),
-        SortBy::Subscription => a.subscription.cmp(&b.subscription).then_with(|| by_name(a, b)),
+        SortBy::Subscription => a
+            .subscription
+            .cmp(&b.subscription)
+            .then_with(|| by_name(a, b)),
         SortBy::Status => status_rank(a.status)
             .cmp(&status_rank(b.status))
             .then_with(|| by_name(a, b)),
@@ -961,9 +964,7 @@ impl App {
             return None;
         }
         self.notice = None;
-        let target = node
-            .clone()
-            .unwrap_or_else(|| "текущий узел".to_owned());
+        let target = node.clone().unwrap_or_else(|| "текущий узел".to_owned());
         self.speed = Some(SpeedRun {
             target,
             since: self.now,
@@ -2106,10 +2107,7 @@ mod tests {
             }))
         );
         assert_eq!(app.input, InputMode::Normal);
-        assert_eq!(
-            visible_ids(&app),
-            ["main/NL-1", "main/DE-2", "backup/NL-1"]
-        );
+        assert_eq!(visible_ids(&app), ["main/NL-1", "main/DE-2", "backup/NL-1"]);
     }
 
     #[test]
