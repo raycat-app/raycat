@@ -1,11 +1,11 @@
 //! Настройки raycat: модель, загрузка из TOML, переопределения из окружения, проверка.
 
+pub mod edit;
 mod envvars;
 mod error;
 mod link;
 mod load;
 mod model;
-pub mod edit;
 pub mod names;
 mod pattern;
 mod raw;

@@ -181,7 +181,8 @@ fn join(text: &str, lines: &[String]) -> String {
 /// старый, либо новый файл. Права старого файла сохраняются. Файл только для чтения
 /// (в том числе из-за прав каталога) — понятная ошибка, файл не трогаем.
 pub fn write(path: &Path, text: &str) -> Result<(), Error> {
-    let meta = fs::metadata(path).map_err(|error| Error::Io(format!("{}: {error}", path.display())))?;
+    let meta =
+        fs::metadata(path).map_err(|error| Error::Io(format!("{}: {error}", path.display())))?;
     if meta.permissions().readonly() {
         return Err(Error::ReadOnly(path.display().to_string()));
     }
@@ -299,7 +300,10 @@ mod tests {
             key: "ru_direct",
             value: Value::from(true),
         };
-        assert!(matches!(apply("[routing\n", &[change]), Err(Error::Parse(_))));
+        assert!(matches!(
+            apply("[routing\n", &[change]),
+            Err(Error::Parse(_))
+        ));
     }
 
     #[cfg(unix)]
