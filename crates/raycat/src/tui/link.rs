@@ -5,15 +5,14 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use raycat_proto::Event;
+use raycat_proto::{Event, SpeedtestRequest};
 use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep_until};
 
 use super::app::{Effect, Msg, Snapshot};
-use super::prefs;
+use super::prefs::{self, Prefs};
 use crate::client::{Client, EventStream};
-use crate::names::NameStyle;
 
 const EVENT_QUEUE: usize = 64;
 const STREAM_CLOSED: &str = "демон закрыл поток событий: возможно, он остановлен";
@@ -216,7 +215,7 @@ async fn send_snapshot(client: &Client, inbox: &mpsc::Sender<Msg>) -> Option<Out
 }
 
 /// Выполняет действие пользователя; ошибка превращается в текст для строки состояния.
-pub(super) async fn perform(client: &Client, effect: Effect, prefs: Option<&Path>) -> Msg {
+pub(super) async fn perform(client: &Client, effect: Effect, file: Option<&Path>) -> Msg {
     match effect {
         Effect::Pin(id) => Msg::Pinned(client.pin(&id).await.map_err(|error| error.to_string())),
         Effect::Unpin => Msg::Pinned(client.unpin().await.map_err(|error| error.to_string())),
@@ -226,15 +225,34 @@ pub(super) async fn perform(client: &Client, effect: Effect, prefs: Option<&Path
                 .await
                 .map_err(|error| error.to_string()),
         ),
-        Effect::SaveNames(style) => Msg::Saved(save_names(prefs, style).await),
+        Effect::SavePrefs(prefs) => Msg::Saved(save_prefs(file, prefs).await),
+        Effect::SpeedTest(node) => speedtest(client, node).await,
+        Effect::CancelSpeedTest => Msg::SpeedDone(Err("тест отменён".to_owned())),
     }
 }
 
-async fn save_names(path: Option<&Path>, style: NameStyle) -> Result<(), String> {
+/// Тест скорости через узел (или текущий узел без `node`). Размер — постоянный: не
+/// больше 25 МБ, адрес — тестовый сервер по умолчанию.
+pub(super) async fn speedtest(client: &Client, node: Option<String>) -> Msg {
+    let request = SpeedtestRequest {
+        node,
+        size: crate::speedtest::DEFAULT_SIZE,
+        streams: None,
+        url: None,
+    };
+    Msg::SpeedDone(
+        client
+            .speedtest(&request)
+            .await
+            .map_err(|error| error.to_string()),
+    )
+}
+
+async fn save_prefs(path: Option<&Path>, value: Prefs) -> Result<(), String> {
     let Some(path) = path.map(Path::to_path_buf) else {
         return Err("не найден каталог настроек: задайте HOME или XDG_CONFIG_HOME".to_owned());
     };
-    match tokio::task::spawn_blocking(move || prefs::save(&path, style)).await {
+    match tokio::task::spawn_blocking(move || prefs::save(&path, &value)).await {
         Ok(result) => result.map_err(|error| error.to_string()),
         Err(error) => Err(error.to_string()),
     }

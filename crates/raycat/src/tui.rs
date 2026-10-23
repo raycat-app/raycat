@@ -30,13 +30,14 @@ use ratatui::crossterm::execute;
 use raycat_config::Env;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::{Notify, mpsc};
+use tokio::task::AbortHandle;
 use tokio::time::{MissedTickBehavior, interval};
 
 use self::app::{App, Effect, Msg};
 use self::canvas::Palette;
 use self::link::Timing;
+use self::prefs::Prefs;
 use crate::client::Client;
-use crate::names::NameStyle;
 use crate::paths;
 use crate::term::Term;
 use crate::util::now_unix;
@@ -47,8 +48,8 @@ const QUEUE: usize = 64;
 
 /// Что нужно интерфейсу от окружения, кроме сокета.
 struct Setup {
-    prefs: Option<PathBuf>,
-    names: NameStyle,
+    file: Option<PathBuf>,
+    prefs: Prefs,
     settings: String,
 }
 
@@ -60,15 +61,15 @@ pub(crate) fn run(env: &Env) -> Result<()> {
     }
     let socket = paths::client_socket(env, paths::is_root())?;
     let palette = Palette::new(Term::detect(env).color());
-    let prefs = prefs::path(env);
-    let names = prefs.as_deref().map_or(NameStyle::default(), prefs::load);
+    let file = prefs::path(env);
+    let prefs = file.as_deref().map_or_else(Prefs::default, prefs::load);
     let settings = paths::config_file(None, env, Path::exists).map_or_else(
         || paths::DEFAULT_CONFIG.to_owned(),
         |path| path.display().to_string(),
     );
     let setup = Setup {
+        file,
         prefs,
-        names,
         settings,
     };
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -183,21 +184,59 @@ struct Runner {
     client: Arc<Client>,
     inbox: mpsc::Sender<Msg>,
     refresh: Arc<Notify>,
-    prefs: Option<PathBuf>,
+    file: Option<PathBuf>,
+    /// Идущий тест скорости: отмена обрывает запрос к демону.
+    speed: Option<AbortHandle>,
 }
 
 impl Runner {
-    fn dispatch(&self, effect: Effect) {
+    fn dispatch(&mut self, effect: Effect) {
+        match effect {
+            Effect::SpeedTest(node) => self.speedtest(node),
+            Effect::CancelSpeedTest => {
+                if let Some(handle) = self.speed.take() {
+                    handle.abort();
+                }
+            }
+            effect => self.run(effect),
+        }
+    }
+
+    fn run(&self, effect: Effect) {
         let client = Arc::clone(&self.client);
         let inbox = self.inbox.clone();
         let refresh = Arc::clone(&self.refresh);
-        let prefs = self.prefs.clone();
+        let file = self.file.clone();
         tokio::spawn(async move {
             refresh.notify_one();
-            let msg = link::perform(&client, effect, prefs.as_deref()).await;
+            let msg = link::perform(&client, effect, file.as_deref()).await;
             let _ = inbox.send(msg).await;
             refresh.notify_one();
         });
+    }
+
+    /// Пока тест идёт, раз в секунду приходит его ход; итог — отдельным сообщением.
+    fn speedtest(&mut self, node: Option<String>) {
+        let client = Arc::clone(&self.client);
+        let inbox = self.inbox.clone();
+        let task = tokio::spawn(async move {
+            let mut ticks = interval(TICK);
+            let test = link::speedtest(&client, node);
+            tokio::pin!(test);
+            let msg = loop {
+                tokio::select! {
+                    msg = &mut test => break msg,
+                    _ = ticks.tick() => {
+                        let progress = client.speedtest_progress().await.ok().flatten();
+                        if inbox.send(Msg::SpeedProgress(progress)).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            };
+            let _ = inbox.send(msg).await;
+        });
+        self.speed = Some(task.abort_handle());
     }
 }
 
@@ -214,16 +253,18 @@ async fn session(socket: PathBuf, palette: Palette, setup: Setup) -> Result<()> 
         Arc::clone(&refresh),
         Timing::default(),
     );
-    let runner = Runner {
+    let mut runner = Runner {
         client,
         inbox,
         refresh,
-        prefs: setup.prefs,
+        file: setup.file,
+        speed: None,
     };
     let mut ticks = interval(TICK);
     ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut app = App::new(now_unix());
-    app.names = setup.names;
+    app.names = setup.prefs.names;
+    app.hidden = setup.prefs.hidden;
     app.settings_path = setup.settings;
     while !app.quit {
         screen

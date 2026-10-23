@@ -5,7 +5,7 @@
 use jiff::tz::TimeZone;
 use raycat_proto::{Node, NodeStatus, SubscriptionStatus};
 
-use super::app::{App, Hit, Link, Target, names_label};
+use super::app::{App, Hit, Link, SortBy, Target, names_label};
 use super::canvas::{Canvas, GAP, Seg, highlight, wrap};
 use super::view::{
     delay_tone, speed_label, sub_phrase, subscription_title, traffic_seg, xray_segs,
@@ -23,6 +23,8 @@ const CARD_ROWS: usize = 4;
 const RECENT: usize = 5;
 const STATUS_WIDTH: usize = 13;
 const REASON_MAX: usize = 40;
+/// Сколько символов масок видно на панели фильтров.
+const HIDDEN_WIDTH: usize = 24;
 
 type Chip = (String, Tone, Option<Target>);
 
@@ -71,11 +73,18 @@ pub(super) fn overview(
 }
 
 fn overview_buttons(app: &App) -> Vec<Chip> {
-    let mut items = vec![(
-        "[u] Обновить подписки".to_owned(),
-        Tone::Bold,
-        Some(Target::UpdateAll),
-    )];
+    let mut items = vec![
+        (
+            "[u] Обновить подписки".to_owned(),
+            Tone::Bold,
+            Some(Target::UpdateAll),
+        ),
+        (
+            "[s] Тест скорости".to_owned(),
+            Tone::Bold,
+            Some(Target::Speed),
+        ),
+    ];
     if app
         .status
         .as_ref()
@@ -225,6 +234,10 @@ fn filter_panel(app: &App) -> Vec<Chip> {
         "" => "—",
         text => text,
     };
+    let hidden = match app.hidden.join(", ") {
+        masks if masks.is_empty() => "нет".to_owned(),
+        masks => truncate(&masks, HIDDEN_WIDTH),
+    };
     vec![
         (
             format!("[d] Скрыть мёртвые {dead}"),
@@ -241,6 +254,11 @@ fn filter_panel(app: &App) -> Vec<Chip> {
             Tone::Plain,
             Some(Target::Search),
         ),
+        (
+            format!("[h] Скрытые: {hidden}"),
+            Tone::Plain,
+            Some(Target::HiddenEdit),
+        ),
     ]
 }
 
@@ -248,10 +266,11 @@ fn nodes_table(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
     let room = end - y0;
     let rows = room.saturating_sub(FRAME + 1);
     app.set_rows(rows);
-    let title = nodes_title(app, rows);
+    let title = nodes_title(app);
     let speed = app
         .speed()
         .map_or_else(String::new, |speed| speed_label(speed.down, speed.up));
+    let (sort, descending) = (app.filter.sort, app.filter.descending);
     let full = canvas.width;
     let width = full.saturating_sub(4);
     let mut found = Vec::new();
@@ -274,7 +293,9 @@ fn nodes_table(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
             inner.line(0, 0, vec![Seg::new(text, tone, 0)]);
         } else {
             let cols = columns(&shown, &speed, width, app.names);
-            draw_titles(&mut inner, 0, &cols);
+            for (x, col_width, by) in draw_titles(&mut inner, 0, &cols, sort, descending) {
+                found.push(Hit::new(2 + x, y0 + 1, col_width, Target::Sort(by)));
+            }
             for (row, node) in shown.iter().skip(app.offset).take(rows).enumerate() {
                 let index = app.offset + row;
                 let current = index == app.cursor;
@@ -286,24 +307,22 @@ fn nodes_table(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
     app.hits.extend(found);
 }
 
-fn nodes_title(app: &App, rows: usize) -> Vec<Seg> {
+fn nodes_title(app: &App) -> Vec<Seg> {
     let total = app.nodes.len();
     let shown = app.visible.len();
-    let count = if shown < total {
-        format!("показано {shown} из {total}")
-    } else if shown > rows {
-        format!(
-            "{}–{} из {shown}",
-            app.offset + 1,
-            (app.offset + rows).min(shown)
-        )
-    } else {
-        format!("всего {total}")
-    };
-    vec![
-        Seg::new("Узлы", Tone::Bold, 0),
-        Seg::new(count, Tone::Dim, 2),
-    ]
+    let mut segs = vec![Seg::new(
+        format!("Узлы · {shown} из {total}"),
+        Tone::Bold,
+        0,
+    )];
+    if shown < total {
+        segs.push(Seg::new(
+            format!("({} скрыто)", total - shown),
+            Tone::Dim,
+            2,
+        ));
+    }
+    segs
 }
 
 /// Подробности выбранного узла вместо таблицы. Кнопка «закрепить» — первая строка
@@ -336,7 +355,8 @@ fn node_details(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
         vec![Seg::new(display_name(&node.name, app.names), Tone::Bold, 0)],
         vec![
             Seg::new("[p] закрепить", Tone::Bold, 0),
-            Seg::new("Esc — назад к списку", Tone::Dim, 1),
+            Seg::new("[t] тест скорости", Tone::Bold, 0),
+            Seg::new("[Esc] назад", Tone::Dim, 1),
         ],
         vec![
             Seg::new(format!("Подписка: {}", node.subscription), Tone::Plain, 0),
@@ -387,6 +407,13 @@ fn node_details(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
         inner.line(row, 0, segs);
     }
     app.hits.push(Hit::new(2, y0 + 2, pin_width, Target::Pin));
+    let speed_width = display_width("[t] тест скорости");
+    app.hits.push(Hit::new(
+        2 + pin_width + GAP,
+        y0 + 2,
+        speed_width,
+        Target::SpeedNode,
+    ));
 }
 
 /// Колонки в порядке важности: на узком экране последние пропадают первыми. Скорость
@@ -449,9 +476,9 @@ fn specs(nodes: &[&Node], speed: &str, style: NameStyle) -> Vec<Spec> {
         spec(Kind::Marker, "", 2, 2, false),
         spec(Kind::Name, "Узел", name.min(12), name, false),
         spec(Kind::Status, "Статус", STATUS_WIDTH, STATUS_WIDTH, false),
-        spec(Kind::Latency, "Задержка", 8, 8, true),
+        spec(Kind::Latency, "Задержка", 10, 10, true),
         spec(Kind::Country, "Страна", 6, 6, false),
-        spec(Kind::Sub, "Подписка", 8, sub.clamp(8, 20), false),
+        spec(Kind::Sub, "Подписка", 10, sub.clamp(10, 20), false),
         spec(Kind::Failures, "Сбои", 5, 5, true),
         spec(Kind::Reason, "Причина", reason.min(12), reason, false),
         spec(Kind::Speed, "Скорость", speed_width, speed_width, false),
@@ -575,16 +602,47 @@ fn draw_row(
     }
 }
 
-fn draw_titles(canvas: &mut Canvas<'_>, y: usize, cols: &[Col]) {
+/// Заголовки столбцов; активный помечен стрелкой. Возвращает (x, ширина, порядок) для
+/// столбцов, по которым можно сортировать.
+fn draw_titles(
+    canvas: &mut Canvas<'_>,
+    y: usize,
+    cols: &[Col],
+    sort: SortBy,
+    descending: bool,
+) -> Vec<(usize, usize, SortBy)> {
     let mut x = 0;
+    let mut clicks = Vec::new();
     for col in cols {
+        let by = sort_of(col.kind);
+        let (label, tone) = match by {
+            Some(by) if by == sort => {
+                let arrow = if descending { "▼" } else { "▲" };
+                (format!("{} {arrow}", col.title), Tone::Bold)
+            }
+            _ => (col.title.to_owned(), Tone::Dim),
+        };
         let shift = if col.right {
-            col.width.saturating_sub(display_width(col.title))
+            col.width.saturating_sub(display_width(&label))
         } else {
             0
         };
-        canvas.put(x + shift, y, col.title, col.width, Tone::Dim);
+        canvas.put(x + shift, y, &label, col.width, tone);
+        if let Some(by) = by {
+            clicks.push((x, col.width, by));
+        }
         x += col.width + GAP;
+    }
+    clicks
+}
+
+fn sort_of(kind: Kind) -> Option<SortBy> {
+    match kind {
+        Kind::Name => Some(SortBy::Name),
+        Kind::Sub => Some(SortBy::Subscription),
+        Kind::Status => Some(SortBy::Status),
+        Kind::Latency => Some(SortBy::Latency),
+        _ => None,
     }
 }
 

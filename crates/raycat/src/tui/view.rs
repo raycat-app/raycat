@@ -23,7 +23,7 @@ const MIN_SPEED: u64 = 1_000;
 /// Строки, которые всегда остаются телу вкладки.
 pub(super) const BODY_MIN: usize = 3;
 
-const HELP: [(&str, &str); 15] = [
+const HELP: [(&str, &str); 18] = [
     ("1–5  Tab", "вкладки; Shift+Tab и ← → — перелистывание"),
     ("↑ ↓  j k", "выбор строки, прокрутка"),
     ("PgUp PgDn", "страница вверх и вниз"),
@@ -39,7 +39,16 @@ const HELP: [(&str, &str); 15] = [
     ("a", "вернуть автоматический выбор узла"),
     ("u", "обновить все подписки (на «Подписках» — выбранную)"),
     ("d", "скрыть мёртвые узлы (вкладка «Узлы»)"),
-    ("s", "фильтр по подписке (вкладка «Узлы»)"),
+    (
+        "s",
+        "фильтр по подписке (вкладка «Узлы»); на «Обзоре» — тест скорости",
+    ),
+    ("o", "сортировка узлов: задержка, имя, подписка, статус"),
+    (
+        "h",
+        "скрытые узлы: маски через запятую, * — любая часть имени",
+    ),
+    ("t", "тест скорости через выбранный узел (Esc — отменить)"),
     ("/", "поиск по узлам (Enter — применить, Esc — сбросить)"),
     ("w", "в журнале — только предупреждения и ошибки"),
     (
@@ -297,6 +306,7 @@ fn normal_hints(app: &App) -> Vec<Seg> {
     let items: &[(&str, u8)] = match app.tab {
         Tab::Overview => &[
             ("u обновить", 1),
+            ("s скорость", 2),
             ("a автовыбор", 3),
             ("2 узлы", 2),
             ("? справка", 0),
@@ -305,6 +315,7 @@ fn normal_hints(app: &App) -> Vec<Seg> {
         Tab::Nodes if app.details => &[
             ("Esc назад", 0),
             ("p закрепить", 1),
+            ("t скорость", 1),
             ("? справка", 0),
             ("q выход", 0),
         ],
@@ -312,8 +323,11 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("↑↓ выбор", 1),
             ("Enter подробности", 2),
             ("p закрепить", 1),
+            ("t скорость", 2),
             ("d мёртвые", 3),
             ("s подписка", 4),
+            ("o сортировка", 4),
+            ("h скрытые", 4),
             ("/ поиск", 3),
             ("? справка", 0),
             ("q выход", 0),
@@ -366,6 +380,17 @@ fn filter_hint(app: &App) -> Vec<Seg> {
     ]
 }
 
+fn masks_hint(app: &App) -> Vec<Seg> {
+    vec![
+        Seg::new(format!("скрыть: {}█", app.mask_edit), Tone::Bold, 0),
+        Seg::new(
+            "через запятую, * — любая часть имени; Enter — применить, Esc — отмена",
+            Tone::Dim,
+            1,
+        ),
+    ]
+}
+
 fn bottom(canvas: &mut Canvas<'_>, app: &App) {
     let status_y = canvas.height.saturating_sub(BOTTOM);
     let hints_y = canvas.height.saturating_sub(1);
@@ -379,6 +404,20 @@ fn bottom(canvas: &mut Canvas<'_>, app: &App) {
             app.now.saturating_sub(run.since)
         );
         canvas.line(status_y, 0, vec![Seg::new(text, Tone::Green, 0)]);
+    } else if let Some(run) = &app.speed {
+        let progress = match &run.progress {
+            Some(progress) if progress.run == 0 => "узел применяется".to_owned(),
+            Some(progress) => format!(
+                "замер {} из {}, {}%",
+                progress.run, progress.runs, progress.percent
+            ),
+            None => format!("{} с", app.now.saturating_sub(run.since)),
+        };
+        let text = format!(
+            "⟳ Тест скорости через «{}»: {progress} · Esc — отменить",
+            run.target
+        );
+        canvas.line(status_y, 0, vec![Seg::new(text, Tone::Green, 0)]);
     } else if let Some(notice) = &app.notice {
         let segs = vec![Seg::new(notice.text.clone(), notice.tone, 0)];
         canvas.line(status_y, 0, segs);
@@ -387,6 +426,8 @@ fn bottom(canvas: &mut Canvas<'_>, app: &App) {
     }
     if app.input == InputMode::Filter {
         canvas.line(hints_y, 0, filter_hint(app));
+    } else if app.input == InputMode::Masks {
+        canvas.line(hints_y, 0, masks_hint(app));
     } else {
         keys_line(canvas, hints_y, normal_hints(app));
     }
