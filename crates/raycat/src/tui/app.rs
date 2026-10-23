@@ -2,18 +2,23 @@
 //! мыши. Здесь нет ни терминала, ни сети: клавиши и сообщения меняют состояние, а
 //! действия над демоном возвращаются как [`Effect`] и выполняются снаружи.
 
+use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use raycat_proto::{Event, Node, NodeStatus, Nodes, Pinned, Status, Updates};
+use raycat_proto::{
+    Event, Node, NodeStatus, Nodes, Pinned, SpeedtestProgress, SpeedtestResult, Status, Updates,
+};
 
-use crate::names::NameStyle;
+use crate::names::{NameStyle, display_name, mask_matches};
 use crate::render;
 use crate::term::{Term, Tone, truncate};
 use crate::util::sanitize;
+
+use super::prefs::{Prefs, split_masks};
 
 pub(super) const LOG_CAP: usize = 200;
 const TEXT_WIDTH: usize = 400;
@@ -68,6 +73,45 @@ pub(super) enum Target {
     Search,
     WarningsToggle,
     NamesToggle,
+    Sort(SortBy),
+    HiddenEdit,
+    /// Тест скорости через текущий узел.
+    Speed,
+    /// Тест скорости через узел, открытый в подробностях.
+    SpeedNode,
+}
+
+/// Порядок узлов в таблице; `Priority` — порядок из подписок, как его отдаёт демон.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum SortBy {
+    #[default]
+    Priority,
+    Latency,
+    Name,
+    Subscription,
+    Status,
+}
+
+impl SortBy {
+    fn next(self) -> Self {
+        match self {
+            Self::Priority => Self::Latency,
+            Self::Latency => Self::Name,
+            Self::Name => Self::Subscription,
+            Self::Subscription => Self::Status,
+            Self::Status => Self::Priority,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Priority => "как в подписках",
+            Self::Latency => "задержка",
+            Self::Name => "имя",
+            Self::Subscription => "подписка",
+            Self::Status => "статус",
+        }
+    }
 }
 
 /// Область нажатия шириной в одну строку экрана, координаты от левого верхнего угла.
@@ -114,6 +158,8 @@ pub(super) enum Link {
 pub(super) enum InputMode {
     Normal,
     Filter,
+    /// Правка масок скрытия.
+    Masks,
     Help,
 }
 
@@ -123,7 +169,10 @@ pub(super) enum Effect {
     Pin(String),
     Unpin,
     Update(Option<String>),
-    SaveNames(NameStyle),
+    SavePrefs(Prefs),
+    /// Тест скорости через узел; `None` — через текущий.
+    SpeedTest(Option<String>),
+    CancelSpeedTest,
 }
 
 pub(super) struct Snapshot {
@@ -145,6 +194,16 @@ pub(super) enum Msg {
     Pinned(Result<Pinned, String>),
     Updated(Result<Updates, String>),
     Saved(Result<(), String>),
+    SpeedProgress(Option<SpeedtestProgress>),
+    SpeedDone(Result<SpeedtestResult, String>),
+}
+
+/// Тест скорости, который идёт сейчас.
+pub(super) struct SpeedRun {
+    /// Что проверяем: id узла или «текущий узел».
+    pub(super) target: String,
+    pub(super) since: u64,
+    pub(super) progress: Option<SpeedtestProgress>,
 }
 
 pub(super) struct LogEntry {
@@ -171,6 +230,9 @@ pub(super) struct Filter {
     pub(super) subscription: Option<String>,
     /// Мёртвые узлы скрыты; выбранный узел остаётся видимым.
     pub(super) hide_dead: bool,
+    /// Порядок таблицы узлов; сортировка относится к виду списка, как и фильтры.
+    pub(super) sort: SortBy,
+    pub(super) descending: bool,
 }
 
 impl Filter {
@@ -244,6 +306,58 @@ fn bits_per_second(bytes: u64, millis: u128) -> u64 {
     u64::try_from(bits).unwrap_or(u64::MAX)
 }
 
+/// Порядок двух узлов. Задержку сравнивают только у живых: непроверенные и мёртвые
+/// всегда в конце, независимо от направления.
+fn order(a: &Node, b: &Node, by: SortBy, descending: bool) -> Ordering {
+    let ordering = match by {
+        SortBy::Priority => return Ordering::Equal,
+        SortBy::Latency => return latency_order(a, b, descending),
+        SortBy::Name => by_name(a, b),
+        SortBy::Subscription => a.subscription.cmp(&b.subscription).then_with(|| by_name(a, b)),
+        SortBy::Status => status_rank(a.status)
+            .cmp(&status_rank(b.status))
+            .then_with(|| by_name(a, b)),
+    };
+    if descending {
+        ordering.reverse()
+    } else {
+        ordering
+    }
+}
+
+fn latency_order(a: &Node, b: &Node, descending: bool) -> Ordering {
+    let key = |node: &Node| -> (u8, u64) {
+        match node.latency_ms.filter(|_| node.status == NodeStatus::Alive) {
+            Some(ms) => (0, ms),
+            None => (1, 0),
+        }
+    };
+    let (x, y) = (key(a), key(b));
+    if x.0 != y.0 {
+        return x.0.cmp(&y.0);
+    }
+    let ordering = x.1.cmp(&y.1);
+    if descending {
+        ordering.reverse()
+    } else {
+        ordering
+    }
+}
+
+fn by_name(a: &Node, b: &Node) -> Ordering {
+    display_name(&a.name, NameStyle::Country)
+        .to_lowercase()
+        .cmp(&display_name(&b.name, NameStyle::Country).to_lowercase())
+}
+
+fn status_rank(status: NodeStatus) -> u8 {
+    match status {
+        NodeStatus::Alive => 0,
+        NodeStatus::Unknown => 1,
+        NodeStatus::Dead => 2,
+    }
+}
+
 /// Название вида для подсказок и строк.
 pub(super) fn names_label(style: NameStyle) -> &'static str {
     match style {
@@ -276,6 +390,11 @@ pub(super) struct App {
     pub(super) journal_back: usize,
     pub(super) journal_warnings: bool,
     pub(super) names: NameStyle,
+    /// Маски скрытых узлов (вид TUI); `*` — любая часть имени.
+    pub(super) hidden: Vec<String>,
+    /// Текст поля правки масок.
+    pub(super) mask_edit: String,
+    pub(super) speed: Option<SpeedRun>,
     /// Файл настроек демона, показывается на вкладке «Настройки».
     pub(super) settings_path: String,
     pub(super) log: VecDeque<LogEntry>,
@@ -322,6 +441,9 @@ impl App {
             journal_back: 0,
             journal_warnings: false,
             names: NameStyle::default(),
+            hidden: Vec::new(),
+            mask_edit: String::new(),
+            speed: None,
             settings_path: String::new(),
             log: VecDeque::new(),
             notice: None,
@@ -405,6 +527,7 @@ impl App {
                 self.filter_key(key);
                 None
             }
+            InputMode::Masks => self.masks_key(key),
             InputMode::Normal => self.normal_key(key),
         }
     }
@@ -431,7 +554,7 @@ impl App {
             .iter()
             .find(|hit| hit.contains(column, row))?
             .target;
-        if self.input == InputMode::Filter {
+        if matches!(self.input, InputMode::Filter | InputMode::Masks) {
             self.input = InputMode::Normal;
         }
         self.click(target, at)
@@ -460,6 +583,10 @@ impl App {
             Target::Search => self.input = InputMode::Filter,
             Target::WarningsToggle => self.journal_warnings = !self.journal_warnings,
             Target::NamesToggle => return Some(self.toggle_names()),
+            Target::Sort(by) => self.sort_click(by),
+            Target::HiddenEdit => self.start_masks(),
+            Target::Speed => return self.speedtest(None),
+            Target::SpeedNode => return self.speed_selected(),
         }
         None
     }
@@ -473,7 +600,7 @@ impl App {
         }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
-            KeyCode::Esc => self.escape(),
+            KeyCode::Esc => return self.escape(),
             KeyCode::Char('1') => self.switch(Tab::Overview),
             KeyCode::Char('2') => self.switch(Tab::Nodes),
             KeyCode::Char('3') => self.switch(Tab::Subscriptions),
@@ -497,6 +624,45 @@ impl App {
             KeyCode::Char('s') if self.tab == Tab::Nodes => self.next_subscription(),
             KeyCode::Char('w') if self.tab == Tab::Journal => {
                 self.journal_warnings = !self.journal_warnings;
+            }
+            KeyCode::Char('o') if self.tab == Tab::Nodes => self.cycle_sort(),
+            KeyCode::Char('h') if self.tab == Tab::Nodes => self.start_masks(),
+            KeyCode::Char('t') if self.tab == Tab::Nodes => return self.speed_selected(),
+            KeyCode::Char('s') if self.tab == Tab::Overview => return self.speedtest(None),
+            _ => {}
+        }
+        None
+    }
+
+    fn masks_key(&mut self, key: KeyEvent) -> Option<Effect> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        match key.code {
+            KeyCode::Esc => self.input = InputMode::Normal,
+            KeyCode::Enter => {
+                self.input = InputMode::Normal;
+                self.hidden = split_masks(&self.mask_edit);
+                self.mask_edit.clear();
+                self.refilter();
+                let text = if self.hidden.is_empty() {
+                    "Скрытых узлов нет".to_owned()
+                } else {
+                    format!("Скрыто масками: {}", self.hidden.join(", "))
+                };
+                self.notify(Tone::Green, &text, NOTICE_SECS);
+                return Some(Effect::SavePrefs(self.prefs()));
+            }
+            KeyCode::Backspace => {
+                self.mask_edit.pop();
+            }
+            KeyCode::Char('u') if ctrl => self.mask_edit.clear(),
+            KeyCode::Char(c)
+                if !ctrl
+                    && !alt
+                    && !c.is_control()
+                    && self.mask_edit.chars().count() < FILTER_MAX =>
+            {
+                self.mask_edit.push(c);
             }
             _ => {}
         }
@@ -549,6 +715,12 @@ impl App {
             Msg::Down { reason, retry_in } => self.on_down(&reason, retry_in),
             Msg::Pinned(result) => self.on_pinned(result),
             Msg::Updated(result) => self.on_updated(result),
+            Msg::SpeedProgress(progress) => {
+                if let Some(run) = self.speed.as_mut() {
+                    run.progress = progress;
+                }
+            }
+            Msg::SpeedDone(result) => self.on_speed(result),
             Msg::Saved(Ok(())) => {}
             Msg::Saved(Err(error)) => {
                 let (cause, _) = split_lines(&error);
@@ -738,7 +910,93 @@ impl App {
         };
         let text = format!("Значки в именах: {}", names_label(self.names));
         self.notify(Tone::Green, &text, NOTICE_SECS);
-        Effect::SaveNames(self.names)
+        Effect::SavePrefs(self.prefs())
+    }
+
+    fn prefs(&self) -> Prefs {
+        Prefs {
+            names: self.names,
+            hidden: self.hidden.clone(),
+        }
+    }
+
+    /// Щелчок по заголовку: тот же столбец меняет направление, другой — выбирает порядок.
+    fn sort_click(&mut self, by: SortBy) {
+        if self.filter.sort == by {
+            self.filter.descending = !self.filter.descending;
+        } else {
+            self.filter.sort = by;
+            self.filter.descending = false;
+        }
+        self.refilter();
+    }
+
+    fn cycle_sort(&mut self) {
+        self.filter.sort = self.filter.sort.next();
+        self.filter.descending = false;
+        self.refilter();
+        let text = format!("Сортировка: {}", self.filter.sort.label());
+        self.notify(Tone::Green, &text, NOTICE_SECS);
+    }
+
+    fn start_masks(&mut self) {
+        if self.tab == Tab::Nodes {
+            self.mask_edit = self.hidden.join(", ");
+            self.input = InputMode::Masks;
+        }
+    }
+
+    fn speed_selected(&mut self) -> Option<Effect> {
+        let Some(id) = self.current().map(|node| node.id.clone()) else {
+            self.notify(Tone::Yellow, "Нет узла для теста скорости", NOTICE_SECS);
+            return None;
+        };
+        self.speedtest(Some(id))
+    }
+
+    /// Запускает тест скорости, если другой не идёт. `None` — через текущий узел.
+    fn speedtest(&mut self, node: Option<String>) -> Option<Effect> {
+        if self.speed.is_some() {
+            self.notify(Tone::Yellow, "Тест скорости уже идёт", NOTICE_SECS);
+            return None;
+        }
+        self.notice = None;
+        let target = node
+            .clone()
+            .unwrap_or_else(|| "текущий узел".to_owned());
+        self.speed = Some(SpeedRun {
+            target,
+            since: self.now,
+            progress: None,
+        });
+        Some(Effect::SpeedTest(node))
+    }
+
+    fn on_speed(&mut self, result: Result<SpeedtestResult, String>) {
+        if self.speed.take().is_none() {
+            return;
+        }
+        match result {
+            Ok(result) => {
+                let best = result
+                    .runs
+                    .iter()
+                    .map(|run| run.mbps)
+                    .fold(0.0_f64, f64::max);
+                let latency = result.runs.first().map(|run| run.ttfb_ms);
+                let text = format!(
+                    "Тест скорости «{}»: ↓ {best:.1} Мбит/с, задержка {}",
+                    result.node,
+                    render::latency_text(latency)
+                );
+                self.push_log(Tone::Green, &text);
+                self.notify(Tone::Green, &text, RESULT_SECS);
+            }
+            Err(error) => {
+                let (cause, _) = split_lines(&error);
+                self.fail(&format!("Тест скорости не удался: {cause}"));
+            }
+        }
     }
 
     fn toggle_dead(&mut self) {
@@ -775,7 +1033,16 @@ impl App {
         }
     }
 
-    fn escape(&mut self) {
+    /// Esc отменяет тест скорости первым; демон при этом доводит начатый замер.
+    fn escape(&mut self) -> Option<Effect> {
+        if self.speed.take().is_some() {
+            self.notify(
+                Tone::Yellow,
+                "Тест скорости отменён; демон доведёт начатый замер",
+                NOTICE_SECS,
+            );
+            return Some(Effect::CancelSpeedTest);
+        }
         if self.details {
             self.details = false;
         } else if self.tab == Tab::Nodes && self.filter.is_active() {
@@ -783,6 +1050,7 @@ impl App {
         } else {
             self.quit = true;
         }
+        None
     }
 
     fn enter(&mut self) -> Option<Effect> {
@@ -899,18 +1167,27 @@ impl App {
         let needle = self.filter.text.trim().to_lowercase();
         let subscription = self.filter.subscription.as_deref();
         let hide_dead = self.filter.hide_dead;
+        let masks = self.hidden.as_slice();
         self.visible = self
             .nodes
             .iter()
             .enumerate()
             .filter(|(_, node)| {
                 let alive = node.selected || node.status != NodeStatus::Dead;
+                let label = display_name(&node.name, NameStyle::Country);
+                let masked = masks.iter().any(|mask| mask_matches(mask, &label));
                 (!hide_dead || alive)
+                    && !masked
                     && subscription.is_none_or(|name| node.subscription == name)
                     && (needle.is_empty() || node.id.to_lowercase().contains(&needle))
             })
             .map(|(index, _)| index)
             .collect();
+        let by = self.filter.sort;
+        let descending = self.filter.descending;
+        let nodes = &self.nodes;
+        self.visible
+            .sort_by(|a, b| order(&nodes[*a], &nodes[*b], by, descending));
         let found = match &self.cursor_id {
             Some(id) => self.position_where(|node| node.id == *id),
             None => self.position_where(|node| node.selected),
@@ -924,7 +1201,9 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use raycat_proto::{CurrentNode, Mode, SubscriptionStatus, UpdateResult, XrayStatus};
+    use raycat_proto::{
+        CurrentNode, Mode, SpeedtestRun, SubscriptionStatus, UpdateResult, XrayStatus,
+    };
 
     use super::*;
 
@@ -1471,7 +1750,10 @@ mod tests {
         assert_eq!(app.names, NameStyle::Country);
         assert_eq!(
             press(&mut app, KeyCode::Enter),
-            Some(Effect::SaveNames(NameStyle::AsIs))
+            Some(Effect::SavePrefs(Prefs {
+                names: NameStyle::AsIs,
+                hidden: Vec::new(),
+            }))
         );
         assert_eq!(app.names, NameStyle::AsIs);
         assert_eq!(
@@ -1762,6 +2044,121 @@ mod tests {
             retry_in: Duration::from_secs(1),
         });
         assert_eq!(app.speed(), None);
+    }
+
+    #[test]
+    fn sorting_by_latency_puts_dead_and_unchecked_nodes_last() {
+        let mut nodes = sample();
+        nodes[0].latency_ms = Some(90);
+        nodes[1].latency_ms = Some(20);
+        let mut app = nodes_app(nodes);
+        press(&mut app, KeyCode::Char('o'));
+        assert_eq!(app.filter.sort, SortBy::Latency);
+        assert_eq!(
+            visible_ids(&app),
+            [
+                "main/DE-2",
+                "backup/FI-5",
+                "main/NL-1",
+                "main/Германия 3",
+                "backup/NL-1"
+            ]
+        );
+    }
+
+    #[test]
+    fn sorting_by_name_and_a_header_click_reverses_it() {
+        let mut app = nodes_app(sample());
+        press(&mut app, KeyCode::Char('o'));
+        press(&mut app, KeyCode::Char('o'));
+        assert_eq!(app.filter.sort, SortBy::Name);
+        assert_eq!(
+            visible_ids(&app),
+            [
+                "main/DE-2",
+                "backup/FI-5",
+                "main/NL-1",
+                "backup/NL-1",
+                "main/Германия 3"
+            ]
+        );
+        app.click(Target::Sort(SortBy::Name), Instant::now());
+        assert!(app.filter.descending);
+        assert_eq!(visible_ids(&app)[0], "main/Германия 3");
+        app.click(Target::Sort(SortBy::Status), Instant::now());
+        assert_eq!(
+            (app.filter.sort, app.filter.descending),
+            (SortBy::Status, false)
+        );
+    }
+
+    #[test]
+    fn masks_hide_nodes_by_their_safe_name_and_are_saved() {
+        let mut app = nodes_app(sample());
+        press(&mut app, KeyCode::Char('h'));
+        assert_eq!(app.input, InputMode::Masks);
+        typed(&mut app, "FI*, Германия*");
+        assert_eq!(
+            press(&mut app, KeyCode::Enter),
+            Some(Effect::SavePrefs(Prefs {
+                names: NameStyle::Country,
+                hidden: vec!["FI*".to_owned(), "Германия*".to_owned()],
+            }))
+        );
+        assert_eq!(app.input, InputMode::Normal);
+        assert_eq!(
+            visible_ids(&app),
+            ["main/NL-1", "main/DE-2", "backup/NL-1"]
+        );
+    }
+
+    #[test]
+    fn a_speed_test_runs_once_and_escape_cancels_it() {
+        let mut app = nodes_app(sample());
+        press(&mut app, KeyCode::Down);
+        assert_eq!(
+            press(&mut app, KeyCode::Char('t')),
+            Some(Effect::SpeedTest(Some("main/DE-2".to_owned())))
+        );
+        assert!(app.speed.is_some());
+        assert_eq!(press(&mut app, KeyCode::Char('t')), None);
+        assert!(app.notice.as_ref().unwrap().text.contains("уже идёт"));
+        assert_eq!(press(&mut app, KeyCode::Esc), Some(Effect::CancelSpeedTest));
+        assert!(app.speed.is_none());
+        assert!(!app.quit);
+    }
+
+    #[test]
+    fn a_speed_result_is_summarized_in_the_journal() {
+        let mut app = app_with(sample());
+        assert_eq!(
+            press(&mut app, KeyCode::Char('s')),
+            Some(Effect::SpeedTest(None))
+        );
+        app.apply(Msg::SpeedProgress(Some(SpeedtestProgress {
+            run: 1,
+            runs: 2,
+            percent: 40,
+        })));
+        let progress = app.speed.as_ref().unwrap().progress.as_ref().unwrap();
+        assert_eq!(progress.percent, 40);
+        app.apply(Msg::SpeedDone(Ok(SpeedtestResult {
+            node: "main/NL-1".to_owned(),
+            url: "https://speed.example.com/".to_owned(),
+            runs: vec![SpeedtestRun {
+                streams: 1,
+                bytes: 1_000,
+                seconds: 1.0,
+                mbps: 12.5,
+                ttfb_ms: 31,
+            }],
+            hint: None,
+        })));
+        assert!(app.speed.is_none());
+        assert_eq!(
+            app.log.back().unwrap().text,
+            "Тест скорости «main/NL-1»: ↓ 12.5 Мбит/с, задержка 31 мс"
+        );
     }
 
     #[test]

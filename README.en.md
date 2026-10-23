@@ -259,7 +259,10 @@ reason and reconnects by itself.
 | `a` | return to automatic selection |
 | `u` | update all subscriptions (on "Subscriptions", the selected one) |
 | `d` | hide dead nodes (Nodes tab) |
-| `s` | filter by subscription (Nodes tab) |
+| `s` | filter by subscription (Nodes tab); on "Overview" — speed test |
+| `o` | sort nodes in turn: latency, name, subscription, status (click a column header for the direction) |
+| `h` | hidden nodes: masks separated by commas (`Enter` — apply, `Esc` — cancel) |
+| `t` | speed test through the selected node; `Esc` during the test cancels it |
 | `/` | search nodes (`Enter` applies, `Esc` clears) |
 | `w` | in the log, only warnings and errors |
 | `Esc` | close the details and clear the filters; at the top level, quit |

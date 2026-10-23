@@ -12,9 +12,17 @@ use crate::names::NameStyle;
 
 const FILE: &str = "tui.toml";
 
+/// Вид интерфейса: значки в именах и маски скрытых узлов.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct Prefs {
+    pub(crate) names: NameStyle,
+    pub(crate) hidden: Vec<String>,
+}
+
 #[derive(Deserialize)]
 struct File {
     names: Option<String>,
+    hidden: Option<String>,
 }
 
 /// Пустая переменная считается незаданной.
@@ -34,24 +42,58 @@ pub(crate) fn path(env: &Env) -> Option<PathBuf> {
     set(env, "HOME").map(|home| Path::new(home).join(".config/raycat").join(FILE))
 }
 
-/// Вид из файла; без файла или с непонятным значением — код страны.
-pub(crate) fn load(path: &Path) -> NameStyle {
-    fs::read_to_string(path).map_or(NameStyle::default(), |text| parse(&text))
+/// Вид из файла; без файла или с непонятными значениями — значения по умолчанию.
+pub(crate) fn load(path: &Path) -> Prefs {
+    fs::read_to_string(path).map_or_else(|_| Prefs::default(), |text| parse(&text))
 }
 
-fn parse(text: &str) -> NameStyle {
-    toml::from_str::<File>(text)
-        .ok()
-        .and_then(|file| file.names)
-        .and_then(|value| NameStyle::parse(&value))
-        .unwrap_or_default()
+fn parse(text: &str) -> Prefs {
+    let file = toml::from_str::<File>(text).ok();
+    let names = file
+        .as_ref()
+        .and_then(|file| file.names.as_deref())
+        .and_then(NameStyle::parse)
+        .unwrap_or_default();
+    let hidden = file
+        .and_then(|file| file.hidden)
+        .map_or_else(Vec::new, |list| split_masks(&list));
+    Prefs { names, hidden }
 }
 
-pub(crate) fn save(path: &Path, style: NameStyle) -> io::Result<()> {
+/// Маски через запятую; пробелы по краям и пустые элементы отбрасываются.
+pub(crate) fn split_masks(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|mask| !mask.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+pub(crate) fn save(path: &Path, prefs: &Prefs) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
-    fs::write(path, format!("names = \"{}\"\n", style.key()))
+    fs::write(path, text(prefs))
+}
+
+fn text(prefs: &Prefs) -> String {
+    format!(
+        "names = \"{}\"\nhidden = \"{}\"\n",
+        prefs.names.key(),
+        escape(&prefs.hidden.join(", "))
+    )
+}
+
+/// Строка для TOML: кавычки и обратная косая черта экранируются.
+fn escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if matches!(c, '"' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -81,14 +123,30 @@ mod tests {
 
     #[test]
     fn a_saved_style_is_read_back() {
-        assert_eq!(parse("names = \"as-is\"\n"), NameStyle::AsIs);
-        assert_eq!(parse("names = \"country\"\n"), NameStyle::Country);
+        assert_eq!(parse("names = \"as-is\"\n").names, NameStyle::AsIs);
+        assert_eq!(parse("names = \"country\"\n").names, NameStyle::Country);
     }
 
     #[test]
-    fn anything_unclear_means_the_country_code() {
-        assert_eq!(parse(""), NameStyle::Country);
-        assert_eq!(parse("names = \"флаги\""), NameStyle::Country);
-        assert_eq!(parse("names = [broken"), NameStyle::Country);
+    fn anything_unclear_means_the_defaults() {
+        assert_eq!(parse(""), Prefs::default());
+        assert_eq!(parse("names = \"флаги\""), Prefs::default());
+        assert_eq!(parse("names = [broken"), Prefs::default());
+    }
+
+    #[test]
+    fn masks_are_split_by_commas() {
+        let prefs = parse("hidden = \"Обход*,  Резерв* , \"\n");
+        assert_eq!(prefs.hidden, ["Обход*", "Резерв*"]);
+        assert!(split_masks("  , ").is_empty());
+    }
+
+    #[test]
+    fn what_is_saved_comes_back_unchanged() {
+        let prefs = Prefs {
+            names: NameStyle::AsIs,
+            hidden: vec!["Обход*".to_owned(), "a\"b\\c".to_owned()],
+        };
+        assert_eq!(parse(&text(&prefs)), prefs);
     }
 }

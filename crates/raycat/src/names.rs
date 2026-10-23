@@ -108,6 +108,33 @@ pub(crate) fn display_name(name: &str, style: NameStyle) -> String {
     }
 }
 
+/// Маска скрытия узла: `*` — любая последовательность символов, без учёта регистра.
+/// Без `*` имя должно совпасть целиком; `Обход*` — все имена, начинающиеся с «Обход».
+pub(crate) fn mask_matches(mask: &str, name: &str) -> bool {
+    let mask = mask.trim().to_lowercase();
+    let name = name.to_lowercase();
+    let parts: Vec<&str> = mask.split('*').collect();
+    let [only] = parts.as_slice() else {
+        let Some((head, tail)) = parts.split_first() else {
+            return false;
+        };
+        let Some((last, middle)) = tail.split_last() else {
+            return false;
+        };
+        let Some(mut rest) = name.strip_prefix(*head) else {
+            return false;
+        };
+        for part in middle {
+            let Some(at) = rest.find(*part) else {
+                return false;
+            };
+            rest = &rest[at + part.len()..];
+        }
+        return rest.ends_with(*last);
+    };
+    name == *only
+}
+
 /// Короткая причина сбоя узла по тексту ошибки xray или observatory; `None`, если
 /// ошибки нет.
 pub(crate) fn node_reason(error: &str) -> Option<&'static str> {
@@ -202,5 +229,23 @@ mod tests {
         assert_eq!(node_reason(dns), Some("адрес сервера не разрешается"));
         assert_eq!(node_reason("что-то новое"), Some("ошибка проверки"));
         assert_eq!(node_reason("  "), None);
+    }
+
+    #[test]
+    fn a_mask_with_a_star_takes_any_run_of_characters() {
+        assert!(mask_matches("Обход*", "Обход 1"));
+        assert!(mask_matches("обход*", "ОБХОД блокировок 2"));
+        assert!(!mask_matches("Обход*", "Германия Обход"));
+        assert!(mask_matches("*Германия*", "Северная Германия 3"));
+        assert!(mask_matches("NL*2", "NL-hub 2"));
+        assert!(!mask_matches("NL*2", "NL-hub 3"));
+        assert!(mask_matches("*", "что угодно"));
+    }
+
+    #[test]
+    fn a_mask_without_a_star_must_match_the_whole_name() {
+        assert!(mask_matches("NL-1", "nl-1"));
+        assert!(!mask_matches("NL", "NL-1"));
+        assert!(!mask_matches("", "NL-1"));
     }
 }
