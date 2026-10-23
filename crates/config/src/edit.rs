@@ -139,7 +139,8 @@ fn uncomment(text: &str, table: &str, key: &str, literal: &str) -> String {
     for line in &lines {
         let trimmed = line.trim();
         if let Some(name) = header_name(trimmed) {
-            section = name.to_owned();
+            section.clear();
+            section.push_str(name);
         } else if section == table && starts_key(trimmed, key) {
             active = true;
         }
@@ -151,7 +152,8 @@ fn uncomment(text: &str, table: &str, key: &str, literal: &str) -> String {
     for line in &mut lines {
         let trimmed = line.trim().to_owned();
         if let Some(name) = header_name(&trimmed) {
-            section = name.to_owned();
+            section.clear();
+            section.push_str(name);
             continue;
         }
         if section != table {
