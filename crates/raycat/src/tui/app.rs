@@ -13,7 +13,9 @@ use raycat_proto::{
     Event, Node, NodeStatus, Nodes, Pinned, SpeedtestProgress, SpeedtestResult, Status, Updates,
 };
 
-use crate::names::{NameStyle, display_name, mask_matches, without_code};
+use raycat_config::Pattern;
+
+use crate::names::{NameStyle, display_name};
 use crate::render;
 use crate::term::{Term, Tone, truncate};
 use crate::util::sanitize;
@@ -1168,19 +1170,14 @@ impl App {
         let needle = self.filter.text.trim().to_lowercase();
         let subscription = self.filter.subscription.as_deref();
         let hide_dead = self.filter.hide_dead;
-        let masks = self.hidden.as_slice();
+        let masks: Vec<Pattern> = self.hidden.iter().map(|mask| Pattern::new(mask)).collect();
         self.visible = self
             .nodes
             .iter()
             .enumerate()
             .filter(|(_, node)| {
                 let alive = node.selected || node.status != NodeStatus::Dead;
-                let label = display_name(&node.name, NameStyle::Country);
-                let bare = without_code(&label);
-                let texts = [label.as_str(), bare, node.name.as_str()];
-                let masked = masks
-                    .iter()
-                    .any(|mask| texts.iter().any(|text| mask_matches(mask, text)));
+                let masked = masks.iter().any(|mask| mask.matches(&node.name));
                 (!hide_dead || alive)
                     && !masked
                     && subscription.is_none_or(|name| node.subscription == name)

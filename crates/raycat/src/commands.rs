@@ -61,6 +61,15 @@ pub(crate) fn check(config: &Config, store: &Store) -> Result<()> {
                 moment(found.fetched_at),
                 found.nodes.len()
             );
+            let rejected = found
+                .nodes
+                .iter()
+                .filter(|node| !subscription.allows(&node.name))
+                .count();
+            say!(
+                "  масками allow/deny отсечено: {rejected} из {}",
+                found.nodes.len()
+            );
             cached.push(found.nodes);
             answers.push(found.info.routing);
         } else {

@@ -7,7 +7,7 @@ pub struct Pattern {
 }
 
 impl Pattern {
-    pub(crate) fn new(raw: &str) -> Self {
+    pub fn new(raw: &str) -> Self {
         Self {
             raw: raw.to_owned(),
             folded: raw.to_lowercase().chars().collect(),
@@ -18,7 +18,15 @@ impl Pattern {
         &self.raw
     }
 
+    /// Совпадает с исходным именем, безопасным (флаги → коды, эмодзи убраны) или
+    /// безопасным без кода страны. Так «Обход*» ловит «🇩🇪 Обход 1».
     pub fn matches(&self, name: &str) -> bool {
+        crate::names::variants(name)
+            .iter()
+            .any(|variant| self.matches_exactly(variant))
+    }
+
+    fn matches_exactly(&self, name: &str) -> bool {
         let text: Vec<char> = name.to_lowercase().chars().collect();
         glob_match(&self.folded, &text)
     }
@@ -87,6 +95,23 @@ mod tests {
         let pattern = Pattern::new(&"*a".repeat(40));
         assert!(!pattern.matches(&"a".repeat(39)));
         assert!(pattern.matches(&"a".repeat(40)));
+    }
+
+    #[test]
+    fn a_mask_sees_the_flag_emoji_and_code_free_variants() {
+        assert!(Pattern::new("Обход*").matches("🇩🇪 Обход 1"));
+        assert!(Pattern::new("DE Обход*").matches("🇩🇪 Обход 1"));
+        assert!(Pattern::new("обход*").matches("🇩🇪 ОБХОД 1"));
+        assert!(Pattern::new("Быстрый").matches("⚡️ Быстрый"));
+        assert!(Pattern::new("NL ?").matches("🇳🇱 ⚡️ Q"));
+        assert!(!Pattern::new("Обход").matches("🇩🇪 Обход 1"));
+        assert!(!Pattern::new("Германия*").matches("🇩🇪 Обход 1"));
+    }
+
+    #[test]
+    fn a_question_mark_is_one_character_in_any_variant() {
+        assert!(Pattern::new("NL-?").matches("🇳🇱 NL-1"));
+        assert!(!Pattern::new("NL-?").matches("🇳🇱 NL-10"));
     }
 
     #[test]
