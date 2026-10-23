@@ -5,6 +5,7 @@ mod error;
 mod link;
 mod load;
 mod model;
+pub mod edit;
 pub mod names;
 mod pattern;
 mod raw;

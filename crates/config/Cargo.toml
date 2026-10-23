@@ -23,6 +23,7 @@ schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json = { workspace = true, optional = true }
 toml.workspace = true
+toml_edit.workspace = true
 
 [lints]
 workspace = true

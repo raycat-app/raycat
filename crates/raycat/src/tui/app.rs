@@ -1036,14 +1036,10 @@ impl App {
         }
     }
 
-    /// Esc отменяет тест скорости первым; демон при этом доводит начатый замер.
+    /// Esc отменяет тест скорости первым: запрос к демону прерывается.
     fn escape(&mut self) -> Option<Effect> {
         if self.speed.take().is_some() {
-            self.notify(
-                Tone::Yellow,
-                "Тест скорости отменён; демон доведёт начатый замер",
-                NOTICE_SECS,
-            );
+            self.notify(Tone::Yellow, "Тест скорости отменён", NOTICE_SECS);
             return Some(Effect::CancelSpeedTest);
         }
         if self.details {
