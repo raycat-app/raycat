@@ -1426,6 +1426,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "toml",
+ "toml_edit",
  "unicode-width 0.2.2",
 ]
 
