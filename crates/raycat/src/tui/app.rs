@@ -10,10 +10,12 @@ use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use raycat_proto::{
-    Event, Node, NodeStatus, Nodes, Pinned, SpeedtestProgress, SpeedtestResult, Status, Updates,
+    Event, Node, NodeStatus, Nodes, Pinned, Reloaded, SettingValue, SettingsView,
+    SpeedtestProgress, SpeedtestResult, Status, Updates,
 };
 
 use raycat_config::Pattern;
+use raycat_config::names::without_code;
 
 use crate::names::{NameStyle, display_name};
 use crate::render;
@@ -75,6 +77,7 @@ pub(super) enum Target {
     Search,
     WarningsToggle,
     NamesToggle,
+    ExcludedToggle,
     Sort(SortBy),
     HiddenEdit,
     /// Тест скорости через текущий узел.
@@ -175,6 +178,13 @@ pub(super) enum Effect {
     /// Тест скорости через узел; `None` — через текущий.
     SpeedTest(Option<String>),
     CancelSpeedTest,
+    /// Настройки демона (маски исключений).
+    LoadSettings,
+    /// Новые маски `deny` подписки.
+    SetDeny {
+        subscription: String,
+        deny: Vec<String>,
+    },
 }
 
 pub(super) struct Snapshot {
@@ -198,6 +208,18 @@ pub(super) enum Msg {
     Saved(Result<(), String>),
     SpeedProgress(Option<SpeedtestProgress>),
     SpeedDone(Result<SpeedtestResult, String>),
+    Settings(Result<SettingsView, String>),
+    Excluded(Result<(Reloaded, SettingsView), String>),
+}
+
+/// Диалог исключения узла: добавить маску в `deny` подписки или убрать её.
+pub(super) struct ExcludeDialog {
+    pub(super) subscription: String,
+    pub(super) node: String,
+    /// Варианты маски при добавлении; при снятии — одна текущая маска.
+    pub(super) choices: Vec<String>,
+    pub(super) selected: usize,
+    pub(super) remove: bool,
 }
 
 /// Тест скорости, который идёт сейчас.
@@ -232,6 +254,8 @@ pub(super) struct Filter {
     pub(super) subscription: Option<String>,
     /// Мёртвые узлы скрыты; выбранный узел остаётся видимым.
     pub(super) hide_dead: bool,
+    /// Исключённые узлы скрыты (`deny` подписки).
+    pub(super) hide_excluded: bool,
     /// Порядок таблицы узлов; сортировка относится к виду списка, как и фильтры.
     pub(super) sort: SortBy,
     pub(super) descending: bool,
@@ -363,6 +387,21 @@ fn status_rank(status: NodeStatus) -> u8 {
     }
 }
 
+/// Маски `deny` по подпискам из ответа демона; ключ без подписки игнорируется.
+fn deny_lists(view: &SettingsView) -> Vec<(String, Vec<String>)> {
+    view.items
+        .iter()
+        .filter(|item| item.key == "deny")
+        .filter_map(|item| {
+            let name = item.subscription.clone()?;
+            match &item.value {
+                SettingValue::Texts(masks) => Some((name, masks.clone())),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 /// Название вида для подсказок и строк.
 pub(super) fn names_label(style: NameStyle) -> &'static str {
     match style {
@@ -397,6 +436,9 @@ pub(super) struct App {
     pub(super) names: NameStyle,
     /// Маски скрытых узлов (вид TUI); `*` — любая часть имени.
     pub(super) hidden: Vec<String>,
+    /// Маски `deny` подписок, как их отдаёт демон: подписка и её маски.
+    pub(super) deny: Vec<(String, Vec<String>)>,
+    pub(super) exclude: Option<ExcludeDialog>,
     /// Текст поля правки масок.
     pub(super) mask_edit: String,
     pub(super) speed: Option<SpeedRun>,
@@ -447,6 +489,8 @@ impl App {
             journal_warnings: false,
             names: NameStyle::default(),
             hidden: Vec::new(),
+            deny: Vec::new(),
+            exclude: None,
             mask_edit: String::new(),
             speed: None,
             settings_path: String::new(),
@@ -523,6 +567,9 @@ impl App {
             self.quit = true;
             return None;
         }
+        if self.exclude.is_some() {
+            return self.exclude_key(key);
+        }
         match self.input {
             InputMode::Help => {
                 self.input = InputMode::Normal;
@@ -588,6 +635,7 @@ impl App {
             Target::Search => self.input = InputMode::Filter,
             Target::WarningsToggle => self.journal_warnings = !self.journal_warnings,
             Target::NamesToggle => return Some(self.toggle_names()),
+            Target::ExcludedToggle => self.toggle_excluded(),
             Target::Sort(by) => self.sort_click(by),
             Target::HiddenEdit => self.start_masks(),
             Target::Speed => return self.speedtest(None),
@@ -631,6 +679,8 @@ impl App {
                 self.journal_warnings = !self.journal_warnings;
             }
             KeyCode::Char('o') if self.tab == Tab::Nodes => self.cycle_sort(),
+            KeyCode::Char('x') if self.tab == Tab::Nodes => return self.start_exclude(),
+            KeyCode::Char('e') if self.tab == Tab::Nodes => self.toggle_excluded(),
             KeyCode::Char('h') if self.tab == Tab::Nodes => self.start_masks(),
             KeyCode::Char('t') if self.tab == Tab::Nodes => return self.speed_selected(),
             KeyCode::Char('s') if self.tab == Tab::Overview => return self.speedtest(None),
@@ -726,6 +776,8 @@ impl App {
                 }
             }
             Msg::SpeedDone(result) => self.on_speed(result),
+            Msg::Settings(result) => self.on_settings(result),
+            Msg::Excluded(result) => self.on_excluded(result),
             Msg::Saved(Ok(())) => {}
             Msg::Saved(Err(error)) => {
                 let (cause, _) = split_lines(&error);
@@ -1121,6 +1173,161 @@ impl App {
         }
     }
 
+    /// Маска `deny` подписки, которая исключает узел; `None`, если узел в автовыборе.
+    fn excluding_mask(&self, node: &Node) -> Option<String> {
+        self.deny
+            .iter()
+            .filter(|(name, _)| *name == node.subscription)
+            .flat_map(|(_, masks)| masks.iter())
+            .find(|mask| Pattern::new(mask).matches(&node.name))
+            .cloned()
+    }
+
+    pub(super) fn is_excluded(&self, node: &Node) -> bool {
+        self.excluding_mask(node).is_some()
+    }
+
+    fn deny_of(&self, subscription: &str) -> Vec<String> {
+        self.deny
+            .iter()
+            .find(|(name, _)| name.as_str() == subscription)
+            .map(|(_, masks)| masks.clone())
+            .unwrap_or_default()
+    }
+
+    /// Сколько узлов подписки задевает маска.
+    pub(super) fn affected(&self, subscription: &str, mask: &str) -> usize {
+        let pattern = Pattern::new(mask);
+        self.nodes
+            .iter()
+            .filter(|node| node.subscription == subscription && pattern.matches(&node.name))
+            .count()
+    }
+
+    /// `x`: исключить узел из автовыбора или снять исключение, если он уже исключён.
+    fn start_exclude(&mut self) -> Option<Effect> {
+        let Some(node) = self.current().cloned() else {
+            self.notify(Tone::Yellow, "Нет узла для исключения", NOTICE_SECS);
+            return None;
+        };
+        let remove = self.excluding_mask(&node);
+        let choices = match &remove {
+            Some(mask) => vec![mask.clone()],
+            None => {
+                let mut choices = vec![node.name.clone()];
+                let label = display_name(&node.name, NameStyle::Country);
+                let word = without_code(&label)
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default();
+                let suggested = format!("{word}*");
+                if !word.is_empty() && !choices.contains(&suggested) {
+                    choices.push(suggested);
+                }
+                choices
+            }
+        };
+        self.exclude = Some(ExcludeDialog {
+            subscription: node.subscription.clone(),
+            node: node.id.clone(),
+            choices,
+            selected: 0,
+            remove: remove.is_some(),
+        });
+        None
+    }
+
+    fn exclude_key(&mut self, key: KeyEvent) -> Option<Effect> {
+        let Some(dialog) = self.exclude.as_mut() else {
+            return None;
+        };
+        let count = dialog.choices.len();
+        match key.code {
+            KeyCode::Esc => self.exclude = None,
+            KeyCode::Left | KeyCode::Up | KeyCode::BackTab => {
+                dialog.selected = (dialog.selected + count - 1) % count;
+            }
+            KeyCode::Right | KeyCode::Down | KeyCode::Tab => {
+                dialog.selected = (dialog.selected + 1) % count;
+            }
+            KeyCode::Char('1') if count >= 1 => dialog.selected = 0,
+            KeyCode::Char('2') if count >= 2 => dialog.selected = 1,
+            KeyCode::Enter => return self.confirm_exclude(),
+            _ => {}
+        }
+        None
+    }
+
+    fn confirm_exclude(&mut self) -> Option<Effect> {
+        let dialog = self.exclude.take()?;
+        let choice = dialog.choices.get(dialog.selected)?.clone();
+        let mut deny = self.deny_of(&dialog.subscription);
+        let text = if dialog.remove {
+            deny.retain(|mask| *mask != choice);
+            format!("Снимаю исключение «{}»…", dialog.node)
+        } else {
+            if !deny.contains(&choice) {
+                deny.push(choice.clone());
+            }
+            format!("Исключаю «{}» маской «{choice}»…", dialog.node)
+        };
+        self.notify(Tone::Green, &text, NOTICE_SECS);
+        Some(Effect::SetDeny {
+            subscription: dialog.subscription,
+            deny,
+        })
+    }
+
+    fn on_excluded(&mut self, result: Result<(Reloaded, SettingsView), String>) {
+        match result {
+            Ok((reloaded, view)) => {
+                self.deny = deny_lists(&view);
+                self.refilter();
+                let mut text = "Исключения обновлены".to_owned();
+                if reloaded.xray_restart {
+                    text.push_str("; xray перезапущен, связь прервалась на несколько секунд");
+                }
+                let tone = if reloaded.xray_restart {
+                    Tone::Yellow
+                } else {
+                    Tone::Green
+                };
+                self.push_log(tone, &text);
+                self.notify(tone, &text, RESULT_SECS);
+            }
+            Err(error) => {
+                let (cause, _) = split_lines(&error);
+                self.fail(&format!("Не удалось изменить исключения: {cause}"));
+            }
+        }
+    }
+
+    fn on_settings(&mut self, result: Result<SettingsView, String>) {
+        match result {
+            Ok(view) => {
+                self.deny = deny_lists(&view);
+                self.refilter();
+            }
+            Err(error) => {
+                let (cause, _) = split_lines(&error);
+                self.push_log(Tone::Yellow, &format!("настройки демона не получены: {cause}"));
+            }
+        }
+    }
+
+    fn toggle_excluded(&mut self) {
+        if self.tab == Tab::Nodes {
+            self.filter.hide_excluded = !self.filter.hide_excluded;
+            self.refilter();
+            let text = if self.filter.hide_excluded {
+                "Исключённые узлы скрыты"
+            } else {
+                "Исключённые узлы показаны"
+            };
+            self.notify(Tone::Green, text, NOTICE_SECS);
+        }
+    }
+
     fn last_sub(&self) -> usize {
         self.subscription_names().len().saturating_sub(1)
     }
@@ -1167,6 +1374,8 @@ impl App {
         let subscription = self.filter.subscription.as_deref();
         let hide_dead = self.filter.hide_dead;
         let masks: Vec<Pattern> = self.hidden.iter().map(|mask| Pattern::new(mask)).collect();
+        let deny = self.deny.as_slice();
+        let hide_excluded = self.filter.hide_excluded;
         self.visible = self
             .nodes
             .iter()
@@ -1174,8 +1383,13 @@ impl App {
             .filter(|(_, node)| {
                 let alive = node.selected || node.status != NodeStatus::Dead;
                 let masked = masks.iter().any(|mask| mask.matches(&node.name));
+                let excluded = deny.iter().any(|(name, masks)| {
+                    *name == node.subscription
+                        && masks.iter().any(|mask| Pattern::new(mask).matches(&node.name))
+                });
                 (!hide_dead || alive)
                     && !masked
+                    && !(hide_excluded && excluded)
                     && subscription.is_none_or(|name| node.subscription == name)
                     && (needle.is_empty() || node.id.to_lowercase().contains(&needle))
             })
@@ -2167,6 +2381,69 @@ mod tests {
             app.log.back().unwrap().text,
             "Тест скорости «main/NL-1»: ↓ 12.5 Мбит/с, задержка 31 мс"
         );
+    }
+
+    #[test]
+    fn x_excludes_the_node_only_after_a_choice_and_enter() {
+        let mut app = nodes_app(sample());
+        press(&mut app, KeyCode::Char('x'));
+        let dialog = app.exclude.as_ref().unwrap();
+        assert!(!dialog.remove);
+        assert_eq!(dialog.choices, ["NL-1", "NL-1*"]);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(
+            press(&mut app, KeyCode::Enter),
+            Some(Effect::SetDeny {
+                subscription: "main".to_owned(),
+                deny: vec!["NL-1*".to_owned()],
+            })
+        );
+        assert!(app.exclude.is_none());
+    }
+
+    #[test]
+    fn x_on_an_excluded_node_offers_to_remove_the_mask_that_excludes_it() {
+        let mut app = nodes_app(sample());
+        app.deny = vec![("main".to_owned(), vec!["NL*".to_owned()])];
+        press(&mut app, KeyCode::Char('x'));
+        let dialog = app.exclude.as_ref().unwrap();
+        assert!(dialog.remove);
+        assert_eq!(dialog.choices, ["NL*"]);
+        assert_eq!(
+            press(&mut app, KeyCode::Enter),
+            Some(Effect::SetDeny {
+                subscription: "main".to_owned(),
+                deny: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn e_hides_the_excluded_nodes() {
+        let mut app = nodes_app(sample());
+        app.deny = vec![("main".to_owned(), vec!["DE*".to_owned()])];
+        app.refilter();
+        assert!(app.is_excluded(&app.nodes[1]));
+        press(&mut app, KeyCode::Char('e'));
+        assert!(!visible_ids(&app).contains(&"main/DE-2"));
+        press(&mut app, KeyCode::Char('e'));
+        assert!(visible_ids(&app).contains(&"main/DE-2"));
+    }
+
+    #[test]
+    fn the_settings_answer_fills_the_exclusions() {
+        let mut app = App::new(NOW);
+        let view = raycat_proto::SettingsView {
+            items: vec![raycat_proto::SettingItem {
+                table: None,
+                subscription: Some("main".to_owned()),
+                key: "deny".to_owned(),
+                value: raycat_proto::SettingValue::Texts(vec!["DE*".to_owned()]),
+                source: "файл".to_owned(),
+            }],
+        };
+        app.apply(Msg::Settings(Ok(view)));
+        assert_eq!(app.deny, [("main".to_owned(), vec!["DE*".to_owned()])]);
     }
 
     #[test]
