@@ -606,7 +606,7 @@ pub(crate) fn reloaded(reloaded: &Reloaded) -> String {
     }
     for key in &reloaded.restart_required {
         lines.push(format!(
-            "ключ «{}» применится после перезапуска: sudo systemctl restart raycat",
+            "нужен перезапуск raycat (systemctl restart raycat или docker compose restart): ключ «{}»",
             sanitize(key)
         ));
     }

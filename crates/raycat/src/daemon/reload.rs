@@ -296,16 +296,20 @@ impl Daemon {
                 sources.push((index, Arc::new(source)));
             }
         }
-        if effective.mode != self.config.mode || effective.lan != self.config.lan {
-            if let Some(old) = self.gateway.take() {
-                gateway::remove(&old);
-            }
+        // Новые правила встают до того, как старые сняты: иначе трафик на время идёт мимо
+        // kill switch. Если замена не удалась, старые правила и конфиг остаются как были.
+        if rules != self.gateway {
+            let changed = match (&self.gateway, &rules) {
+                (Some(old), Some(new)) => gateway::replace(old, new),
+                (None, Some(new)) => gateway::install(new),
+                (Some(old), None) => {
+                    gateway::remove(old);
+                    Ok(())
+                }
+                (None, None) => Ok(()),
+            };
+            changed.map_err(|error| Refusal::Unavailable(format!("{error:#}")))?;
             self.gateway = rules;
-            if let Some(rules) = &self.gateway {
-                gateway::install(rules).map_err(|error| {
-                    Refusal::Unavailable(format!("правила перехвата: {error:#}"))
-                })?;
-            }
         }
         for (index, source) in sources {
             self.subs[index].source = source;
