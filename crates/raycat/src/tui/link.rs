@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use raycat_proto::{Event, SpeedtestRequest};
+use raycat_proto::{Event, SettingChange, SettingValue, SettingsPatch, SpeedtestRequest};
 use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep_until};
@@ -226,9 +226,39 @@ pub(super) async fn perform(client: &Client, effect: Effect, file: Option<&Path>
                 .map_err(|error| error.to_string()),
         ),
         Effect::SavePrefs(prefs) => Msg::Saved(save_prefs(file, prefs).await),
+        Effect::LoadSettings => load_settings(client).await,
+        Effect::SetDeny { subscription, deny } => set_deny(client, subscription, deny).await,
         Effect::SpeedTest(node) => speedtest(client, node).await,
         Effect::CancelSpeedTest => Msg::SpeedDone(Err("тест отменён".to_owned())),
     }
+}
+
+/// Настройки демона: нужны для исключений узлов (маски `deny` подписок).
+pub(super) async fn load_settings(client: &Client) -> Msg {
+    Msg::Settings(client.settings().await.map_err(|error| error.to_string()))
+}
+
+/// Меняет маски `deny` подписки; демон перечитывает файл, TUI берёт свежие настройки.
+pub(super) async fn set_deny(client: &Client, subscription: String, deny: Vec<String>) -> Msg {
+    let patch = SettingsPatch {
+        changes: vec![SettingChange {
+            table: None,
+            subscription: Some(subscription),
+            key: "deny".to_owned(),
+            value: SettingValue::Texts(deny),
+        }],
+    };
+    let applied = match client.settings_patch(&patch).await {
+        Ok(applied) => applied,
+        Err(error) => return Msg::Excluded(Err(error.to_string())),
+    };
+    Msg::Excluded(
+        client
+            .settings()
+            .await
+            .map(|view| (applied, view))
+            .map_err(|error| error.to_string()),
+    )
 }
 
 /// Тест скорости через узел (или текущий узел без `node`). Размер — постоянный: не

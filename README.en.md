@@ -263,6 +263,8 @@ reason and reconnects by itself.
 | `o` | sort nodes in turn: latency, name, subscription, status (click a column header for the direction) |
 | `h` | hidden nodes: masks separated by commas (`Enter` — apply, `Esc` — cancel) |
 | `t` | speed test through the selected node; `Esc` during the test cancels it |
+| `x` | exclude the selected node from autoselection (a `deny` mask of the subscription; pick a variant, `Enter` confirms). An excluded node is marked `⊘`; `x` on it removes the exclusion |
+| `e` | hide or show excluded nodes |
 | `/` | search nodes (`Enter` applies, `Esc` clears) |
 | `w` | in the log, only warnings and errors |
 | `Esc` | close the details and clear the filters; at the top level, quit |
