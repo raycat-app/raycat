@@ -1289,7 +1289,11 @@ mod tests {
         };
         let reloaded = daemon.patch(patch).unwrap();
         assert!(reloaded.changed);
-        assert!(std::fs::read_to_string(&path).unwrap().contains("failures = 9"));
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("failures = 9")
+        );
         assert_eq!(daemon.selector.settings().failures, 9);
     }
 

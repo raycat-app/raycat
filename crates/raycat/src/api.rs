@@ -18,7 +18,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, patch, post};
+use axum::routing::{get, post};
 use raycat_proto::{
     ErrorBody, Event, Nodes, PinRequest, Pinned, Reloaded, SettingsPatch, SettingsView,
     SpeedtestProgress, SpeedtestRequest, SpeedtestResult, Status, UpdateRequest, Updates,
@@ -1001,7 +1001,7 @@ mod tests {
         );
         let (code, text) = json(&fixture.socket, "PATCH", "/v1/settings", &body).await;
         assert_eq!(code, 413, "{text}");
-        assert!(text.contains("64 КиБ"), "{text}");
+        assert!(text.to_string().contains("64 КиБ"), "{text}");
     }
 
     #[test]
