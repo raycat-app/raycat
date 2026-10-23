@@ -73,10 +73,9 @@ pub fn has_key(text: &str, target: &Target, key: &str) -> bool {
             .get("subscription")
             .and_then(Item::as_array_of_tables)
             .is_some_and(|subscriptions| {
-                subscriptions
-                    .iter()
-                    .enumerate()
-                    .any(|(index, table)| subscription_name(index, table) == *name && table.contains_key(key))
+                subscriptions.iter().enumerate().any(|(index, table)| {
+                    subscription_name(index, table) == *name && table.contains_key(key)
+                })
             }),
     }
 }

@@ -74,7 +74,9 @@ impl ConfigFile {
     /// Путь файла и его текст.
     fn text(&self) -> Result<(PathBuf, String), Refusal> {
         let file = self.resolved().ok_or_else(|| {
-            Refusal::NotFound("файл настроек не найден: создайте его командой raycat init".to_owned())
+            Refusal::NotFound(
+                "файл настроек не найден: создайте его командой raycat init".to_owned(),
+            )
         })?;
         let text = fs::read_to_string(&file).map_err(|error| {
             Refusal::Unavailable(format!("не удалось прочитать {}: {error}", file.display()))
@@ -344,8 +346,9 @@ impl Daemon {
             }
             self.gateway = rules;
             if let Some(rules) = &self.gateway {
-                gateway::install(rules)
-                    .map_err(|error| Refusal::Unavailable(format!("правила перехвата: {error:#}")))?;
+                gateway::install(rules).map_err(|error| {
+                    Refusal::Unavailable(format!("правила перехвата: {error:#}"))
+                })?;
             }
         }
         for (index, source) in sources {
@@ -393,11 +396,7 @@ impl Daemon {
 
     /// `GET /v1/settings`: значения, которые можно менять через API, и откуда они взяты.
     pub(super) fn settings(&self) -> SettingsView {
-        let text = self
-            .file
-            .text()
-            .map(|(_, text)| text)
-            .unwrap_or_default();
+        let text = self.file.text().map(|(_, text)| text).unwrap_or_default();
         let config = &self.config;
         let mut items = vec![
             item(
