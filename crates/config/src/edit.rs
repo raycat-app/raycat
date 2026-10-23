@@ -98,17 +98,16 @@ pub fn apply(text: &str, changes: &[Change]) -> Result<String, Error> {
     Ok(doc.to_string())
 }
 
-/// Значение ключа; оформление старого значения (хвостовой комментарий) остаётся.
+/// Значение ключа. Меняется только значение: комментарии над ключом и хвостовой
+/// комментарий остаются (`insert` стёр бы их вместе с ключом).
 fn set(table: &mut Table, key: &str, value: Value) {
-    let decor = table
-        .get(key)
-        .and_then(Item::as_value)
-        .map(|old| old.decor().clone());
-    let mut value = value;
-    if let Some(decor) = decor {
-        *value.decor_mut() = decor;
+    if let Some(old) = table.get_mut(key).and_then(Item::as_value_mut) {
+        let mut value = value;
+        *value.decor_mut() = old.decor().clone();
+        *old = value;
+    } else {
+        table.insert(key, Item::Value(value));
     }
-    table.insert(key, Item::Value(value));
 }
 
 /// Имя таблицы из строки `[name]`; `[[name]]` и прочее — `None`.
