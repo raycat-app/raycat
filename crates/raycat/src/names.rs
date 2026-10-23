@@ -108,31 +108,54 @@ pub(crate) fn display_name(name: &str, style: NameStyle) -> String {
     }
 }
 
-/// Маска скрытия узла: `*` — любая последовательность символов, без учёта регистра.
-/// Без `*` имя должно совпасть целиком; `Обход*` — все имена, начинающиеся с «Обход».
+/// Маска скрытия: `*` — любая последовательность символов, `?` — один символ, без учёта
+/// регистра; имя должно совпасть целиком (как маски в настройках подписки). `Обход*` —
+/// все имена, начинающиеся с «Обход».
 pub(crate) fn mask_matches(mask: &str, name: &str) -> bool {
-    let mask = mask.trim().to_lowercase();
-    let name = name.to_lowercase();
-    let parts: Vec<&str> = mask.split('*').collect();
-    let [only] = parts.as_slice() else {
-        let Some((head, tail)) = parts.split_first() else {
-            return false;
-        };
-        let Some((last, middle)) = tail.split_last() else {
-            return false;
-        };
-        let Some(mut rest) = name.strip_prefix(*head) else {
-            return false;
-        };
-        for part in middle {
-            let Some(at) = rest.find(*part) else {
-                return false;
-            };
-            rest = &rest[at + part.len()..];
+    let pattern: Vec<char> = mask.trim().to_lowercase().chars().collect();
+    let text: Vec<char> = name.to_lowercase().chars().collect();
+    glob_match(&pattern, &text)
+}
+
+/// Сопоставление с откатом к последней `*`, как в настройках подписки.
+fn glob_match(pattern: &[char], text: &[char]) -> bool {
+    let (mut p, mut t) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while t < text.len() {
+        match pattern.get(p) {
+            Some('*') => {
+                star = Some((p, t));
+                p += 1;
+            }
+            Some('?') => {
+                p += 1;
+                t += 1;
+            }
+            Some(c) if *c == text[t] => {
+                p += 1;
+                t += 1;
+            }
+            _ => match star {
+                Some((star_p, star_t)) => {
+                    p = star_p + 1;
+                    t = star_t + 1;
+                    star = Some((star_p, star_t + 1));
+                }
+                None => return false,
+            },
         }
-        return rest.ends_with(*last);
-    };
-    name == *only
+    }
+    pattern[p..].iter().all(|c| *c == '*')
+}
+
+/// Имя без ведущего кода страны: `DE Обход 1` → `Обход 1`. Остальное не трогает.
+pub(crate) fn without_code(label: &str) -> &str {
+    match label.as_bytes() {
+        [first, second, b' ', ..] if first.is_ascii_uppercase() && second.is_ascii_uppercase() => {
+            label.get(3..).unwrap_or(label)
+        }
+        _ => label,
+    }
 }
 
 /// Короткая причина сбоя узла по тексту ошибки xray или observatory; `None`, если
@@ -247,5 +270,18 @@ mod tests {
         assert!(mask_matches("NL-1", "nl-1"));
         assert!(!mask_matches("NL", "NL-1"));
         assert!(!mask_matches("", "NL-1"));
+        assert!(mask_matches("NL-?", "NL-1"));
+        assert!(!mask_matches("NL-?", "NL-10"));
+    }
+
+    #[test]
+    fn a_mask_also_sees_the_name_without_its_country_code() {
+        let label = display_name("🇩🇪 Обход 1", NameStyle::Country);
+        assert_eq!(label, "DE Обход 1");
+        assert_eq!(without_code(&label), "Обход 1");
+        assert!(mask_matches("Обход*", without_code(&label)));
+        assert!(!mask_matches("Обход*", &label));
+        assert_eq!(without_code("NL-1"), "NL-1");
+        assert_eq!(without_code("Обход 1"), "Обход 1");
     }
 }

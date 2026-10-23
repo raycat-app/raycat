@@ -13,7 +13,7 @@ use raycat_proto::{
     Event, Node, NodeStatus, Nodes, Pinned, SpeedtestProgress, SpeedtestResult, Status, Updates,
 };
 
-use crate::names::{NameStyle, display_name, mask_matches};
+use crate::names::{NameStyle, display_name, mask_matches, without_code};
 use crate::render;
 use crate::term::{Term, Tone, truncate};
 use crate::util::sanitize;
@@ -1176,7 +1176,11 @@ impl App {
             .filter(|(_, node)| {
                 let alive = node.selected || node.status != NodeStatus::Dead;
                 let label = display_name(&node.name, NameStyle::Country);
-                let masked = masks.iter().any(|mask| mask_matches(mask, &label));
+                let bare = without_code(&label);
+                let texts = [label.as_str(), bare, node.name.as_str()];
+                let masked = masks
+                    .iter()
+                    .any(|mask| texts.iter().any(|text| mask_matches(mask, text)));
                 (!hide_dead || alive)
                     && !masked
                     && subscription.is_none_or(|name| node.subscription == name)
@@ -2108,6 +2112,19 @@ mod tests {
         );
         assert_eq!(app.input, InputMode::Normal);
         assert_eq!(visible_ids(&app), ["main/NL-1", "main/DE-2", "backup/NL-1"]);
+    }
+
+    #[test]
+    fn a_mask_hides_a_flagged_name_by_its_text() {
+        let mut nodes = sample();
+        nodes[1].name = "🇩🇪 Обход 1".to_owned();
+        let mut app = nodes_app(nodes);
+        press(&mut app, KeyCode::Char('h'));
+        typed(&mut app, "Обход*");
+        press(&mut app, KeyCode::Enter);
+        let ids = visible_ids(&app);
+        assert!(!ids.contains(&"main/DE-2"), "{ids:?}");
+        assert_eq!(ids.len(), 4, "{ids:?}");
     }
 
     #[test]
