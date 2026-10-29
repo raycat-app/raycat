@@ -11,7 +11,7 @@ use raycat_http::{Client, Url, redact};
 use raycat_proto::{SpeedtestRequest, SpeedtestResult, SpeedtestRun};
 use raycat_select::PinTarget;
 use raycat_xray::SpeedtestInbound;
-use tokio::sync::oneshot;
+use tokio::sync::{Notify, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 
@@ -26,6 +26,9 @@ const APPLY_TIMEOUT: Duration = Duration::from_secs(15);
 const APPLY_POLL: Duration = Duration::from_millis(100);
 
 type Reply = oneshot::Sender<Result<SpeedtestResult, Refusal>>;
+
+/// Предел одного замера: дольше — замер неудачный.
+const MEASURE_LIMIT: Duration = Duration::from_secs(15);
 
 /// Узел, через который идёт тест: `id` для ответа и тег в xray.
 struct NodeTarget {
@@ -43,6 +46,8 @@ struct Job {
     previous: Option<PinTarget>,
     reply: Reply,
     apply_timeout: Duration,
+    /// `DELETE /v1/speedtest` будит эту задачу, и замер прерывается.
+    cancel: Arc<Notify>,
 }
 
 impl Daemon {
@@ -74,6 +79,7 @@ impl Daemon {
             previous,
             reply,
             apply_timeout: APPLY_TIMEOUT,
+            cancel: self.shared.speedtest_cancel_handle().unwrap_or_default(),
         };
         tokio::spawn(run(job));
     }
@@ -112,8 +118,12 @@ async fn run(job: Job) {
         previous,
         reply,
         apply_timeout,
+        cancel,
     } = job;
-    let outcome = measure(&shared, &inbound, &request, &target, apply_timeout).await;
+    let outcome = tokio::select! {
+        outcome = measure(&shared, &inbound, &request, &target, apply_timeout) => outcome,
+        () = cancel.notified() => Err(anyhow::anyhow!("тест отменён")),
+    };
     restore(&shared, previous).await;
     shared.end_speedtest();
     let answer = match outcome {
@@ -154,7 +164,13 @@ async fn measure(
     let mut runs = Vec::new();
     for (index, streams) in speedtest::runs(request.streams).into_iter().enumerate() {
         let share = speedtest::share(request.size, streams);
-        runs.push(measure_run(shared, &client, custom, index + 1, streams, share).await?);
+        let run = tokio::time::timeout(
+            MEASURE_LIMIT,
+            measure_run(shared, &client, custom, index + 1, streams, share),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("замер дольше {} с", MEASURE_LIMIT.as_secs()))??;
+        runs.push(run);
     }
     let url = redact(&speedtest::stream_url(custom, request.size)?);
     let hint = speedtest::hint(&runs);
@@ -339,6 +355,7 @@ mod tests {
             previous: previous.clone(),
             reply,
             apply_timeout: Duration::from_millis(50),
+            cancel: Arc::new(Notify::new()),
         }));
         let Some(Command::SpeedtestRestore { pin, ack }) = commands.recv().await else {
             panic!("закрепление не возвращено");
@@ -370,6 +387,7 @@ mod tests {
             previous: None,
             reply,
             apply_timeout: Duration::from_secs(5),
+            cancel: Arc::new(Notify::new()),
         }));
         let Some(Command::SpeedtestRestore { pin, ack }) = commands.recv().await else {
             panic!("закрепление не возвращено");
@@ -382,6 +400,40 @@ mod tests {
         assert_eq!(result.runs[0].bytes, 4);
         assert!(result.hint.is_none());
         assert!(shared.speedtest_progress().is_none());
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_test_gives_the_pin_back_at_once() {
+        let (shared, mut commands) = Shared::new(status());
+        assert!(shared.begin_speedtest(1));
+        let previous = Some(PinTarget {
+            subscription: "main".to_owned(),
+            node: "NL-2".to_owned(),
+        });
+        let (reply, answer) = oneshot::channel();
+        tokio::spawn(run(Job {
+            shared: Arc::clone(&shared),
+            inbound: speedtest::test_inbound(),
+            request: request(Some(1), None),
+            target: target(),
+            previous: previous.clone(),
+            reply,
+            apply_timeout: Duration::from_secs(60),
+            cancel: shared.speedtest_cancel_handle().unwrap_or_default(),
+        }));
+        assert!(shared.cancel_speedtest());
+        let Some(Command::SpeedtestRestore { pin, ack }) = commands.recv().await else {
+            panic!("закрепление не возвращено");
+        };
+        assert_eq!(pin, previous);
+        let _ = ack.send(());
+        let refusal = answer.await.unwrap().unwrap_err();
+        assert!(
+            matches!(refusal, Refusal::Unavailable(ref text) if text.contains("отменён")),
+            "{refusal:?}"
+        );
+        assert!(shared.speedtest_progress().is_none());
+        assert!(!shared.cancel_speedtest());
     }
 
     #[test]

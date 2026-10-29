@@ -1,5 +1,6 @@
 //! Настройки raycat: модель, загрузка из TOML, переопределения из окружения, проверка.
 
+pub mod edit;
 mod envvars;
 mod error;
 mod link;
