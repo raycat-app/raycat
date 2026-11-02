@@ -1877,7 +1877,7 @@ impl App {
         }
         if !reloaded.restart_required.is_empty() {
             let keys = reloaded.restart_required.join(", ");
-            text.push_str(&format!("; для этого нужен raycat restart: {keys}"));
+            text = format!("{text}; для этого нужен raycat restart: {keys}");
             tone = Tone::Yellow;
         }
         self.push_log(tone, &text);
