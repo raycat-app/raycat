@@ -6,10 +6,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use raycat_config::edit::{self, Change, Target};
-use raycat_config::{Config, Env, LogLevel, Mode, Subscription};
+use raycat_config::{Config, Env, LogLevel, Mode, Subscription, format_duration};
 use raycat_proto::{
     Reloaded, SettingChange, SettingItem, SettingValue, SettingsPatch, SettingsView, XHTTP_PROVIDER,
 };
@@ -292,10 +291,6 @@ fn unapplied(refusal: Refusal) -> Refusal {
     Refusal::Unavailable(format!("сохранено, но не применено: {text}"))
 }
 
-fn seconds(duration: Duration) -> String {
-    format!("{}s", duration.as_secs())
-}
-
 fn level_name(level: LogLevel) -> &'static str {
     match level {
         LogLevel::Error => "error",
@@ -488,7 +483,7 @@ impl Daemon {
                 &text,
                 Target::Table("selection"),
                 "check_interval",
-                SettingValue::Text(seconds(config.selection.check_interval)),
+                SettingValue::Text(format_duration(config.selection.check_interval)),
             ),
             item(
                 &text,
@@ -500,13 +495,13 @@ impl Daemon {
                 &text,
                 Target::Table("selection"),
                 "switch_gain",
-                SettingValue::Text(seconds(config.selection.switch_gain)),
+                SettingValue::Text(format_duration(config.selection.switch_gain)),
             ),
             item(
                 &text,
                 Target::Table("selection"),
                 "return_delay",
-                SettingValue::Text(seconds(config.selection.return_delay)),
+                SettingValue::Text(format_duration(config.selection.return_delay)),
             ),
             item(
                 &text,
