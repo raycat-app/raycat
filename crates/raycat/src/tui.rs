@@ -197,6 +197,10 @@ impl Runner {
                 if let Some(handle) = self.speed.take() {
                     handle.abort();
                 }
+                let client = Arc::clone(&self.client);
+                tokio::spawn(async move {
+                    let _ = client.speedtest_cancel().await;
+                });
             }
             effect => self.run(effect),
         }

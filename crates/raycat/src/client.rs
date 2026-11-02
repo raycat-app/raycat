@@ -148,6 +148,12 @@ impl Client {
             .await
     }
 
+    /// Прерывает идущий тест скорости; `false`, если теста нет.
+    pub(crate) async fn speedtest_cancel(&self) -> Result<bool, ClientError> {
+        self.call("DELETE", "/v1/speedtest", None, self.timeout)
+            .await
+    }
+
     pub(crate) async fn speedtest_progress(
         &self,
     ) -> Result<Option<SpeedtestProgress>, ClientError> {

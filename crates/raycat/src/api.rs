@@ -28,7 +28,7 @@ use raycat_xray_api::XrayApi;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{Notify, broadcast, mpsc, oneshot};
 use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::BroadcastStream;
 
@@ -80,6 +80,8 @@ pub(crate) struct Shared {
     xray_pin: Mutex<Option<String>>,
     /// Ход теста скорости; `None`, когда теста нет.
     speedtest: Mutex<Option<SpeedtestProgress>>,
+    /// Прерывание идущего теста для `DELETE /v1/speedtest`.
+    speedtest_cancel: Mutex<Option<Arc<Notify>>>,
     events: broadcast::Sender<Event>,
     commands: mpsc::UnboundedSender<Command>,
 }
@@ -102,6 +104,7 @@ impl Shared {
             xray: Mutex::new(None),
             xray_pin: Mutex::new(None),
             speedtest: Mutex::new(None),
+            speedtest_cancel: Mutex::new(None),
             events,
             commands,
         });
@@ -140,7 +143,24 @@ impl Shared {
             runs,
             percent: 0,
         });
+        *locked(&self.speedtest_cancel) = Some(Arc::new(Notify::new()));
         true
+    }
+
+    /// Прерывание для задачи теста; `None`, когда теста нет.
+    pub(crate) fn speedtest_cancel_handle(&self) -> Option<Arc<Notify>> {
+        locked(&self.speedtest_cancel).clone()
+    }
+
+    /// Прерывает идущий тест; `false`, если теста нет.
+    pub(crate) fn cancel_speedtest(&self) -> bool {
+        match locked(&self.speedtest_cancel).as_ref() {
+            Some(cancel) => {
+                cancel.notify_one();
+                true
+            }
+            None => false,
+        }
     }
 
     pub(crate) fn speedtest_step(&self, run: usize, percent: u8) {
@@ -152,6 +172,7 @@ impl Shared {
 
     pub(crate) fn end_speedtest(&self) {
         *locked(&self.speedtest) = None;
+        *locked(&self.speedtest_cancel) = None;
     }
 
     pub(crate) fn speedtest_progress(&self) -> Option<SpeedtestProgress> {
@@ -215,7 +236,12 @@ pub(crate) fn router(shared: Arc<Shared>) -> Router {
         .route("/v1/nodes", get(nodes))
         .route("/v1/pin", post(pin).delete(unpin))
         .route("/v1/update", post(update))
-        .route("/v1/speedtest", post(run_speedtest).get(speedtest_status))
+        .route(
+            "/v1/speedtest",
+            post(run_speedtest)
+                .get(speedtest_status)
+                .delete(cancel_speedtest),
+        )
         .route("/v1/events", get(events))
         .fallback(not_found)
         .with_state(shared)
@@ -341,6 +367,12 @@ async fn run_speedtest(
             "тест скорости не уложился в срок",
         )),
     }
+}
+
+/// Отмена теста скорости: `true`, если тест шёл и его прерывают; `false` — теста нет.
+#[allow(clippy::unused_async)]
+async fn cancel_speedtest(State(shared): State<Arc<Shared>>) -> Json<bool> {
+    Json(shared.cancel_speedtest())
 }
 
 /// Ход теста для окна прогресса в CLI; `null`, когда теста нет.
@@ -904,6 +936,16 @@ mod tests {
         let (code, body) = json(&fixture.socket, "GET", "/v1/speedtest", "").await;
         assert_eq!(code, 200);
         assert!(body.is_null());
+    }
+
+    #[test]
+    fn a_speedtest_is_cancelled_only_while_it_runs() {
+        let (shared, _commands) = Shared::new(sample_status());
+        assert!(!shared.cancel_speedtest());
+        assert!(shared.begin_speedtest(1));
+        assert!(shared.cancel_speedtest());
+        shared.end_speedtest();
+        assert!(!shared.cancel_speedtest());
     }
 
     #[test]
