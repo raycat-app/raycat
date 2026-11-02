@@ -5,7 +5,9 @@ name: Подсети РФ для маршрутизации
 # проверки бот запускает сам, как в client-update.yml, и публикует статусы «Итог» и
 # «Заголовок PR». Если число подсетей изменилось больше чем на 20 %, PR не сливается сам:
 # такой скачок почти всегда означает ошибку источника. Ручной запуск с dry_run только
-# собирает файл в артефакт ru-ipv4 и не создаёт ветку.
+# собирает файл в артефакт ru-ipv4 и не создаёт ветку. Если проверки упали, заводится issue
+# «Не удалось обновить подсети РФ» (одно, при повторе сбоя обновляется комментарий), а после
+# слияния он закрывается.
 
 on:
   schedule:
@@ -36,6 +38,7 @@ jobs:
       sha: ${{ steps.commit.outputs.sha }}
       branch: ${{ steps.commit.outputs.branch }}
       jump: ${{ steps.build.outputs.jump }}
+      date: ${{ steps.build.outputs.date }}
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -236,3 +239,62 @@ jobs:
       - name: Слияние отключено скачком
         if: ${{ needs.update.outputs.jump == 'true' }}
         run: echo "::notice::проверки зелёные, но число подсетей изменилось больше чем на 20 %, PR $PR остаётся открытым"
+
+  report:
+    name: Отчёт об ошибке
+    needs: [update, verify]
+    if: ${{ always() && needs.verify.result == 'failure' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      DATE: ${{ needs.update.outputs.date }}
+      PR: ${{ needs.update.outputs.pr }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Issue
+        run: |
+          title="Не удалось обновить подсети РФ"
+          {
+            echo "Автоматическое обновление подсетей РФ не дошло до слияния."
+            echo
+            echo "- снимок: $DATE"
+            echo "- PR: #$PR"
+            echo "- прогон: $RUN_URL"
+          } > body.md
+          existing=$(gh issue list -R "$REPO" --state open --label маршрутизация --json number,title |
+            jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
+          if [ -n "$existing" ]; then
+            last=$(gh issue view "$existing" -R "$REPO" --json comments --jq '.comments | last | .author.login // ""')
+            if [ "$last" = github-actions ]; then
+              gh issue comment "$existing" -R "$REPO" --edit-last --body-file body.md
+            else
+              gh issue comment "$existing" -R "$REPO" --body-file body.md
+            fi
+          else
+            gh issue create -R "$REPO" --title "$title" --body-file body.md --label маршрутизация --label ci
+          fi
+
+  close:
+    name: Закрытие issue
+    needs: [update, verify]
+    if: ${{ !inputs.dry_run && needs.update.result == 'success' && needs.update.outputs.jump != 'true' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      DATE: ${{ needs.update.outputs.date }}
+    steps:
+      - name: Закрытие issue
+        run: |
+          gh issue list -R "$REPO" --state open --label маршрутизация --limit 200 --json number,title > "$RUNNER_TEMP/issues.json"
+          jq -r '.[] | select(.title == "Не удалось обновить подсети РФ") | .number' "$RUNNER_TEMP/issues.json" > "$RUNNER_TEMP/close.txt"
+          while read -r number; do
+            gh issue close "$number" -R "$REPO" --comment "Подсети РФ актуальны на $DATE, закрываю."
+          done < "$RUNNER_TEMP/close.txt"

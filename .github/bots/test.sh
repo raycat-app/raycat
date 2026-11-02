@@ -97,6 +97,30 @@ check "issue клиента: другой клиент не затрагивае
 check "issue клиента: нет совпадений — пусто" "" "$(bash "$dir/client-issues.sh" happ linux "$work/issues.json")"
 check "issue клиента: нет файла — ошибка" error "$(failed bash "$dir/client-issues.sh" happ windows "$work/missing.json")"
 
+cat >"$work/prs.json" <<'EOF'
+[
+  {"number":21,"headRefName":"bot/client-happ-windows-desktop-v4.6.1"},
+  {"number":22,"headRefName":"bot/client-happ-windows-desktop-v4.7.0"},
+  {"number":23,"headRefName":"bot/client-happ-windows-desktop-v4.8.0"},
+  {"number":24,"headRefName":"bot/client-happ-android-4.6.0"},
+  {"number":25,"headRefName":"bot/client-happ-windows-desktop-v4.9.0"},
+  {"number":26,"headRefName":"bot/xray-26.9.9"},
+  {"number":27,"headRefName":"bot/xray-26.10.31"},
+  {"number":28,"headRefName":"bot/xray-26.11.0"},
+  {"number":29,"headRefName":"bot/deps-fix-2026-10-28"}
+]
+EOF
+echo '[]' >"$work/no-prs.json"
+
+check "устаревшие: клиент, старше новой версии, новее и та же версия не закрываются" $'21\tbot/client-happ-windows-desktop-v4.6.1\n22\tbot/client-happ-windows-desktop-v4.7.0' "$(bash "$dir/superseded.sh" desktop-v4.8.0 bot/client-happ-windows- <"$work/prs.json")"
+check "устаревшие: версии сравниваются по числам (4.10 новее 4.9)" $'21\tbot/client-happ-windows-desktop-v4.6.1\n22\tbot/client-happ-windows-desktop-v4.7.0\n23\tbot/client-happ-windows-desktop-v4.8.0\n25\tbot/client-happ-windows-desktop-v4.9.0' "$(bash "$dir/superseded.sh" desktop-v4.10.0 bot/client-happ-windows- <"$work/prs.json")"
+check "устаревшие: та же версия не закрывается" "21	bot/client-happ-windows-desktop-v4.6.1" "$(bash "$dir/superseded.sh" desktop-v4.7.0 bot/client-happ-windows- <"$work/prs.json")"
+check "устаревшие: xray, версии сравниваются по числам" $'26\tbot/xray-26.9.9' "$(bash "$dir/superseded.sh" 26.10.31 bot/xray- <"$work/prs.json")"
+check "устаревшие: другой клиент не затрагивается" "24	bot/client-happ-android-4.6.0" "$(bash "$dir/superseded.sh" 4.9.0 bot/client-happ-android- <"$work/prs.json")"
+check "устаревшие: открытых PR нет — пусто" "" "$(echo '[]' | bash "$dir/superseded.sh" 1.0.0 bot/xray- )"
+check "устаревшие: версия без номера — ошибка" error "$(failed bash "$dir/superseded.sh" ver bot/xray- <"$work/prs.json")"
+check "устаревшие: нет префикса — ошибка" error "$(failed bash "$dir/superseded.sh" 1.0.0 <"$work/no-prs.json")"
+
 if [ "$failures" -ne 0 ]; then
   echo "провалено проверок: $failures"
   exit 1

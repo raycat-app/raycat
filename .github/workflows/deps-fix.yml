@@ -351,7 +351,12 @@ jobs:
           existing=$(gh issue list -R "$REPO" --state open --label зависимости --json number,title |
             jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
           if [ -n "$existing" ]; then
-            gh issue edit "$existing" -R "$REPO" --body-file "$RUNNER_TEMP/body.md"
+            last=$(gh issue view "$existing" -R "$REPO" --json comments --jq '.comments | last | .author.login // ""')
+            if [ "$last" = github-actions ]; then
+              gh issue comment "$existing" -R "$REPO" --edit-last --body-file "$RUNNER_TEMP/body.md"
+            else
+              gh issue comment "$existing" -R "$REPO" --body-file "$RUNNER_TEMP/body.md"
+            fi
           else
             gh issue create -R "$REPO" --title "$title" --body-file "$RUNNER_TEMP/body.md" --label зависимости --label безопасность
           fi
