@@ -2,8 +2,8 @@ name: Обновление профиля клиента
 
 # Один клиент (приложение и платформа): захват настоящего приложения нужной версии,
 # обновление профиля инструментом update-profiles, PR бота, обязательные проверки и
-# слияние. Если что-то не вышло, заводится issue (одно на версию). Вызывается из
-# clients.yml.
+# слияние. Если что-то не вышло, заводится issue (одно на версию), а после слияния закрываются
+# открытые issue этого клиента любой версии. Вызывается из clients.yml.
 #
 # События GITHUB_TOKEN (push, pull_request) не запускают другие workflow, поэтому
 # обязательные проверки ruleset («Итог» из ci.yml и «Заголовок PR» из pr-title.yml) бот
@@ -262,6 +262,33 @@ jobs:
       - name: Слияние отключено
         if: ${{ !inputs.merge }}
         run: echo "::notice::проверки зелёные, слияние отключено входным параметром, PR $PR остаётся открытым"
+
+  close:
+    name: Закрытие issue клиента
+    needs: verify
+    if: ${{ inputs.merge && needs.verify.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      APP: ${{ inputs.app }}
+      PLATFORM: ${{ inputs.platform }}
+      RELEASE: ${{ inputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Закрытие issue
+        run: |
+          gh issue list -R "$REPO" --state open --label эмуляция --limit 200 --json number,title > "$RUNNER_TEMP/issues.json"
+          bash .github/bots/client-issues.sh "$APP" "$PLATFORM" "$RUNNER_TEMP/issues.json" > "$RUNNER_TEMP/close.txt"
+          while read -r number; do
+            gh issue close "$number" -R "$REPO" --comment "Профиль обновлён до $RELEASE, закрываю."
+          done < "$RUNNER_TEMP/close.txt"
 
   report:
     name: Отчёт об ошибке

@@ -59,9 +59,13 @@ for client in "${clients[@]}"; do
     continue
   fi
   branch="bot/client-$key-$target"
-  if [ "$force" = none ] && [ "$(gh pr list -R "$REPO" --head "$branch" --state open --json number --jq length)" != 0 ]; then
-    echo "$key: PR из ветки $branch уже открыт, пропуск"
-    continue
+  if [ "$force" = none ]; then
+    decision=$(gh pr list -R "$REPO" --head "$branch" --state open --json number,updatedAt,statusCheckRollup | bash .github/bots/pr.sh "$(date -u +%s)" 43200)
+    if [[ "$decision" == wait:* ]]; then
+      echo "$key: PR из ветки $branch открыт, пропуск (${decision#wait: })"
+      continue
+    fi
+    [[ "$decision" == "go: открытых PR нет" ]] || echo "$key: открытый PR не блокирует ($decision), обновление поверх него"
   fi
   echo "$key: ${current:-нет} -> $target"
   entries+=("$(jq -cn --arg key "$key" --arg app "$app" --arg platform "$platform" --arg release "$target" '{key: $key, app: $app, platform: $platform, release: $release}')")
