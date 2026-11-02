@@ -2228,7 +2228,7 @@ mod tests {
             transport: None,
             security: None,
             checks: Vec::new(),
-            uplink_bytes:None,
+            uplink_bytes: None,
             downlink_bytes: None,
         }
     }

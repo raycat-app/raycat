@@ -317,7 +317,7 @@ fn node(subscription: &str, name: &str, status: NodeStatus, latency_ms: Option<u
         transport: None,
         security: None,
         checks: Vec::new(),
-        uplink_bytes:Some(6 * MIB),
+        uplink_bytes: Some(6 * MIB),
         downlink_bytes: Some(96 * MIB),
     }
 }

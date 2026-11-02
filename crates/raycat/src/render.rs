@@ -768,7 +768,7 @@ mod tests {
             transport: None,
             security: None,
             checks: Vec::new(),
-            uplink_bytes:Some(10 * 1024),
+            uplink_bytes: Some(10 * 1024),
             downlink_bytes: Some(200 * 1024),
         }
     }

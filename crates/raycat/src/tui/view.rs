@@ -574,8 +574,8 @@ mod tests {
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::style::{Color, Modifier};
     use raycat_proto::{
-        CurrentNode, Event, Mode, Node, NodeCheck, NodeStatus, Nodes, SettingItem, SettingValue, SettingsView,
-        Status, XHTTP_PROVIDER,
+        CurrentNode, Event, Mode, Node, NodeCheck, NodeStatus, Nodes, SettingItem, SettingValue,
+        SettingsView, Status, XHTTP_PROVIDER,
     };
 
     use super::super::app::{Confirm, Edit, Msg, Setting, Snapshot, Tab};
@@ -601,7 +601,7 @@ mod tests {
             transport: None,
             security: None,
             checks: Vec::new(),
-            uplink_bytes:Some(10 * 1024),
+            uplink_bytes: Some(10 * 1024),
             downlink_bytes: Some(200 * 1024),
         }
     }

@@ -1574,10 +1574,10 @@ mod tests {
         assert_eq!(node.security.as_deref(), Some("none"));
         assert_eq!(node.checks.len(), 1);
         let error = node.last_error.clone().unwrap();
-        assert!(error.contains("i/o timeout"), "{error}");
+        assert!(error.contains("i/o timeout"));
         let json = serde_json::to_string(&view).unwrap();
         for hidden in ["203.0.113.5", "8388", "secret"] {
-            assert!(!json.contains(hidden), "{hidden} попал в ответ: {json}");
+            assert!(!json.contains(hidden), "в ответ API попал адрес, порт или пароль");
         }
     }
 

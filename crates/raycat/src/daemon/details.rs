@@ -222,7 +222,7 @@ mod tests {
             "00000000-0000-4000-8000-000000000001",
             "AbCdEf0123456789",
         ] {
-            assert!(info.secrets.iter().any(|known| known == secret), "{secret}");
+            assert!(info.secrets.iter().any(|known| known == secret));
         }
     }
 
@@ -238,11 +238,11 @@ mod tests {
         let secrets = vec!["203.0.113.5:443".to_owned(), "203.0.113.5".to_owned()];
         let text = "dial tcp 203.0.113.5:443: i/o timeout; резерв 198.51.100.7:80";
         let masked = mask(text, &secrets);
-        assert!(!masked.contains("203.0.113.5"), "{masked}");
-        assert!(!masked.contains("443"), "{masked}");
-        assert!(!masked.contains("198.51.100.7"), "{masked}");
-        assert!(!masked.contains(":80"), "{masked}");
-        assert!(masked.contains("i/o timeout"), "{masked}");
+        assert!(!masked.contains("203.0.113.5"));
+        assert!(!masked.contains("443"));
+        assert!(!masked.contains("198.51.100.7"));
+        assert!(!masked.contains(":80"));
+        assert!(masked.contains("i/o timeout"));
     }
 
     #[test]
