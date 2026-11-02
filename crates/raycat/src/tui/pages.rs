@@ -5,7 +5,7 @@
 use jiff::tz::TimeZone;
 use raycat_proto::{Node, NodeStatus, SubscriptionStatus};
 
-use super::app::{App, Hit, Link, SortBy, Target, names_label};
+use super::app::{App, Hit, InputMode, LEVELS, Link, Setting, SortBy, Target};
 use super::canvas::{Canvas, GAP, Seg, highlight, wrap};
 use super::view::{
     delay_tone, speed_label, sub_phrase, subscription_title, traffic_seg, xray_segs,
@@ -26,10 +26,10 @@ const REASON_MAX: usize = 40;
 /// Сколько символов масок видно на панели фильтров.
 const HIDDEN_WIDTH: usize = 24;
 
-type Chip = (String, Tone, Option<Target>);
+pub(super) type Chip = (String, Tone, Option<Target>);
 
 /// Кнопки и переключатели в одну строку; каждый становится областью нажатия.
-fn chips(canvas: &mut Canvas<'_>, app: &mut App, y: usize, items: Vec<Chip>) {
+pub(super) fn chips(canvas: &mut Canvas<'_>, app: &mut App, y: usize, items: Vec<Chip>) {
     let mut x = 0;
     for (text, tone, target) in items {
         let width = display_width(&text);
@@ -892,79 +892,137 @@ fn journal_lines(
     (lines, back)
 }
 
+/// Ширина названия строки и значения; источник идёт сразу за значением.
+const SETTING_TITLE: usize = 23;
+const SETTING_VALUE: usize = 20;
+
+/// Вкладка «Настройки»: строки демона и вида TUI. Каждая строка — две строки экрана:
+/// название, значение и источник, под ними пояснение или ошибка. Внизу — файл настроек.
 pub(super) fn settings(canvas: &mut Canvas<'_>, app: &mut App, top: usize, end: usize) {
-    let mut y = top;
-    for segs in summary_lines(app) {
-        if y + 1 >= end {
-            return;
-        }
-        canvas.line(y, 0, segs);
-        y += 1;
-    }
-    y += 1;
-    if y + 4 > end {
+    if end <= top + 1 {
         return;
     }
-    let label = format!("Значки в именах: {}", names_label(app.names));
-    let explain = match app.names {
-        NameStyle::Country => "флаги заменяются кодом страны (DE), эмодзи убираются",
-        NameStyle::AsIs => "имена показываются без изменений, флаги зависят от терминала",
+    let rows = (end - top - 1) / 2;
+    app.keep_setting_visible(rows);
+    let first = app.setting_offset;
+    for (index, setting) in Setting::ALL.iter().enumerate().skip(first).take(rows) {
+        let y = top + (index - first) * 2;
+        setting_row(canvas, app, index, *setting, y);
+    }
+    settings_footer(canvas, app, end - 1);
+}
+
+fn setting_row(canvas: &mut Canvas<'_>, app: &mut App, index: usize, setting: Setting, y: usize) {
+    let selected = index == app.setting_cursor;
+    let shown = app.shown(setting);
+    let editing = selected && app.input == InputMode::Field;
+    let plain = if selected {
+        highlight()
+    } else {
+        canvas.style(Tone::Plain)
     };
-    let width = display_width(&label);
-    let mut inner = canvas.framed(y, 4, vec![Seg::new("Вид", Tone::Bold, 0)]);
-    inner.line(0, 0, vec![Seg::new(label, Tone::Bold, 0)]);
-    inner.line(1, 0, vec![Seg::new(explain, Tone::Dim, 0)]);
-    app.hits
-        .push(Hit::new(2, y + 1, width, Target::NamesToggle));
-    y += 4;
-    if y < end {
-        let path = if app.settings_path.is_empty() {
-            "не найден".to_owned()
+    let bold = if selected {
+        highlight()
+    } else {
+        canvas.style(Tone::Bold)
+    };
+    let dim = if selected {
+        highlight()
+    } else {
+        canvas.style(Tone::Dim)
+    };
+    let title_style = if shown.enabled { bold } else { dim };
+    canvas.put_style(0, y, if selected { "▶ " } else { "  " }, 2, plain);
+    canvas.put_style(2, y, setting.title(), SETTING_TITLE, title_style);
+    let value_x = 2 + SETTING_TITLE + GAP;
+    if setting == Setting::LogLevel && shown.enabled {
+        level_choices(canvas, app, &shown.value, y, value_x, selected);
+    } else {
+        let text = if editing {
+            format!("[{}█]", app.field)
+        } else if shown.enabled {
+            format!("[{}]", shown.value)
         } else {
-            app.settings_path.clone()
+            shown.value.clone()
         };
-        let text = format!("Настройки меняются в файле: {path}; raycat config покажет итог");
-        canvas.line(y, 0, vec![Seg::new(text, Tone::Dim, 0)]);
+        let width = display_width(&text).min(SETTING_VALUE);
+        let style = if shown.enabled { bold } else { dim };
+        canvas.put_style(value_x, y, &text, SETTING_VALUE, style);
+        if shown.enabled {
+            app.hits
+                .push(Hit::new(value_x, y, width, Target::SettingCell(index)));
+        }
+    }
+    let source_x = value_x + SETTING_VALUE + GAP;
+    let room = canvas.width.saturating_sub(source_x);
+    canvas.put_style(source_x, y, &shown.source, room, dim);
+    let error = app
+        .setting_error
+        .as_ref()
+        .filter(|(row, _)| *row == index)
+        .map(|(_, text)| text.clone());
+    let (text, tone) = match error {
+        Some(text) => (text, Tone::Red),
+        None => (setting.hint().to_owned(), Tone::Dim),
+    };
+    let style = if selected {
+        highlight()
+    } else {
+        canvas.style(tone)
+    };
+    let room = canvas.width.saturating_sub(2);
+    canvas.put_style(2, y + 1, &text, room, style);
+    // Значение и уровни регистрируются раньше строки: при нажатии выигрывает точная область.
+    app.hits
+        .push(Hit::new(0, y, canvas.width, Target::SettingRow(index)));
+    app.hits
+        .push(Hit::new(0, y + 1, canvas.width, Target::SettingRow(index)));
+}
+
+/// Четыре уровня журнала в строке; текущий в скобках, каждый нажимается отдельно.
+fn level_choices(
+    canvas: &mut Canvas<'_>,
+    app: &mut App,
+    current: &str,
+    y: usize,
+    x: usize,
+    selected: bool,
+) {
+    let mut at = x;
+    for level in LEVELS {
+        let chosen = current == level;
+        let text = if chosen {
+            format!("[{level}]")
+        } else {
+            level.to_owned()
+        };
+        let width = display_width(&text);
+        let style = match (selected, chosen) {
+            (true, _) => highlight(),
+            (false, true) => canvas.style(Tone::Bold),
+            (false, false) => canvas.style(Tone::Dim),
+        };
+        canvas.put_style(at, y, &text, width, style);
+        app.hits
+            .push(Hit::new(at, y, width, Target::SettingLevel(level)));
+        at += width + GAP;
     }
 }
 
-fn summary_lines(app: &App) -> Vec<Vec<Seg>> {
-    let Some(status) = &app.status else {
-        return vec![vec![Seg::new("данных от демона ещё нет", Tone::Dim, 0)]];
+/// Путь к файлу настроек и напоминание, что остальное читается через `raycat config`.
+fn settings_footer(canvas: &mut Canvas<'_>, app: &App, y: usize) {
+    let path = if app.settings_path.is_empty() {
+        "не найден".to_owned()
+    } else {
+        app.settings_path.clone()
     };
-    let kill = match status.kill_switch {
-        Some(true) => "включён",
-        Some(false) => "выключен",
-        None => "нет (режим прокси)",
-    };
-    let uptime = status.uptime_secs + app.now.saturating_sub(app.status_at);
-    let node = status.node.as_ref().map_or_else(
-        || "не выбран".to_owned(),
-        |node| display_name(&node.name, app.names),
-    );
-    vec![
-        vec![Seg::new("Состояние демона", Tone::Bold, 0)],
-        vec![Seg::new(
-            format!("Версия: {}", status.version),
-            Tone::Plain,
-            0,
-        )],
-        vec![Seg::new(
-            format!("Режим: {}", render::mode_name(status.mode)),
-            Tone::Plain,
-            0,
-        )],
-        vec![Seg::new(format!("Kill switch: {kill}"), Tone::Plain, 0)],
-        vec![Seg::new(
-            format!("Время работы: {}", render::span(uptime)),
-            Tone::Plain,
-            0,
-        )],
-        vec![Seg::new(
-            format!("Подписок: {}", status.subscriptions.len()),
-            Tone::Plain,
-            0,
-        )],
-        vec![Seg::new(format!("Текущий узел: {node}"), Tone::Plain, 0)],
-    ]
+    let segs = vec![
+        Seg::new(format!("Файл настроек: {path}"), Tone::Dim, 0),
+        Seg::new(
+            "Остальные настройки — в файле, raycat config покажет итог",
+            Tone::Dim,
+            1,
+        ),
+    ];
+    canvas.line(y, 0, segs);
 }

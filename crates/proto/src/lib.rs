@@ -223,7 +223,14 @@ pub struct SettingChange {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingsPatch {
     pub changes: Vec<SettingChange>,
+    /// Только проверить: файл не пишется и конфиг не применяется. Ответ `Reloaded` говорит,
+    /// что изменится и нужен ли перезапуск xray.
+    #[serde(default)]
+    pub dry_run: bool,
 }
+
+/// Значение `xray.xhttp_connections`, которое значит «как у провайдера»: в файле ключа нет.
+pub const XHTTP_PROVIDER: &str = "provider";
 
 /// Текущее значение настройки для `GET /v1/settings`; секретов нет.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -232,7 +239,7 @@ pub struct SettingItem {
     pub subscription: Option<String>,
     pub key: String,
     pub value: SettingValue,
-    /// `файл` — ключ записан в файле настроек, `по умолчанию` — значение не задано.
+    /// `из файла` — ключ записан в файле настроек, `по умолчанию` — значение не задано.
     pub source: String,
 }
 

@@ -30,7 +30,7 @@ const HELP: [(&str, &str); 20] = [
     ("Home End", "в начало и в конец (g G)"),
     (
         "Enter",
-        "подробности узла или подписки; на «Настройках» — переключить",
+        "подробности узла или подписки; на «Настройках» — изменить строку",
     ),
     (
         "p",
@@ -353,7 +353,13 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("? справка", 0),
             ("q выход", 0),
         ],
-        Tab::Settings => &[("Enter переключить", 1), ("? справка", 0), ("q выход", 0)],
+        Tab::Settings => &[
+            ("↑↓ выбор", 1),
+            ("Enter изменить", 1),
+            ("Пробел переключить", 2),
+            ("? справка", 0),
+            ("q выход", 0),
+        ],
     };
     items
         .iter()
@@ -434,20 +440,49 @@ fn exclude_lines(
         })
         .collect();
     let hint = format!(
-        "{} · Enter — подтвердить · Esc — отмена · xray перезапустится, если набор узлов изменится: связь прервётся на несколько секунд",
+        "{} · Enter — проверить и сохранить · Esc — отмена",
         options.join("   ")
     );
     canvas.line(hints_y, 0, vec![Seg::new(hint, Tone::Dim, 0)]);
 }
 
-fn bottom(canvas: &mut Canvas<'_>, app: &App) {
+/// Подсказка поля правки на вкладке «Настройки».
+fn field_hint() -> Vec<Seg> {
+    vec![Seg::new(
+        "Enter — сохранить · Esc — отмена · например 90s, 5m или 3",
+        Tone::Dim,
+        0,
+    )]
+}
+
+fn bottom(canvas: &mut Canvas<'_>, app: &mut App) {
     let status_y = canvas.height.saturating_sub(BOTTOM);
     let hints_y = canvas.height.saturating_sub(1);
+    if let Some(question) = app.confirm.as_ref().map(|confirm| confirm.question.clone()) {
+        canvas.line(status_y, 0, vec![Seg::new(question, Tone::Yellow, 0)]);
+        let buttons = vec![
+            (
+                "[Enter] Подтвердить".to_owned(),
+                Tone::Bold,
+                Some(Target::ConfirmYes),
+            ),
+            (
+                "[Esc] Отмена".to_owned(),
+                Tone::Bold,
+                Some(Target::ConfirmNo),
+            ),
+        ];
+        pages::chips(canvas, app, hints_y, buttons);
+        return;
+    }
     if let Some(dialog) = &app.exclude {
         exclude_lines(canvas, app, dialog, status_y, hints_y);
         return;
     }
-    if let Some(run) = &app.update {
+    if app.saving.is_some() {
+        let text = "⟳ Сохраняю настройки…".to_owned();
+        canvas.line(status_y, 0, vec![Seg::new(text, Tone::Green, 0)]);
+    } else if let Some(run) = &app.update {
         let target = run.target.as_deref().map_or_else(
             || "всех подписок".to_owned(),
             |name| format!("подписки «{name}»"),
@@ -481,6 +516,8 @@ fn bottom(canvas: &mut Canvas<'_>, app: &App) {
         canvas.line(hints_y, 0, filter_hint(app));
     } else if app.input == InputMode::Masks {
         canvas.line(hints_y, 0, masks_hint(app));
+    } else if app.input == InputMode::Field {
+        canvas.line(hints_y, 0, field_hint());
     } else {
         keys_line(canvas, hints_y, normal_hints(app));
     }
@@ -519,9 +556,12 @@ mod tests {
     use ratatui::buffer::{Buffer, Cell};
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::style::{Color, Modifier};
-    use raycat_proto::{CurrentNode, Event, Mode, Node, NodeStatus, Nodes, Status};
+    use raycat_proto::{
+        CurrentNode, Event, Mode, Node, NodeStatus, Nodes, SettingItem, SettingValue,
+        SettingsView, Status, XHTTP_PROVIDER,
+    };
 
-    use super::super::app::{Msg, Snapshot, Tab};
+    use super::super::app::{Confirm, Edit, Msg, Setting, Snapshot, Tab};
     use super::*;
 
     const NOW: u64 = 1_790_596_800;
@@ -1017,6 +1057,89 @@ mod tests {
         app.set_now(NOW);
         let lines = screen(&mut app, 60, 20);
         assert!(!lines[1].contains("время работы"), "{:?}", lines[1]);
+    }
+
+    fn text(value: &str) -> SettingValue {
+        SettingValue::Text(value.to_owned())
+    }
+
+    fn setting_item(table: &str, key: &str, value: SettingValue, source: &str) -> SettingItem {
+        SettingItem {
+            table: Some(table.to_owned()),
+            subscription: None,
+            key: key.to_owned(),
+            value,
+            source: source.to_owned(),
+        }
+    }
+
+    fn settings_view() -> SettingsView {
+        SettingsView {
+            items: vec![
+                setting_item("routing", "ru_direct", SettingValue::Bool(true), "из файла"),
+                setting_item("mode", "kill_switch", SettingValue::Bool(true), "по умолчанию"),
+                setting_item("selection", "check_interval", text("30s"), "по умолчанию"),
+                setting_item("selection", "failures", SettingValue::Number(3), "из файла"),
+                setting_item("xray", "xhttp_connections", text(XHTTP_PROVIDER), "по умолчанию"),
+                setting_item("log", "level", text("warn"), "из файла"),
+            ],
+        }
+    }
+
+    #[test]
+    fn the_settings_tab_shows_each_value_with_its_source_and_hint() {
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('5'));
+        app.apply(Msg::Settings(Ok(settings_view())));
+        let lines = screen(&mut app, 100, 30);
+        for word in [
+            "Россия напрямую",
+            "[вкл]",
+            "[3]",
+            "[как у провайдера]",
+            "error  [warn]  info  debug",
+            "из файла",
+            "по умолчанию",
+            "российские домены и подсети идут напрямую",
+            "Файл настроек: не найден",
+            "Остальные настройки — в файле, raycat config покажет итог",
+        ] {
+            assert!(has_line(&lines, word), "{word}: {lines:?}");
+        }
+    }
+
+    #[test]
+    fn a_field_shows_its_text_with_a_cursor_and_what_keys_do() {
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('5'));
+        app.apply(Msg::Settings(Ok(settings_view())));
+        app.setting_cursor = Setting::CheckInterval.row();
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('9'));
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "[30s9█]"), "{lines:?}");
+        assert!(has_line(&lines, "Enter — сохранить · Esc — отмена"), "{lines:?}");
+    }
+
+    #[test]
+    fn a_question_takes_the_status_line_and_offers_two_buttons() {
+        let mut app = sample_app();
+        let edit = Edit {
+            changes: Vec::new(),
+            done: String::new(),
+            row: None,
+            warn: None,
+        };
+        app.confirm = Some(Confirm {
+            question: "xray перезапустится: связь прервётся на несколько секунд".to_owned(),
+            edit,
+        });
+        let lines = screen(&mut app, 100, 24);
+        assert!(lines[22].contains("xray перезапустится"), "{lines:?}");
+        assert!(lines[23].contains("[Enter] Подтвердить"), "{lines:?}");
+        assert!(lines[23].contains("[Esc] Отмена"), "{lines:?}");
+        assert!(app.hits.iter().any(|hit| hit.target == Target::ConfirmYes));
+        assert!(app.hits.iter().any(|hit| hit.target == Target::ConfirmNo));
     }
 
     #[test]

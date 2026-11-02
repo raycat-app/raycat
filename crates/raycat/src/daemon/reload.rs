@@ -11,7 +11,7 @@ use std::time::Duration;
 use raycat_config::edit::{self, Change, Target};
 use raycat_config::{Config, Env, LogLevel, Mode, Subscription};
 use raycat_proto::{
-    Reloaded, SettingChange, SettingItem, SettingValue, SettingsPatch, SettingsView,
+    Reloaded, SettingChange, SettingItem, SettingValue, SettingsPatch, SettingsView, XHTTP_PROVIDER,
 };
 use tokio::time::Instant;
 use toml_edit::Value;
@@ -208,9 +208,20 @@ fn toml_value(value: &SettingValue) -> Value {
     }
 }
 
+/// «Как у провайдера» для `xhttp_connections` значит убрать ключ из файла.
+fn is_provider_choice(item: &SettingChange) -> bool {
+    item.table.as_deref() == Some("xray")
+        && item.key == "xhttp_connections"
+        && item.value == SettingValue::Text(XHTTP_PROVIDER.to_owned())
+}
+
 /// Изменение из запроса: только ключи из списков выше, иначе отказ до записи.
 fn change(item: &SettingChange) -> Result<Change, Refusal> {
-    let value = toml_value(&item.value);
+    let value = if is_provider_choice(item) {
+        None
+    } else {
+        Some(toml_value(&item.value))
+    };
     if let Some(name) = &item.subscription {
         let key = SUBSCRIPTION_KEYS
             .iter()
@@ -240,6 +251,14 @@ fn change(item: &SettingChange) -> Result<Change, Refusal> {
     })
 }
 
+/// Файл записан, а применить не вышло: ответ говорит именно это, значения в файле новые.
+fn unapplied(refusal: Refusal) -> Refusal {
+    let text = match refusal {
+        Refusal::NotFound(text) | Refusal::Invalid(text) | Refusal::Unavailable(text) => text,
+    };
+    Refusal::Unavailable(format!("сохранено, но не применено: {text}"))
+}
+
 fn seconds(duration: Duration) -> String {
     format!("{}s", duration.as_secs())
 }
@@ -255,7 +274,7 @@ fn level_name(level: LogLevel) -> &'static str {
 
 fn item(text: &str, target: Target, key: &'static str, value: SettingValue) -> SettingItem {
     let source = if edit::has_key(text, &target, key) {
-        "файл"
+        "из файла"
     } else {
         "по умолчанию"
     };
@@ -339,7 +358,8 @@ impl Daemon {
     }
 
     /// `PATCH /v1/settings`: проверяет новый текст, пишет файл атомарно и применяет его.
-    /// Если проверка не прошла, файл не трогается.
+    /// Если проверка не прошла, файл не трогается. С `dry_run` файл не пишется и конфиг не
+    /// применяется: ответ говорит, что изменилось бы.
     pub(super) fn patch(&mut self, patch: SettingsPatch) -> Result<Reloaded, Refusal> {
         let (target, source) = self.file.text()?;
         let changes = patch
@@ -350,8 +370,46 @@ impl Daemon {
         let edited =
             edit::apply(&source, &changes).map_err(|error| Refusal::Invalid(error.to_string()))?;
         let next = self.file.parse(&edited)?;
+        if patch.dry_run {
+            edit::writable(&target).map_err(|error| Refusal::Unavailable(error.to_string()))?;
+            return self.preview(&next);
+        }
         edit::write(&target, &edited).map_err(|error| Refusal::Unavailable(error.to_string()))?;
-        self.apply_config(&next)
+        self.apply_config(&next).map_err(unapplied)
+    }
+
+    /// Что сделал бы `apply_config(next)`, без записи и применения.
+    fn preview(&self, next: &Config) -> Result<Reloaded, Refusal> {
+        let restart_required = restart_keys(&self.config, next);
+        let effective = effective(&self.config, next);
+        let changed = effective != self.config;
+        let xray_restart = changed
+            && self.applied.as_deref() != Some(self.xray_config(&effective)?.as_slice());
+        Ok(Reloaded {
+            changed,
+            xray_restart,
+            restart_required,
+        })
+    }
+
+    /// Конфиг xray, который собрала бы `config` из нынешних узлов подписок. Как в `reconcile`,
+    /// только без записи и без перезапуска.
+    fn xray_config(&self, config: &Config) -> Result<Vec<u8>, Refusal> {
+        let inputs: Vec<_> = self
+            .subs
+            .iter()
+            .zip(&config.subscriptions)
+            .map(|(sub, subscription)| (subscription, sub.nodes.as_slice(), sub.routing.as_ref()))
+            .collect();
+        let plan = plan::compile_config(
+            config,
+            &inputs,
+            self.api_port,
+            self.speedtest.clone(),
+            self.tcp_congestion.as_deref(),
+        )
+        .map_err(|error| Refusal::Invalid(format!("{error:#}")))?;
+        Ok(plan.json)
     }
 
     /// `GET /v1/settings`: значения, которые можно менять через API, и откуда они взяты.
@@ -404,14 +462,12 @@ impl Daemon {
                 SettingValue::Bool(kill_switch),
             ));
         }
-        if let Some(connections) = config.xray.xhttp_connections {
-            items.push(item(
-                &text,
-                Target::Table("xray"),
-                "xhttp_connections",
-                SettingValue::Number(i64::from(connections)),
-            ));
-        }
+        // Без ключа форме всё равно нужна строка: её значение — «как у провайдера».
+        let connections = match config.xray.xhttp_connections {
+            Some(connections) => SettingValue::Number(i64::from(connections)),
+            None => SettingValue::Text(XHTTP_PROVIDER.to_owned()),
+        };
+        items.push(item(&text, Target::Table("xray"), "xhttp_connections", connections));
         for subscription in &config.subscriptions {
             let masks = [
                 ("allow", &subscription.allow),
@@ -476,5 +532,22 @@ mod tests {
         let change = change(&item).unwrap();
         assert_eq!(change.target, Target::Subscription("backup".to_owned()));
         assert_eq!(change.key, "allow");
+    }
+
+    #[test]
+    fn as_provider_removes_the_connections_key() {
+        let mut item = patch_item(Some("xray"), "xhttp_connections");
+        item.value = SettingValue::Text(XHTTP_PROVIDER.to_owned());
+        assert!(change(&item).unwrap().value.is_none());
+        item.value = SettingValue::Number(4);
+        assert!(change(&item).unwrap().value.is_some());
+    }
+
+    #[test]
+    fn a_refusal_after_the_write_says_the_file_is_saved() {
+        let Refusal::Unavailable(text) = unapplied(Refusal::Invalid("плохо".to_owned())) else {
+            panic!("ожидался отказ Unavailable");
+        };
+        assert_eq!(text, "сохранено, но не применено: плохо");
     }
 }

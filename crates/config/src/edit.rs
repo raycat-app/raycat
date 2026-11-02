@@ -4,7 +4,7 @@
 use std::fmt;
 use std::fs;
 use std::io::{self, Write as _};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use toml_edit::{DocumentMut, Item, Table, Value};
 
@@ -19,7 +19,8 @@ pub enum Target {
 pub struct Change {
     pub target: Target,
     pub key: &'static str,
-    pub value: Value,
+    /// `None` убирает ключ из файла: значение становится значением по умолчанию.
+    pub value: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -37,7 +38,10 @@ impl fmt::Display for Error {
         match self {
             Self::Parse(text) => write!(f, "не удалось разобрать файл настроек: {text}"),
             Self::NoSubscription(name) => write!(f, "подписки «{name}» нет в файле настроек"),
-            Self::ReadOnly(path) => write!(f, "файл настроек только для чтения: {path}"),
+            Self::ReadOnly(path) => write!(
+                f,
+                "файл настроек только для чтения: {path}\nснимите запрет записи или поправьте файл вручную и выполните raycat reload"
+            ),
             Self::SingleFileMount => write!(
                 f,
                 "файл настроек смонтирован отдельным файлом, его нельзя заменить: смонтируйте каталог или правьте файл на хосте и выполните raycat reload"
@@ -84,8 +88,12 @@ pub fn has_key(text: &str, target: &Target, key: &str) -> bool {
 pub fn apply(text: &str, changes: &[Change]) -> Result<String, Error> {
     let mut text = text.to_owned();
     for change in changes {
-        if let Target::Table(table) = change.target {
-            text = uncomment(&text, table, change.key, &change.value.to_string());
+        match (&change.target, &change.value) {
+            (Target::Table(table), Some(value)) => {
+                text = uncomment(&text, table, change.key, &value.to_string());
+            }
+            (Target::Table(table), None) => text = comment_out(&text, table, change.key),
+            (Target::Subscription(_), _) => {}
         }
     }
     let mut doc: DocumentMut = text
@@ -94,6 +102,13 @@ pub fn apply(text: &str, changes: &[Change]) -> Result<String, Error> {
     for change in changes {
         match &change.target {
             Target::Table(name) => {
+                if change.value.is_none() {
+                    let table = doc.as_table_mut().get_mut(name).and_then(Item::as_table_mut);
+                    if let Some(table) = table {
+                        remove(table, change.key);
+                    }
+                    continue;
+                }
                 let Some(table) = doc
                     .as_table_mut()
                     .entry(name)
@@ -102,7 +117,7 @@ pub fn apply(text: &str, changes: &[Change]) -> Result<String, Error> {
                 else {
                     return Err(Error::Parse(format!("[{name}] — не таблица")));
                 };
-                set(table, change.key, change.value.clone());
+                put(table, change.key, change.value.as_ref());
             }
             Target::Subscription(name) => {
                 let subscriptions = doc
@@ -118,11 +133,24 @@ pub fn apply(text: &str, changes: &[Change]) -> Result<String, Error> {
                     }
                 }
                 let table = found.ok_or_else(|| Error::NoSubscription(name.clone()))?;
-                set(table, change.key, change.value.clone());
+                put(table, change.key, change.value.as_ref());
             }
         }
     }
     Ok(doc.to_string())
+}
+
+fn put(table: &mut Table, key: &str, value: Option<&Value>) {
+    match value {
+        Some(value) => set(table, key, value.clone()),
+        None => remove(table, key),
+    }
+}
+
+/// Убирает ключ вместе с его комментариями. Пустую таблицу не удаляет: её заголовок
+/// мог быть нужен другим ключам или читателю файла.
+fn remove(table: &mut Table, key: &str) {
+    let _ = table.remove(key);
 }
 
 /// Значение ключа. Меняется только значение: комментарии над ключом и хвостовой
@@ -198,6 +226,27 @@ fn uncomment(text: &str, table: &str, key: &str, literal: &str) -> String {
     join(text, &lines)
 }
 
+/// Убирает активный ключ `key` из таблицы `table`, оставляя его строку закомментированной:
+/// так файл выглядит как образец по умолчанию, а соседние комментарии остаются на месте.
+/// Ключ в несколько строк не трогается: для таких значений raycat сам не пишет.
+fn comment_out(text: &str, table: &str, key: &str) -> String {
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    let mut section = String::new();
+    for line in &mut lines {
+        let trimmed = line.trim().to_owned();
+        if trimmed.starts_with('[') {
+            section = header_name(&trimmed).unwrap_or_default().to_owned();
+            continue;
+        }
+        if section == table && starts_key(&trimmed, key) {
+            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+            *line = format!("{indent}# {trimmed}");
+            break;
+        }
+    }
+    join(text, &lines)
+}
+
 fn join(text: &str, lines: &[String]) -> String {
     let mut out = lines.join("\n");
     if text.ends_with('\n') {
@@ -211,13 +260,7 @@ fn join(text: &str, lines: &[String]) -> String {
 /// файл, на который он указывает. Временный файл создаётся с правами 0600 сразу, права
 /// исходного файла выставляются после записи. Файл только для чтения — понятная ошибка.
 pub fn write(path: &Path, text: &str) -> Result<(), Error> {
-    let target = fs::canonicalize(path)
-        .map_err(|error| Error::Io(format!("{}: {error}", path.display())))?;
-    let meta = fs::metadata(&target)
-        .map_err(|error| Error::Io(format!("{}: {error}", target.display())))?;
-    if meta.permissions().readonly() {
-        return Err(Error::ReadOnly(target.display().to_string()));
-    }
+    let (target, meta) = writable_target(path)?;
     let tmp = target.with_extension("raycat-tmp");
     // Остаток прошлого сбоя мешал бы создать tmp. remove_file не идёт по ссылке.
     let _ = fs::remove_file(&tmp);
@@ -228,6 +271,23 @@ pub fn write(path: &Path, text: &str) -> Result<(), Error> {
             Err(classify(&target, &error))
         }
     }
+}
+
+/// Можно ли записать файл настроек. Проверка та же, что у `write`, но ничего не пишется.
+pub fn writable(path: &Path) -> Result<(), Error> {
+    writable_target(path).map(|_| ())
+}
+
+/// Настоящий путь файла (симлинк раскрыт) и его метаданные. Файл только для чтения — ошибка.
+fn writable_target(path: &Path) -> Result<(PathBuf, fs::Metadata), Error> {
+    let target = fs::canonicalize(path)
+        .map_err(|error| Error::Io(format!("{}: {error}", path.display())))?;
+    let meta = fs::metadata(&target)
+        .map_err(|error| Error::Io(format!("{}: {error}", target.display())))?;
+    if meta.permissions().readonly() {
+        return Err(Error::ReadOnly(target.display().to_string()));
+    }
+    Ok((target, meta))
 }
 
 /// Код ошибки `rename` (Linux): EBUSY и EXDEV бывают, когда файл смонтирован в контейнер
@@ -283,7 +343,7 @@ mod tests {
         let change = Change {
             target: Target::Table("routing"),
             key: "ru_direct",
-            value: Value::from(true),
+            value: Some(Value::from(true)),
         };
         let out = apply(EXAMPLE, &[change]).unwrap();
         assert_eq!(comments(&out), comments(EXAMPLE));
@@ -298,7 +358,7 @@ mod tests {
         let change = Change {
             target: Target::Table("log"),
             key: "level",
-            value: Value::from("debug"),
+            value: Some(Value::from("debug")),
         };
         let out = apply(text, &[change]).unwrap();
         assert!(out.contains("\n[log]\nlevel = \"debug\"\n"), "{out}");
@@ -313,7 +373,7 @@ mod tests {
         let change = Change {
             target: Target::Table("selection"),
             key: "return_delay",
-            value: Value::from("10m"),
+            value: Some(Value::from("10m")),
         };
         let out = apply(text, &[change]).unwrap();
         let doc: DocumentMut = out.parse().unwrap();
@@ -329,7 +389,7 @@ mod tests {
         let change = Change {
             target: Target::Subscription("backup".to_owned()),
             key: "deny",
-            value: Value::Array(deny),
+            value: Some(Value::Array(deny)),
         };
         let out = apply(text, &[change]).unwrap();
         let doc: DocumentMut = out.parse().unwrap();
@@ -344,7 +404,7 @@ mod tests {
         let change = Change {
             target: Target::Subscription("nope".to_owned()),
             key: "deny",
-            value: Value::Array(toml_edit::Array::new()),
+            value: Some(Value::Array(toml_edit::Array::new())),
         };
         let error = apply(EXAMPLE, &[change]).unwrap_err();
         assert!(error.to_string().contains("«nope» нет"), "{error}");
@@ -355,7 +415,7 @@ mod tests {
         let change = Change {
             target: Target::Table("routing"),
             key: "ru_direct",
-            value: Value::from(true),
+            value: Some(Value::from(true)),
         };
         assert!(matches!(
             apply("[routing\n", &[change]),
@@ -446,6 +506,47 @@ mod tests {
         write(&path, "new = 2\n").unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "new = 2\n");
         assert!(!dir.join("config.raycat-tmp").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_removed_key_becomes_a_commented_sample_and_its_neighbours_stay() {
+        let text = "[xray]\n# сколько соединений\nxhttp_connections = 4   # быстрее\npath = \"/x\"\n";
+        let change = Change {
+            target: Target::Table("xray"),
+            key: "xhttp_connections",
+            value: None,
+        };
+        let out = apply(text, &[change]).unwrap();
+        assert_eq!(
+            out,
+            "[xray]\n# сколько соединений\n# xhttp_connections = 4   # быстрее\npath = \"/x\"\n"
+        );
+    }
+
+    #[test]
+    fn removing_from_a_missing_table_adds_nothing() {
+        let text = "[routing]\nru_direct = true\n";
+        let change = Change {
+            target: Target::Table("xray"),
+            key: "xhttp_connections",
+            value: None,
+        };
+        assert_eq!(apply(text, &[change]).unwrap(), text);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writable_says_so_without_touching_the_file() {
+        let dir = scratch("writable");
+        let path = dir.join("config.toml");
+        fs::write(&path, "old = 1\n").unwrap();
+        assert!(writable(&path).is_ok());
+        let mut readonly = fs::metadata(&path).unwrap().permissions();
+        readonly.set_readonly(true);
+        fs::set_permissions(&path, readonly).unwrap();
+        assert!(matches!(writable(&path), Err(Error::ReadOnly(_))));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "old = 1\n");
         let _ = fs::remove_dir_all(&dir);
     }
 

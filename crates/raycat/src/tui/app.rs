@@ -10,8 +10,8 @@ use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use raycat_proto::{
-    Event, Node, NodeStatus, Nodes, Pinned, Reloaded, SettingValue, SettingsView,
-    SpeedtestProgress, SpeedtestResult, Status, Updates,
+    Event, Node, NodeStatus, Nodes, Pinned, Reloaded, SettingChange, SettingItem, SettingValue,
+    SettingsView, SpeedtestProgress, SpeedtestResult, Status, Updates, XHTTP_PROVIDER,
 };
 
 use raycat_config::names::without_code;
@@ -32,6 +32,9 @@ const FILTER_MAX: usize = 64;
 const DEFAULT_ROWS: usize = 10;
 const WHEEL_ROWS: usize = 3;
 const DOUBLE_CLICK: Duration = Duration::from_millis(500);
+const RESTART_TEXT: &str = "xray перезапустится: связь прервётся на несколько секунд";
+/// Уровни журнала от подробного к важному: по кругу в порядке этого списка.
+pub(super) const LEVELS: [&str; 4] = ["error", "warn", "info", "debug"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Tab {
@@ -76,7 +79,6 @@ pub(super) enum Target {
     SubFilter,
     Search,
     WarningsToggle,
-    NamesToggle,
     ExcludedToggle,
     Sort(SortBy),
     HiddenEdit,
@@ -84,6 +86,14 @@ pub(super) enum Target {
     Speed,
     /// Тест скорости через узел, открытый в подробностях.
     SpeedNode,
+    /// Строка «Настроек»: выбор клавишами и кликом по названию или пояснению.
+    SettingRow(usize),
+    /// Значение строки «Настроек»: переключает, меняет по кругу или открывает поле.
+    SettingCell(usize),
+    /// Один из уровней журнала на строке «Уровень журнала».
+    SettingLevel(&'static str),
+    ConfirmYes,
+    ConfirmNo,
 }
 
 /// Порядок узлов в таблице; `Priority` — порядок из подписок, как его отдаёт демон.
@@ -165,7 +175,28 @@ pub(super) enum InputMode {
     Filter,
     /// Правка масок скрытия.
     Masks,
+    /// Правка значения строки «Настроек».
+    Field,
     Help,
+}
+
+/// Изменение настроек демона: проверяется, при необходимости спрашивает подтверждение и
+/// только потом сохраняется. Исключение узла — тоже такое изменение.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Edit {
+    pub(super) changes: Vec<SettingChange>,
+    /// Что записать в журнал после сохранения, например «Россия напрямую: вкл».
+    pub(super) done: String,
+    /// Строка «Настроек», к которой относится ошибка; `None` — исключение узла.
+    pub(super) row: Option<usize>,
+    /// Что спросить до сохранения, даже если xray не перезапустится.
+    pub(super) warn: Option<String>,
+}
+
+/// Вопрос перед сохранением: Enter применяет изменение, Esc отменяет.
+pub(super) struct Confirm {
+    pub(super) question: String,
+    pub(super) edit: Edit,
 }
 
 /// Что нужно сделать снаружи состояния; ответ приходит как [`Msg`].
@@ -178,13 +209,154 @@ pub(super) enum Effect {
     /// Тест скорости через узел; `None` — через текущий.
     SpeedTest(Option<String>),
     CancelSpeedTest,
-    /// Настройки демона (маски исключений).
+    /// Настройки демона: их читают для исключений и для вкладки «Настройки».
     LoadSettings,
-    /// Новые маски `deny` подписки.
-    SetDeny {
-        subscription: String,
-        deny: Vec<String>,
-    },
+    /// Проверка изменения без записи: демон говорит, понадобится ли перезапуск xray.
+    Check(Edit),
+    /// Сохранение изменения в файл и применение.
+    Apply(Edit),
+}
+
+/// Строка вкладки «Настройки», в порядке показа.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Setting {
+    RuDirect,
+    KillSwitch,
+    CheckInterval,
+    Failures,
+    SwitchGain,
+    ReturnDelay,
+    Xhttp,
+    LogLevel,
+    /// Значки в именах: настройка вида TUI, а не демона.
+    Names,
+}
+
+impl Setting {
+    pub(super) const ALL: [Self; 9] = [
+        Self::RuDirect,
+        Self::KillSwitch,
+        Self::CheckInterval,
+        Self::Failures,
+        Self::SwitchGain,
+        Self::ReturnDelay,
+        Self::Xhttp,
+        Self::LogLevel,
+        Self::Names,
+    ];
+
+    pub(super) fn title(self) -> &'static str {
+        match self {
+            Self::RuDirect => "Россия напрямую",
+            Self::KillSwitch => "Kill switch",
+            Self::CheckInterval => "Проверка узлов каждые",
+            Self::Failures => "Сбоев до переключения",
+            Self::SwitchGain => "Порог переключения",
+            Self::ReturnDelay => "Возврат на приоритетный",
+            Self::Xhttp => "Соединения XHTTP",
+            Self::LogLevel => "Уровень журнала",
+            Self::Names => "Значки в именах",
+        }
+    }
+
+    /// Пояснение в строке: коротко, что делает настройка.
+    pub(super) fn hint(self) -> &'static str {
+        match self {
+            Self::RuDirect => "российские домены и подсети идут напрямую, мимо VPN",
+            Self::KillSwitch => "не пускать трафик мимо VPN, пока он недоступен",
+            Self::CheckInterval => "как часто проверять узлы, от 5s до 10m",
+            Self::Failures => "проверок подряд без ответа до недоступности",
+            Self::SwitchGain => "на сколько узел должен быть быстрее, например 150ms",
+            Self::ReturnDelay => "через сколько вернуться на приоритетный узел",
+            Self::Xhttp => "параллельные соединения для узлов XHTTP, от 1 до 16",
+            Self::LogLevel => "что писать в журнал демона: error, warn, info или debug",
+            Self::Names => "код страны вместо флага, например DE",
+        }
+    }
+
+    /// Номер строки на экране.
+    pub(super) fn row(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|setting| *setting == self)
+            .unwrap_or_default()
+    }
+
+    /// Таблица и ключ в файле настроек; `None` — настройка вида TUI.
+    fn place(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::RuDirect => Some(("routing", "ru_direct")),
+            Self::KillSwitch => Some(("mode", "kill_switch")),
+            Self::CheckInterval => Some(("selection", "check_interval")),
+            Self::Failures => Some(("selection", "failures")),
+            Self::SwitchGain => Some(("selection", "switch_gain")),
+            Self::ReturnDelay => Some(("selection", "return_delay")),
+            Self::Xhttp => Some(("xray", "xhttp_connections")),
+            Self::LogLevel => Some(("log", "level")),
+            Self::Names => None,
+        }
+    }
+
+    /// Что спросить до сохранения, даже если xray не перезапустится.
+    fn warning(self, value: &SettingValue) -> Option<&'static str> {
+        if self == Self::KillSwitch && *value == SettingValue::Bool(false) {
+            Some("Выключить kill switch: трафик пойдёт мимо VPN, если связь пропадёт")
+        } else {
+            None
+        }
+    }
+}
+
+/// Что показывает строка «Настроек»: значение, откуда оно взято и можно ли его менять.
+pub(super) struct Shown {
+    pub(super) value: String,
+    pub(super) source: String,
+    pub(super) enabled: bool,
+}
+
+/// Значение для показа. «Как у провайдера» — отдельная строка, а не число.
+fn value_text(value: &SettingValue, setting: Setting) -> String {
+    match value {
+        SettingValue::Bool(true) => "вкл".to_owned(),
+        SettingValue::Bool(false) => "выкл".to_owned(),
+        SettingValue::Number(number) => number.to_string(),
+        SettingValue::Text(text) => {
+            if setting == Setting::Xhttp && text.as_str() == XHTTP_PROVIDER {
+                "как у провайдера".to_owned()
+            } else {
+                text.clone()
+            }
+        }
+        SettingValue::Texts(texts) => texts.join(", "),
+    }
+}
+
+/// Следующий уровень журнала по кругу; неизвестный начинает с первого.
+fn next_level(value: &SettingValue) -> &'static str {
+    let current = if let SettingValue::Text(text) = value {
+        LEVELS.iter().position(|level| *level == text.as_str())
+    } else {
+        None
+    };
+    LEVELS[current.map_or(0, |index| (index + 1) % LEVELS.len())]
+}
+
+/// Текст поля в значение строки; `Err` — что не так, по-русски.
+fn parse_field(setting: Setting, text: &str) -> Result<SettingValue, &'static str> {
+    let number = |problem: &'static str| {
+        text.parse::<i64>()
+            .map(SettingValue::Number)
+            .map_err(|_| problem)
+    };
+    match setting {
+        Setting::Failures => number("нужно целое число, например 3"),
+        Setting::Xhttp if text.is_empty() || text.to_lowercase() == "как у провайдера" => {
+            Ok(SettingValue::Text(XHTTP_PROVIDER.to_owned()))
+        }
+        Setting::Xhttp => number("нужно число или «как у провайдера»"),
+        _ if text.is_empty() => Err("введите время, например 90s или 5m"),
+        _ => Ok(SettingValue::Text(text.to_owned())),
+    }
 }
 
 pub(super) struct Snapshot {
@@ -209,7 +381,16 @@ pub(super) enum Msg {
     SpeedProgress(Option<SpeedtestProgress>),
     SpeedDone(Result<SpeedtestResult, String>),
     Settings(Result<SettingsView, String>),
-    Excluded(Result<(Reloaded, SettingsView), String>),
+    /// Итог проверки изменения без записи.
+    Checked {
+        edit: Edit,
+        result: Result<Reloaded, String>,
+    },
+    /// Итог сохранения: новые настройки демона и итог перечитывания.
+    Applied {
+        edit: Edit,
+        result: Result<(Reloaded, SettingsView), String>,
+    },
 }
 
 /// Диалог исключения узла: добавить маску в `deny` подписки или убрать её.
@@ -444,6 +625,20 @@ pub(super) struct App {
     pub(super) speed: Option<SpeedRun>,
     /// Файл настроек демона, показывается на вкладке «Настройки».
     pub(super) settings_path: String,
+    /// Настройки демона из `GET /v1/settings`; `None`, пока их не получили.
+    pub(super) view: Option<SettingsView>,
+    /// Выбранная строка вкладки «Настройки».
+    pub(super) setting_cursor: usize,
+    /// Первая видимая строка «Настроек».
+    pub(super) setting_offset: usize,
+    /// Текст поля, которое правят на вкладке «Настройки».
+    pub(super) field: String,
+    /// Изменение ждёт подтверждения.
+    pub(super) confirm: Option<Confirm>,
+    /// Запрос на проверку или сохранение настроек идёт с этой секунды.
+    pub(super) saving: Option<u64>,
+    /// Ошибка у строки «Настроек»: номер строки и короткий текст.
+    pub(super) setting_error: Option<(usize, String)>,
     pub(super) log: VecDeque<LogEntry>,
     pub(super) notice: Option<Notice>,
     pub(super) update: Option<UpdateRun>,
@@ -494,6 +689,13 @@ impl App {
             mask_edit: String::new(),
             speed: None,
             settings_path: String::new(),
+            view: None,
+            setting_cursor: 0,
+            setting_offset: 0,
+            field: String::new(),
+            confirm: None,
+            saving: None,
+            setting_error: None,
             log: VecDeque::new(),
             notice: None,
             update: None,
@@ -570,6 +772,9 @@ impl App {
         if self.exclude.is_some() {
             return self.exclude_key(key);
         }
+        if self.confirm.is_some() {
+            return self.confirm_key(key);
+        }
         match self.input {
             InputMode::Help => {
                 self.input = InputMode::Normal;
@@ -580,6 +785,7 @@ impl App {
                 None
             }
             InputMode::Masks => self.masks_key(key),
+            InputMode::Field => self.field_key(key),
             InputMode::Normal => self.normal_key(key),
         }
     }
@@ -606,7 +812,11 @@ impl App {
             .iter()
             .find(|hit| hit.contains(column, row))?
             .target;
-        if matches!(self.input, InputMode::Filter | InputMode::Masks) {
+        // Пока ждут ответа на вопрос, нажатия мимо кнопок ничего не делают.
+        if self.confirm.is_some() && !matches!(target, Target::ConfirmYes | Target::ConfirmNo) {
+            return None;
+        }
+        if matches!(self.input, InputMode::Filter | InputMode::Masks | InputMode::Field) {
             self.input = InputMode::Normal;
         }
         self.click(target, at)
@@ -634,12 +844,19 @@ impl App {
             Target::SubFilter => self.next_subscription(),
             Target::Search => self.input = InputMode::Filter,
             Target::WarningsToggle => self.journal_warnings = !self.journal_warnings,
-            Target::NamesToggle => return Some(self.toggle_names()),
             Target::ExcludedToggle => self.toggle_excluded(),
             Target::Sort(by) => self.sort_click(by),
             Target::HiddenEdit => self.start_masks(),
             Target::Speed => return self.speedtest(None),
             Target::SpeedNode => return self.speed_selected(),
+            Target::SettingRow(index) => self.select_setting(index),
+            Target::SettingCell(index) => {
+                self.select_setting(index);
+                return self.activate(index);
+            }
+            Target::SettingLevel(level) => return self.choose_level(level),
+            Target::ConfirmYes => return self.confirm_yes(),
+            Target::ConfirmNo => self.cancel_confirm(),
         }
         None
     }
@@ -684,6 +901,32 @@ impl App {
             KeyCode::Char('h') if self.tab == Tab::Nodes => self.start_masks(),
             KeyCode::Char('t') if self.tab == Tab::Nodes => return self.speed_selected(),
             KeyCode::Char('s') if self.tab == Tab::Overview => return self.speedtest(None),
+            KeyCode::Char(' ') if self.tab == Tab::Settings => {
+                return self.activate(self.setting_cursor);
+            }
+            _ => {}
+        }
+        None
+    }
+
+    fn field_key(&mut self, key: KeyEvent) -> Option<Effect> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        match key.code {
+            KeyCode::Esc => self.input = InputMode::Normal,
+            KeyCode::Enter => return self.commit_field(),
+            KeyCode::Backspace => {
+                self.field.pop();
+            }
+            KeyCode::Char('u') if ctrl => self.field.clear(),
+            KeyCode::Char(c)
+                if !ctrl
+                    && !alt
+                    && !c.is_control()
+                    && self.field.chars().count() < FILTER_MAX =>
+            {
+                self.field.push(c);
+            }
             _ => {}
         }
         None
@@ -759,7 +1002,8 @@ impl App {
         }
     }
 
-    pub(super) fn apply(&mut self, msg: Msg) {
+    /// Применяет ответ. Если после ответа нужен ещё один запрос к демону, возвращает его.
+    pub(super) fn apply(&mut self, msg: Msg) -> Option<Effect> {
         match msg {
             Msg::Connected => self.link = Link::Up,
             Msg::Snapshot(snapshot) => self.set_snapshot(*snapshot),
@@ -777,13 +1021,15 @@ impl App {
             }
             Msg::SpeedDone(result) => self.on_speed(result),
             Msg::Settings(result) => self.on_settings(result),
-            Msg::Excluded(result) => self.on_excluded(result),
+            Msg::Checked { edit, result } => return self.on_checked(edit, result),
+            Msg::Applied { edit, result } => self.on_applied(edit, result),
             Msg::Saved(Ok(())) => {}
             Msg::Saved(Err(error)) => {
                 let (cause, _) = split_lines(&error);
                 self.fail(&format!("Не удалось сохранить вид: {cause}"));
             }
         }
+        None
     }
 
     fn set_snapshot(&mut self, snapshot: Snapshot) {
@@ -1114,7 +1360,7 @@ impl App {
                 }
             }
             Tab::Subscriptions => self.details = !self.details,
-            Tab::Settings => return Some(self.toggle_names()),
+            Tab::Settings => return self.activate(self.setting_cursor),
             Tab::Overview | Tab::Journal => {}
         }
         None
@@ -1148,7 +1394,8 @@ impl App {
             Tab::Nodes => self.move_up(by),
             Tab::Subscriptions => self.sub_cursor = self.sub_cursor.saturating_sub(by),
             Tab::Journal => self.journal_back = self.journal_back.saturating_add(by),
-            Tab::Overview | Tab::Settings => {}
+            Tab::Settings => self.select_setting(self.setting_cursor.saturating_sub(by)),
+            Tab::Overview => {}
         }
     }
 
@@ -1159,7 +1406,8 @@ impl App {
                 self.sub_cursor = self.sub_cursor.saturating_add(by).min(self.last_sub());
             }
             Tab::Journal => self.journal_back = self.journal_back.saturating_sub(by),
-            Tab::Overview | Tab::Settings => {}
+            Tab::Settings => self.select_setting(self.setting_cursor.saturating_add(by)),
+            Tab::Overview => {}
         }
     }
 
@@ -1169,7 +1417,8 @@ impl App {
             Tab::Nodes => self.move_to(if end { usize::MAX } else { 0 }),
             Tab::Subscriptions => self.sub_cursor = if end { self.last_sub() } else { 0 },
             Tab::Journal => self.journal_back = if end { 0 } else { usize::MAX },
-            Tab::Overview | Tab::Settings => {}
+            Tab::Settings => self.select_setting(if end { usize::MAX } else { 0 }),
+            Tab::Overview => {}
         }
     }
 
@@ -1255,56 +1504,38 @@ impl App {
         None
     }
 
+    /// Исключение или возврат узла: маска `deny` подписки. Сначала проверка, потом, если
+    /// понадобится, вопрос про перезапуск xray.
     fn confirm_exclude(&mut self) -> Option<Effect> {
         let dialog = self.exclude.take()?;
         let choice = dialog.choices.get(dialog.selected)?.clone();
         let mut deny = self.deny_of(&dialog.subscription);
-        let text = if dialog.remove {
+        let done = if dialog.remove {
             deny.retain(|mask| *mask != choice);
-            format!("Снимаю исключение «{}»…", dialog.node)
+            format!("Исключение «{}» снято", dialog.node)
         } else {
             if !deny.contains(&choice) {
                 deny.push(choice.clone());
             }
-            format!("Исключаю «{}» маской «{choice}»…", dialog.node)
+            format!("«{}» исключён маской «{choice}»", dialog.node)
         };
-        self.notify(Tone::Green, &text, NOTICE_SECS);
-        Some(Effect::SetDeny {
-            subscription: dialog.subscription,
-            deny,
+        let change = SettingChange {
+            table: None,
+            subscription: Some(dialog.subscription),
+            key: "deny".to_owned(),
+            value: SettingValue::Texts(deny),
+        };
+        self.begin_check(Edit {
+            changes: vec![change],
+            done,
+            row: None,
+            warn: None,
         })
-    }
-
-    fn on_excluded(&mut self, result: Result<(Reloaded, SettingsView), String>) {
-        match result {
-            Ok((reloaded, view)) => {
-                self.deny = deny_lists(&view);
-                self.refilter();
-                let mut text = "Исключения обновлены".to_owned();
-                if reloaded.xray_restart {
-                    text.push_str("; xray перезапущен, связь прервалась на несколько секунд");
-                }
-                let tone = if reloaded.xray_restart {
-                    Tone::Yellow
-                } else {
-                    Tone::Green
-                };
-                self.push_log(tone, &text);
-                self.notify(tone, &text, RESULT_SECS);
-            }
-            Err(error) => {
-                let (cause, _) = split_lines(&error);
-                self.fail(&format!("Не удалось изменить исключения: {cause}"));
-            }
-        }
     }
 
     fn on_settings(&mut self, result: Result<SettingsView, String>) {
         match result {
-            Ok(view) => {
-                self.deny = deny_lists(&view);
-                self.refilter();
-            }
+            Ok(view) => self.set_view(view),
             Err(error) => {
                 let (cause, _) = split_lines(&error);
                 self.push_log(
@@ -1410,6 +1641,282 @@ impl App {
         self.cursor = self.cursor.min(self.visible.len().saturating_sub(1));
         self.cursor_id = self.current().map(|node| node.id.clone());
         self.scroll_to_cursor();
+    }
+}
+
+/// Есть ли в ответе демона эта таблица и ключ (маски подписок сюда не относятся).
+fn is_setting(item: &SettingItem, table: &str, key: &str) -> bool {
+    item.subscription.is_none() && item.table.as_deref() == Some(table) && item.key == key
+}
+
+impl App {
+    /// Что показывает строка: значение, откуда оно взято и можно ли его менять.
+    pub(super) fn shown(&self, setting: Setting) -> Shown {
+        if setting == Setting::Names {
+            return Shown {
+                value: names_label(self.names).to_owned(),
+                source: "вид TUI".to_owned(),
+                enabled: true,
+            };
+        }
+        match self.setting_item(setting) {
+            Some(item) => Shown {
+                value: value_text(&item.value, setting),
+                source: item.source.clone(),
+                enabled: true,
+            },
+            None => Shown {
+                value: "—".to_owned(),
+                source: self.missing_reason(setting).to_owned(),
+                enabled: false,
+            },
+        }
+    }
+
+    /// Почему у строки нет значения: демон не ответил или kill switch вне режима шлюза.
+    fn missing_reason(&self, setting: Setting) -> &'static str {
+        if self.view.is_none() {
+            "нет данных"
+        } else if setting == Setting::KillSwitch {
+            "только в режиме шлюза"
+        } else {
+            "нет в ответе демона"
+        }
+    }
+
+    fn setting_item(&self, setting: Setting) -> Option<&SettingItem> {
+        let (table, key) = setting.place()?;
+        let view = self.view.as_ref()?;
+        view.items.iter().find(|item| is_setting(item, table, key))
+    }
+
+    /// Новые настройки демона: по ним показываются строки и маски исключений.
+    fn set_view(&mut self, view: SettingsView) {
+        self.deny = deny_lists(&view);
+        self.view = Some(view);
+        self.refilter();
+    }
+
+    /// Выбирает строку «Настроек». Ошибка прошлой попытки относилась к старой строке.
+    fn select_setting(&mut self, index: usize) {
+        self.setting_cursor = index.min(Setting::ALL.len() - 1);
+        self.setting_error = None;
+    }
+
+    /// Держит выбранную строку на экране; `rows` — сколько строк помещается.
+    pub(super) fn keep_setting_visible(&mut self, rows: usize) {
+        let rows = rows.max(1);
+        if self.setting_cursor < self.setting_offset {
+            self.setting_offset = self.setting_cursor;
+        } else if self.setting_cursor >= self.setting_offset + rows {
+            self.setting_offset = self.setting_cursor + 1 - rows;
+        }
+    }
+
+    /// Enter, пробел или клик по значению: переключает, меняет по кругу или открывает поле.
+    fn activate(&mut self, index: usize) -> Option<Effect> {
+        let setting = *Setting::ALL.get(index)?;
+        if setting == Setting::Names {
+            return Some(self.toggle_names());
+        }
+        if self.saving.is_some() {
+            self.notify(Tone::Yellow, "Настройки уже сохраняются", NOTICE_SECS);
+            return None;
+        }
+        let Some(item) = self.setting_item(setting) else {
+            let text = if self.view.is_none() {
+                "Настройки демона ещё не получены"
+            } else if setting == Setting::KillSwitch {
+                "Kill switch меняется только в режиме шлюза"
+            } else {
+                "Этой настройки нет в ответе демона"
+            };
+            self.notify(Tone::Yellow, text, NOTICE_SECS);
+            return None;
+        };
+        let value = item.value.clone();
+        match (setting, value) {
+            (Setting::LogLevel, value) => {
+                let next = SettingValue::Text(next_level(&value).to_owned());
+                self.begin_edit(setting, next)
+            }
+            (_, SettingValue::Bool(on)) => self.begin_edit(setting, SettingValue::Bool(!on)),
+            _ => {
+                self.open_field(index);
+                None
+            }
+        }
+    }
+
+    /// Клик по уровню журнала: сразу выбранный уровень, без перебора.
+    fn choose_level(&mut self, level: &'static str) -> Option<Effect> {
+        self.select_setting(Setting::LogLevel.row());
+        if self.view.is_none() {
+            self.notify(Tone::Yellow, "Настройки демона ещё не получены", NOTICE_SECS);
+            return None;
+        }
+        let wanted = SettingValue::Text(level.to_owned());
+        if self
+            .setting_item(Setting::LogLevel)
+            .is_some_and(|item| item.value == wanted)
+        {
+            return None;
+        }
+        self.begin_edit(Setting::LogLevel, wanted)
+    }
+
+    /// Новое значение строки уходит на проверку; подтверждение спросим, если оно нужно.
+    fn begin_edit(&mut self, setting: Setting, value: SettingValue) -> Option<Effect> {
+        let (table, key) = setting.place()?;
+        let done = format!("{}: {}", setting.title(), value_text(&value, setting));
+        let warn = setting.warning(&value).map(str::to_owned);
+        let edit = Edit {
+            changes: vec![SettingChange {
+                table: Some(table.to_owned()),
+                subscription: None,
+                key: key.to_owned(),
+                value,
+            }],
+            done,
+            row: Some(setting.row()),
+            warn,
+        };
+        self.begin_check(edit)
+    }
+
+    /// Открывает поле правки с текущим значением; Enter его сохранит.
+    fn open_field(&mut self, index: usize) {
+        let Some(setting) = Setting::ALL.get(index).copied() else {
+            return;
+        };
+        self.field = self
+            .setting_item(setting)
+            .map_or_else(String::new, |item| value_text(&item.value, setting));
+        self.input = InputMode::Field;
+    }
+
+    /// Enter в поле: проверяет текст и отправляет изменение. Ошибка текста — у строки, поле
+    /// остаётся открытым, чтобы его поправить.
+    fn commit_field(&mut self) -> Option<Effect> {
+        let index = self.setting_cursor;
+        let setting = *Setting::ALL.get(index)?;
+        match parse_field(setting, self.field.trim()) {
+            Ok(value) => {
+                self.input = InputMode::Normal;
+                self.begin_edit(setting, value)
+            }
+            Err(problem) => {
+                self.setting_error = Some((index, problem.to_owned()));
+                None
+            }
+        }
+    }
+
+    /// Запускает проверку, если другой запрос не идёт.
+    fn begin_check(&mut self, edit: Edit) -> Option<Effect> {
+        if self.saving.is_some() {
+            self.notify(Tone::Yellow, "Настройки уже сохраняются", NOTICE_SECS);
+            return None;
+        }
+        self.saving = Some(self.now);
+        self.setting_error = None;
+        Some(Effect::Check(edit))
+    }
+
+    /// Итог проверки: без вопросов сразу сохраняем, иначе спрашиваем подтверждение.
+    fn on_checked(&mut self, edit: Edit, result: Result<Reloaded, String>) -> Option<Effect> {
+        match result {
+            Ok(reloaded) => self.after_check(edit, &reloaded),
+            Err(error) => {
+                self.saving = None;
+                self.setting_failed(edit.row, &error);
+                None
+            }
+        }
+    }
+
+    fn after_check(&mut self, edit: Edit, reloaded: &Reloaded) -> Option<Effect> {
+        let mut lines = Vec::new();
+        if let Some(warn) = &edit.warn {
+            lines.push(warn.clone());
+        }
+        if reloaded.xray_restart {
+            lines.push(RESTART_TEXT.to_owned());
+        }
+        if lines.is_empty() {
+            return Some(Effect::Apply(edit));
+        }
+        self.saving = None;
+        self.confirm = Some(Confirm {
+            question: lines.join("; "),
+            edit,
+        });
+        None
+    }
+
+    fn on_applied(&mut self, edit: Edit, result: Result<(Reloaded, SettingsView), String>) {
+        self.saving = None;
+        match result {
+            Ok((reloaded, view)) => self.on_saved(edit, &reloaded, view),
+            Err(error) => self.setting_failed(edit.row, &error),
+        }
+    }
+
+    /// Изменение сохранено: форма получает новые значения, журнал и строка состояния — итог.
+    fn on_saved(&mut self, edit: Edit, reloaded: &Reloaded, view: SettingsView) {
+        self.set_view(view);
+        let mut text = edit.done;
+        let mut tone = Tone::Green;
+        if reloaded.xray_restart {
+            text.push_str("; xray перезапущен, связь прервалась на несколько секунд");
+            tone = Tone::Yellow;
+        }
+        if !reloaded.restart_required.is_empty() {
+            let keys = reloaded.restart_required.join(", ");
+            text.push_str(&format!("; для этого нужен raycat restart: {keys}"));
+            tone = Tone::Yellow;
+        }
+        self.push_log(tone, &text);
+        self.notify(tone, &text, RESULT_SECS);
+    }
+
+    /// Ошибка сохранения или проверки: журнал и строка состояния получают весь текст в одну
+    /// строку, у строки «Настроек» остаётся тот же текст, обрезанный по ширине.
+    fn setting_failed(&mut self, row: Option<usize>, error: &str) {
+        let text = error
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join(" — ");
+        if let Some(row) = row {
+            self.setting_error = Some((row, clip(&text)));
+        }
+        self.push_log(Tone::Red, &text);
+        self.notify(Tone::Red, &text, RESULT_SECS);
+    }
+
+    fn confirm_key(&mut self, key: KeyEvent) -> Option<Effect> {
+        match key.code {
+            KeyCode::Enter => self.confirm_yes(),
+            KeyCode::Esc => {
+                self.cancel_confirm();
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn confirm_yes(&mut self) -> Option<Effect> {
+        let confirm = self.confirm.take()?;
+        self.saving = Some(self.now);
+        Some(Effect::Apply(confirm.edit))
+    }
+
+    fn cancel_confirm(&mut self) {
+        if self.confirm.take().is_some() {
+            self.notify(Tone::Yellow, "Изменение отменено", NOTICE_SECS);
+        }
     }
 }
 
@@ -1961,6 +2468,7 @@ mod tests {
     fn the_names_setting_flips_and_asks_to_be_saved() {
         let mut app = App::new(NOW);
         press(&mut app, KeyCode::Char('5'));
+        app.setting_cursor = Setting::Names.row();
         assert_eq!(app.names, NameStyle::Country);
         assert_eq!(
             press(&mut app, KeyCode::Enter),
@@ -2395,12 +2903,14 @@ mod tests {
         press(&mut app, KeyCode::Right);
         assert_eq!(
             press(&mut app, KeyCode::Enter),
-            Some(Effect::SetDeny {
-                subscription: "main".to_owned(),
-                deny: vec!["NL-1*".to_owned()],
-            })
+            Some(Effect::Check(deny_edit(
+                "main",
+                &["NL-1*"],
+                "«main/NL-1» исключён маской «NL-1*»",
+            )))
         );
         assert!(app.exclude.is_none());
+        assert!(app.saving.is_some());
     }
 
     #[test]
@@ -2413,10 +2923,7 @@ mod tests {
         assert_eq!(dialog.choices, ["NL*"]);
         assert_eq!(
             press(&mut app, KeyCode::Enter),
-            Some(Effect::SetDeny {
-                subscription: "main".to_owned(),
-                deny: Vec::new(),
-            })
+            Some(Effect::Check(deny_edit("main", &[], "Исключение «main/NL-1» снято")))
         );
     }
 
@@ -2441,11 +2948,347 @@ mod tests {
                 subscription: Some("main".to_owned()),
                 key: "deny".to_owned(),
                 value: raycat_proto::SettingValue::Texts(vec!["DE*".to_owned()]),
-                source: "файл".to_owned(),
+                source: "из файла".to_owned(),
             }],
         };
         app.apply(Msg::Settings(Ok(view)));
         assert_eq!(app.deny, [("main".to_owned(), vec!["DE*".to_owned()])]);
+    }
+
+    fn text(value: &str) -> SettingValue {
+        SettingValue::Text(value.to_owned())
+    }
+
+    fn change(table: &str, key: &str, value: SettingValue) -> SettingChange {
+        SettingChange {
+            table: Some(table.to_owned()),
+            subscription: None,
+            key: key.to_owned(),
+            value,
+        }
+    }
+
+    fn item_of(table: &str, key: &str, value: SettingValue, source: &str) -> SettingItem {
+        SettingItem {
+            table: Some(table.to_owned()),
+            subscription: None,
+            key: key.to_owned(),
+            value,
+            source: source.to_owned(),
+        }
+    }
+
+    /// Ответ `GET /v1/settings`: без `kill_switch` демон в режиме прокси.
+    fn settings_view(kill_switch: bool) -> SettingsView {
+        let mut items = vec![
+            item_of("routing", "ru_direct", SettingValue::Bool(false), "по умолчанию"),
+            item_of("selection", "check_interval", text("30s"), "по умолчанию"),
+            item_of("selection", "failures", SettingValue::Number(3), "из файла"),
+            item_of("selection", "switch_gain", text("150ms"), "по умолчанию"),
+            item_of("selection", "return_delay", text("5m"), "по умолчанию"),
+            item_of("xray", "xhttp_connections", text(XHTTP_PROVIDER), "по умолчанию"),
+            item_of("log", "level", text("info"), "из файла"),
+        ];
+        if kill_switch {
+            items.push(item_of("mode", "kill_switch", SettingValue::Bool(true), "по умолчанию"));
+        }
+        SettingsView { items }
+    }
+
+    fn reloaded(xray_restart: bool) -> Reloaded {
+        Reloaded {
+            changed: true,
+            xray_restart,
+            restart_required: Vec::new(),
+        }
+    }
+
+    fn deny_edit(subscription: &str, masks: &[&str], done: &str) -> Edit {
+        Edit {
+            changes: vec![SettingChange {
+                table: None,
+                subscription: Some(subscription.to_owned()),
+                key: "deny".to_owned(),
+                value: SettingValue::Texts(masks.iter().map(|mask| (*mask).to_owned()).collect()),
+            }],
+            done: done.to_owned(),
+            row: None,
+            warn: None,
+        }
+    }
+
+    /// Вкладка «Настройки» с ответом демона.
+    fn settings_app(kill_switch: bool) -> App {
+        let mut app = App::new(NOW);
+        app.apply(Msg::Settings(Ok(settings_view(kill_switch))));
+        press(&mut app, KeyCode::Char('5'));
+        app
+    }
+
+    fn checked_edit(effect: Option<Effect>) -> Edit {
+        match effect {
+            Some(Effect::Check(edit)) => edit,
+            other => panic!("ожидалась проверка изменения, пришло {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_switch_is_checked_and_saved_when_nothing_needs_a_question() {
+        let mut app = settings_app(true);
+        let edit = checked_edit(press(&mut app, KeyCode::Enter));
+        assert_eq!(edit.changes, [change("routing", "ru_direct", SettingValue::Bool(true))]);
+        assert_eq!(edit.row, Some(Setting::RuDirect.row()));
+        assert_eq!(edit.done, "Россия напрямую: вкл");
+        let saved = app.apply(Msg::Checked {
+            edit: edit.clone(),
+            result: Ok(reloaded(false)),
+        });
+        assert_eq!(saved, Some(Effect::Apply(edit)));
+        assert!(app.confirm.is_none());
+        assert!(app.saving.is_some());
+    }
+
+    #[test]
+    fn switching_the_kill_switch_off_asks_and_enter_saves_it() {
+        let mut app = settings_app(true);
+        app.setting_cursor = Setting::KillSwitch.row();
+        let edit = checked_edit(press(&mut app, KeyCode::Enter));
+        let asked = app.apply(Msg::Checked {
+            edit: edit.clone(),
+            result: Ok(reloaded(false)),
+        });
+        assert!(asked.is_none());
+        let confirm = app.confirm.as_ref().unwrap();
+        assert!(confirm.question.contains("трафик пойдёт мимо VPN"), "{}", confirm.question);
+        assert!(app.saving.is_none());
+        assert_eq!(press(&mut app, KeyCode::Char('q')), None);
+        assert!(!app.quit, "пока ждут ответа, q не выходит");
+        assert_eq!(press(&mut app, KeyCode::Enter), Some(Effect::Apply(edit)));
+        assert!(app.confirm.is_none());
+        assert!(app.saving.is_some());
+    }
+
+    #[test]
+    fn a_restart_of_xray_is_asked_and_escape_cancels_it() {
+        let mut app = settings_app(true);
+        let edit = checked_edit(press(&mut app, KeyCode::Enter));
+        let asked = app.apply(Msg::Checked {
+            edit,
+            result: Ok(reloaded(true)),
+        });
+        assert!(asked.is_none());
+        let question = app.confirm.as_ref().map(|confirm| confirm.question.clone());
+        assert!(question.is_some_and(|text| text.contains("связь прервётся")));
+        assert_eq!(press(&mut app, KeyCode::Esc), None);
+        assert!(app.confirm.is_none());
+        assert!(app.saving.is_none());
+        assert!(app.notice.as_ref().unwrap().text.contains("отменено"));
+    }
+
+    #[test]
+    fn a_number_field_refuses_text_and_then_checks_the_number() {
+        let mut app = settings_app(true);
+        app.setting_cursor = Setting::Failures.row();
+        assert_eq!(press(&mut app, KeyCode::Enter), None);
+        assert_eq!(app.input, InputMode::Field);
+        assert_eq!(app.field, "3");
+        press(&mut app, KeyCode::Backspace);
+        typed(&mut app, "x");
+        assert_eq!(press(&mut app, KeyCode::Enter), None);
+        assert_eq!(app.input, InputMode::Field, "поле остаётся открытым");
+        let error = app.setting_error.clone().unwrap();
+        assert_eq!(error.0, Setting::Failures.row());
+        assert!(error.1.contains("целое число"), "{}", error.1);
+        press(&mut app, KeyCode::Backspace);
+        typed(&mut app, "5");
+        let edit = checked_edit(press(&mut app, KeyCode::Enter));
+        assert_eq!(edit.changes, [change("selection", "failures", SettingValue::Number(5))]);
+        assert_eq!(app.input, InputMode::Normal);
+    }
+
+    #[test]
+    fn escape_leaves_the_field_and_keeps_the_value() {
+        let mut app = settings_app(true);
+        app.setting_cursor = Setting::CheckInterval.row();
+        press(&mut app, KeyCode::Enter);
+        typed(&mut app, "9");
+        assert_eq!(press(&mut app, KeyCode::Esc), None);
+        assert_eq!(app.input, InputMode::Normal);
+        assert_eq!(app.shown(Setting::CheckInterval).value, "30s");
+        assert!(app.saving.is_none());
+    }
+
+    #[test]
+    fn the_connections_field_takes_a_number_or_the_provider_choice() {
+        let mut app = settings_app(true);
+        app.setting_cursor = Setting::Xhttp.row();
+        assert_eq!(press(&mut app, KeyCode::Enter), None);
+        assert_eq!(app.field, "как у провайдера");
+        let edit = checked_edit(press(&mut app, KeyCode::Enter));
+        assert_eq!(edit.changes, [change("xray", "xhttp_connections", text(XHTTP_PROVIDER))]);
+        app.apply(Msg::Checked {
+            edit,
+            result: Err("тест".to_owned()),
+        });
+        press(&mut app, KeyCode::Enter);
+        app.field = "4".to_owned();
+        let edit = checked_edit(press(&mut app, KeyCode::Enter));
+        assert_eq!(edit.changes, [change("xray", "xhttp_connections", SettingValue::Number(4))]);
+    }
+
+    #[test]
+    fn the_log_level_steps_through_four_levels_and_a_click_picks_one() {
+        let mut app = settings_app(true);
+        app.setting_cursor = Setting::LogLevel.row();
+        let edit = checked_edit(press(&mut app, KeyCode::Enter));
+        assert_eq!(edit.changes, [change("log", "level", text("debug"))]);
+        app.saving = None;
+        let picked = app.click(Target::SettingLevel("warn"), Instant::now());
+        let edit = checked_edit(picked);
+        assert_eq!(edit.changes, [change("log", "level", text("warn"))]);
+    }
+
+    #[test]
+    fn a_saved_setting_updates_the_form_and_says_what_happened() {
+        let mut app = settings_app(true);
+        let edit = checked_edit(press(&mut app, KeyCode::Enter));
+        let mut view = settings_view(true);
+        view.items[0].value = SettingValue::Bool(true);
+        let reloaded = Reloaded {
+            changed: true,
+            xray_restart: true,
+            restart_required: vec!["mode.listen".to_owned()],
+        };
+        app.apply(Msg::Applied {
+            edit,
+            result: Ok((reloaded, view)),
+        });
+        assert!(app.saving.is_none());
+        assert_eq!(app.shown(Setting::RuDirect).value, "вкл");
+        let notice = app.notice.as_ref().unwrap();
+        assert!(notice.text.starts_with("Россия напрямую: вкл"), "{}", notice.text);
+        assert!(notice.text.contains("связь прервалась"), "{}", notice.text);
+        assert!(notice.text.contains("mode.listen"), "{}", notice.text);
+        assert_eq!(notice.tone, Tone::Yellow);
+    }
+
+    #[test]
+    fn a_change_saved_but_not_applied_is_said_at_its_row() {
+        let mut app = settings_app(true);
+        let edit = checked_edit(press(&mut app, KeyCode::Enter));
+        let failure = "сохранено, но не применено: плохо\nподробности".to_owned();
+        app.apply(Msg::Applied {
+            edit,
+            result: Err(failure),
+        });
+        assert!(app.saving.is_none());
+        let (row, text) = app.setting_error.clone().unwrap();
+        assert_eq!(row, Setting::RuDirect.row());
+        assert_eq!(text, "сохранено, но не применено: плохо — подробности");
+        let notice = app.notice.as_ref().unwrap();
+        assert!(notice.text.starts_with("сохранено, но не применено: плохо"));
+        assert_eq!(notice.tone, Tone::Red);
+    }
+
+    #[test]
+    fn a_refused_check_is_shown_and_the_next_try_works() {
+        let mut app = settings_app(true);
+        let edit = checked_edit(press(&mut app, KeyCode::Enter));
+        let reason = "файл настроек только для чтения: /etc/raycat/config.toml".to_owned();
+        app.apply(Msg::Checked {
+            edit,
+            result: Err(reason),
+        });
+        assert!(app.saving.is_none());
+        assert!(app.notice.as_ref().unwrap().text.contains("только для чтения"));
+        assert!(matches!(press(&mut app, KeyCode::Enter), Some(Effect::Check(_))));
+    }
+
+    #[test]
+    fn a_second_change_waits_while_the_first_one_is_saved() {
+        let mut app = settings_app(true);
+        assert!(matches!(press(&mut app, KeyCode::Enter), Some(Effect::Check(_))));
+        assert_eq!(press(&mut app, KeyCode::Enter), None);
+        assert!(app.notice.as_ref().unwrap().text.contains("уже сохраняются"));
+    }
+
+    #[test]
+    fn without_the_daemon_or_outside_the_gateway_a_row_says_why() {
+        let mut app = App::new(NOW);
+        press(&mut app, KeyCode::Char('5'));
+        assert_eq!(press(&mut app, KeyCode::Enter), None);
+        assert!(app.notice.as_ref().unwrap().text.contains("ещё не получены"));
+        assert_eq!(app.shown(Setting::RuDirect).source, "нет данных");
+
+        let mut proxy = settings_app(false);
+        proxy.setting_cursor = Setting::KillSwitch.row();
+        assert_eq!(press(&mut proxy, KeyCode::Enter), None);
+        let text = &proxy.notice.as_ref().unwrap().text;
+        assert!(text.contains("только в режиме шлюза"), "{text}");
+        assert!(!proxy.shown(Setting::KillSwitch).enabled);
+    }
+
+    #[test]
+    fn the_names_row_saves_only_the_view_preference() {
+        let mut app = settings_app(true);
+        app.setting_cursor = Setting::Names.row();
+        assert!(matches!(press(&mut app, KeyCode::Char(' ')), Some(Effect::SavePrefs(_))));
+        assert_eq!(app.shown(Setting::Names).source, "вид TUI");
+    }
+
+    #[test]
+    fn a_short_screen_scrolls_the_settings_to_the_cursor() {
+        let mut app = settings_app(true);
+        press(&mut app, KeyCode::End);
+        assert_eq!(app.setting_cursor, Setting::ALL.len() - 1);
+        app.keep_setting_visible(3);
+        assert_eq!(app.setting_offset, 6);
+        press(&mut app, KeyCode::Home);
+        app.keep_setting_visible(3);
+        assert_eq!(app.setting_offset, 0);
+    }
+
+    #[test]
+    fn an_exclusion_that_restarts_xray_is_asked_before_it_is_saved() {
+        let mut app = nodes_app(sample());
+        press(&mut app, KeyCode::Char('x'));
+        let edit = checked_edit(press(&mut app, KeyCode::Enter));
+        let asked = app.apply(Msg::Checked {
+            edit,
+            result: Ok(reloaded(true)),
+        });
+        assert!(asked.is_none());
+        assert!(app.confirm.is_some());
+        let applied = press(&mut app, KeyCode::Enter);
+        let expected = deny_edit("main", &["NL-1"], "«main/NL-1» исключён маской «NL-1»");
+        assert_eq!(applied, Some(Effect::Apply(expected)));
+    }
+
+    #[test]
+    fn an_exclusion_without_a_restart_is_saved_at_once_and_its_mask_applies() {
+        let mut app = nodes_app(sample());
+        press(&mut app, KeyCode::Char('x'));
+        let edit = checked_edit(press(&mut app, KeyCode::Enter));
+        let saved = app.apply(Msg::Checked {
+            edit: edit.clone(),
+            result: Ok(reloaded(false)),
+        });
+        assert_eq!(saved, Some(Effect::Apply(edit.clone())));
+        let view = SettingsView {
+            items: vec![SettingItem {
+                table: None,
+                subscription: Some("main".to_owned()),
+                key: "deny".to_owned(),
+                value: SettingValue::Texts(vec!["NL-1".to_owned()]),
+                source: "из файла".to_owned(),
+            }],
+        };
+        app.apply(Msg::Applied {
+            edit,
+            result: Ok((reloaded(false), view)),
+        });
+        assert_eq!(app.deny, [("main".to_owned(), vec!["NL-1".to_owned()])]);
+        assert!(app.saving.is_none());
     }
 
     #[test]

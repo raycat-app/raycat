@@ -5,12 +5,12 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use raycat_proto::{Event, SettingChange, SettingValue, SettingsPatch, SpeedtestRequest};
+use raycat_proto::{Event, SettingsPatch, SpeedtestRequest};
 use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep_until};
 
-use super::app::{Effect, Msg, Snapshot};
+use super::app::{Edit, Effect, Msg, Snapshot};
 use super::prefs::{self, Prefs};
 use crate::client::{Client, EventStream};
 
@@ -227,7 +227,8 @@ pub(super) async fn perform(client: &Client, effect: Effect, file: Option<&Path>
         ),
         Effect::SavePrefs(prefs) => Msg::Saved(save_prefs(file, prefs).await),
         Effect::LoadSettings => load_settings(client).await,
-        Effect::SetDeny { subscription, deny } => set_deny(client, subscription, deny).await,
+        Effect::Check(edit) => check_change(client, edit).await,
+        Effect::Apply(edit) => apply_change(client, edit).await,
         Effect::SpeedTest(node) => speedtest(client, node).await,
         Effect::CancelSpeedTest => Msg::SpeedDone(Err("тест отменён".to_owned())),
     }
@@ -238,27 +239,34 @@ pub(super) async fn load_settings(client: &Client) -> Msg {
     Msg::Settings(client.settings().await.map_err(|error| error.to_string()))
 }
 
-/// Меняет маски `deny` подписки; демон перечитывает файл, TUI берёт свежие настройки.
-pub(super) async fn set_deny(client: &Client, subscription: String, deny: Vec<String>) -> Msg {
+/// Проверка изменения без записи: демон говорит, что изменится и понадобится ли перезапуск xray.
+pub(super) async fn check_change(client: &Client, edit: Edit) -> Msg {
     let patch = SettingsPatch {
-        changes: vec![SettingChange {
-            table: None,
-            subscription: Some(subscription),
-            key: "deny".to_owned(),
-            value: SettingValue::Texts(deny),
-        }],
+        changes: edit.changes.clone(),
+        dry_run: true,
     };
-    let applied = match client.settings_patch(&patch).await {
-        Ok(applied) => applied,
-        Err(error) => return Msg::Excluded(Err(error.to_string())),
+    let result = client
+        .settings_patch(&patch)
+        .await
+        .map_err(|error| error.to_string());
+    Msg::Checked { edit, result }
+}
+
+/// Сохранение изменения; заодно берутся свежие настройки для формы и исключений.
+pub(super) async fn apply_change(client: &Client, edit: Edit) -> Msg {
+    let patch = SettingsPatch {
+        changes: edit.changes.clone(),
+        dry_run: false,
     };
-    Msg::Excluded(
-        client
+    let result = match client.settings_patch(&patch).await {
+        Ok(reloaded) => client
             .settings()
             .await
-            .map(|view| (applied, view))
+            .map(|view| (reloaded, view))
             .map_err(|error| error.to_string()),
-    )
+        Err(error) => Err(error.to_string()),
+    };
+    Msg::Applied { edit, result }
 }
 
 /// Тест скорости через узел (или текущий узел без `node`). Размер — постоянный: не

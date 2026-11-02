@@ -297,9 +297,13 @@ async fn session(socket: PathBuf, palette: Palette, setup: Setup) -> Result<()> 
             Wake::Input(Some(Err(error))) => bail!("не удалось прочитать ввод: {error}"),
             Wake::Input(None) => bail!("чтение ввода остановилось"),
             Wake::Message(Some(msg)) => {
-                app.apply(msg);
+                if let Some(effect) = app.apply(msg) {
+                    runner.dispatch(effect);
+                }
                 while let Ok(more) = messages.try_recv() {
-                    app.apply(more);
+                    if let Some(effect) = app.apply(more) {
+                        runner.dispatch(effect);
+                    }
                 }
             }
             Wake::Message(None) => bail!("связь с демоном остановилась"),
