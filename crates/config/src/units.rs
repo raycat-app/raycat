@@ -52,6 +52,7 @@ fn split_number(text: &str) -> Option<(u64, &str)> {
 /// Запись, которую читает `parse_duration`: `150ms`, `1s500ms`, `30s`, `5m`, `1h30m`, `1d`.
 /// Меньше секунды — только миллисекунды; дальше единицы идут от крупных к мелким без нулевых.
 pub fn format_duration(duration: Duration) -> String {
+    use std::fmt::Write as _;
     let mut millis = duration.as_millis();
     if millis < 1_000 {
         return format!("{millis}ms");
@@ -66,7 +67,7 @@ pub fn format_duration(duration: Duration) -> String {
     ] {
         let count = millis / unit;
         if count > 0 {
-            out.push_str(&format!("{count}{suffix}"));
+            let _ = write!(out, "{count}{suffix}");
             millis -= count * unit;
         }
     }
