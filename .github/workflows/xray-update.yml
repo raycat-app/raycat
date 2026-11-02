@@ -4,7 +4,9 @@ name: Обновление xray
 # PR бота «build: xray <версия>»: версия и суммы архивов linux, а также версия и коммит тега в
 # секции [xray.noaes] (сборка noaes идёт на той же версии). Обязательные проверки бот запускает
 # сам и сливает PR, если они зелёные. Если что-то не вышло, заводится issue (одно на версию).
-# Новая версия не предлагается, пока открыт PR бота или уже был PR этой версии. Версия только вперёд.
+# Пока открыт свежий (моложе часа) PR бота, у которого проверки не упали, новая версия не предлагается.
+# Упавший PR или PR, не менявшийся больше часа, обновляется поверх: та же ветка и тот же PR. Версия,
+# PR которой закрыли без слияния, не предлагается снова. Версия только вперёд.
 #
 # Ручной запуск: version — конкретная версия без v (пусто — последняя), dry_run — только
 # собрать versions.toml в артефакт xray-update, без ветки и PR.
@@ -39,8 +41,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
+      checks: read
       contents: write
       pull-requests: write
+      statuses: read
     outputs:
       version: ${{ steps.target.outputs.version }}
       pr: ${{ steps.pr.outputs.number }}
@@ -66,14 +70,17 @@ jobs:
           gh api "repos/XTLS/Xray-core/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
           version=$(bash .github/xray/select.sh "$RUNNER_TEMP/releases.json" "$current" "$INPUT_VERSION")
           if [ -n "$version" ] && [ "$DRY_RUN" != true ]; then
-            open=$(gh pr list -R "$REPO" --state open --json headRefName --jq '[.[] | select(.headRefName | startswith("bot/xray-"))] | length')
-            known=$(gh pr list -R "$REPO" --head "bot/xray-$version" --state all --json number --jq length)
-            if [ "$open" != 0 ]; then
-              echo "::notice::открыт PR бота xray, версия $version подождёт его слияния"
+            open=$(gh pr list -R "$REPO" --state open --limit 200 --json number,headRefName,updatedAt,statusCheckRollup --jq '[.[] | select(.headRefName | startswith("bot/xray-"))]')
+            decision=$(printf '%s' "$open" | bash .github/bots/pr.sh "$(date -u +%s)" 3600)
+            known=$(gh pr list -R "$REPO" --head "bot/xray-$version" --state all --json state --jq '[.[] | select(.state != "OPEN")] | length')
+            if [[ "$decision" == wait:* ]]; then
+              echo "::notice::открыт свежий PR бота xray ($decision), версия $version подождёт его слияния"
               version=
             elif [ "$known" != 0 ]; then
-              echo "::notice::PR для xray $version уже был, новый не открывается"
+              echo "::notice::PR для xray $version уже был и закрыт, новый не открывается"
               version=
+            else
+              echo "::notice::$decision"
             fi
           fi
           [ -n "$version" ] || echo "::notice::новой версии xray нет (в versions.toml $current)"
@@ -156,12 +163,27 @@ jobs:
           BRANCH: ${{ steps.commit.outputs.branch }}
           TITLE: ${{ steps.commit.outputs.title }}
         run: |
-          base=$(gh api "repos/$REPO" --jq .default_branch)
-          output=$(gh pr create -R "$REPO" --base "$base" --head "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/body.md" --label зависимости)
-          number=$(printf '%s\n' "$output" | tail -n 1)
-          number=${number##*/}
+          number=$(gh pr list -R "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh pr edit "$number" -R "$REPO" --title "$TITLE" --body-file "$RUNNER_TEMP/body.md"
+          else
+            base=$(gh api "repos/$REPO" --jq .default_branch)
+            output=$(gh pr create -R "$REPO" --base "$base" --head "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/body.md" --label зависимости)
+            number=$(printf '%s\n' "$output" | tail -n 1)
+            number=${number##*/}
+          fi
           [[ "$number" =~ ^[0-9]+$ ]] || { echo "::error::номер PR не определён"; exit 1; }
           echo "number=$number" >> "$GITHUB_OUTPUT"
+      - name: Устаревшие PR
+        if: ${{ steps.target.outputs.version != '' && !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          gh pr list -R "$REPO" --state open --limit 200 --json number,headRefName > "$RUNNER_TEMP/open.json"
+          bash .github/bots/superseded.sh "$VERSION" "bot/xray-" < "$RUNNER_TEMP/open.json" > "$RUNNER_TEMP/superseded.txt"
+          while IFS=$'\t' read -r old _; do
+            gh pr close "$old" -R "$REPO" --delete-branch --comment "Вышла версия $VERSION, закрываю."
+          done < "$RUNNER_TEMP/superseded.txt"
 
   verify:
     name: Проверки и слияние
@@ -267,7 +289,12 @@ jobs:
           existing=$(gh issue list -R "$REPO" --state open --label зависимости --json number,title |
             jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
           if [ -n "$existing" ]; then
-            gh issue comment "$existing" -R "$REPO" --body-file body.md
+            last=$(gh issue view "$existing" -R "$REPO" --json comments --jq '.comments | last | .author.login // ""')
+            if [ "$last" = github-actions ]; then
+              gh issue comment "$existing" -R "$REPO" --edit-last --body-file body.md
+            else
+              gh issue comment "$existing" -R "$REPO" --body-file body.md
+            fi
           else
             gh issue create -R "$REPO" --title "$title" --body-file body.md --label зависимости --label ci
           fi

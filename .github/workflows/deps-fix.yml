@@ -4,6 +4,8 @@ name: Исправление зависимостей
 # падает, бот точечно обновляет пакеты из отчёта (cargo update -p), а если этого мало, весь Cargo.lock,
 # и открывает PR «fix: обновление уязвимых зависимостей (…)» с меткой «безопасность»: такие исправления
 # продвигаются в stable без выдержки. Обязательные проверки бот запускает сам и сливает PR после зелёных.
+# Свежий PR бота (моложе 12 часов, проверки не упали) не даёт открыть новый; упавший или старый PR
+# обновляется поверх: та же ветка и тот же PR.
 # Если исправить не удалось или PR не прошёл проверки, заводится issue с отчётом cargo-deny (одно).
 # Когда cargo deny на main снова проходит, открытые issue бота закрываются.
 # Разбор отчёта и тесты — в .github/deps.
@@ -69,8 +71,10 @@ jobs:
     timeout-minutes: 30
     permissions:
       actions: read
+      checks: read
       contents: write
       pull-requests: write
+      statuses: read
     outputs:
       pr: ${{ steps.pr.outputs.number }}
       sha: ${{ steps.pr.outputs.sha }}
@@ -94,11 +98,15 @@ jobs:
       - name: Открытый PR бота
         id: open
         run: |
-          open=$(gh pr list -R "$REPO" --state open --limit 200 --json headRefName --jq '[.[] | select(.headRefName | startswith("bot/deps-fix-"))] | length')
-          if [ "$open" != 0 ]; then
-            echo "::notice::открыт PR бота исправления зависимостей, новый не открывается"
+          prs=$(gh pr list -R "$REPO" --state open --limit 200 --json number,headRefName,updatedAt,statusCheckRollup --jq '[.[] | select(.headRefName | startswith("bot/deps-fix-"))]')
+          decision=$(printf '%s' "$prs" | bash .github/bots/pr.sh "$(date -u +%s)" 43200)
+          if [[ "$decision" == wait:* ]]; then
+            echo "::notice::открыт свежий PR бота исправления зависимостей ($decision), новый не открывается"
+            echo "open=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$decision"
+            echo "open=0" >> "$GITHUB_OUTPUT"
           fi
-          echo "open=$open" >> "$GITHUB_OUTPUT"
       - name: Пакеты из отчёта
         id: select
         if: ${{ steps.open.outputs.open == '0' }}
@@ -163,10 +171,15 @@ jobs:
           git add Cargo.lock
           git commit -q -F "$RUNNER_TEMP/message.txt"
           git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push --force origin "$branch"
-          base=$(gh api "repos/$REPO" --jq .default_branch)
-          output=$(gh pr create -R "$REPO" --base "$base" --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md" --label безопасность)
-          number=$(printf '%s\n' "$output" | tail -n 1)
-          number=${number##*/}
+          number=$(gh pr list -R "$REPO" --head "$branch" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh pr edit "$number" -R "$REPO" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          else
+            base=$(gh api "repos/$REPO" --jq .default_branch)
+            output=$(gh pr create -R "$REPO" --base "$base" --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md" --label безопасность)
+            number=$(printf '%s\n' "$output" | tail -n 1)
+            number=${number##*/}
+          fi
           [[ "$number" =~ ^[0-9]+$ ]] || { echo "::error::номер PR не определён"; exit 1; }
           {
             echo "number=$number"
@@ -338,7 +351,12 @@ jobs:
           existing=$(gh issue list -R "$REPO" --state open --label зависимости --json number,title |
             jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
           if [ -n "$existing" ]; then
-            gh issue edit "$existing" -R "$REPO" --body-file "$RUNNER_TEMP/body.md"
+            last=$(gh issue view "$existing" -R "$REPO" --json comments --jq '.comments | last | .author.login // ""')
+            if [ "$last" = github-actions ]; then
+              gh issue comment "$existing" -R "$REPO" --edit-last --body-file "$RUNNER_TEMP/body.md"
+            else
+              gh issue comment "$existing" -R "$REPO" --body-file "$RUNNER_TEMP/body.md"
+            fi
           else
             gh issue create -R "$REPO" --title "$title" --body-file "$RUNNER_TEMP/body.md" --label зависимости --label безопасность
           fi
