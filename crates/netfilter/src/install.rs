@@ -61,10 +61,11 @@ fn replace_with(exec: &dyn Executor, old: &Rules, new: &Rules) -> Result<Vec<Str
     for family in [Family::V4, Family::V6] {
         let before = family_enabled(old, family);
         let after = family_enabled(new, family);
-        if before && (routing_changed || !after) {
-            if let Err(error) = teardown_routing(exec, old, family) {
-                warnings.push(format!("{error:#}"));
-            }
+        if before
+            && (routing_changed || !after)
+            && let Err(error) = teardown_routing(exec, old, family)
+        {
+            warnings.push(format!("{error:#}"));
         }
     }
     Ok(warnings)
