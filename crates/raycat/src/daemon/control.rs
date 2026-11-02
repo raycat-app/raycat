@@ -509,9 +509,8 @@ fn tunnel_state(
         Some(SelectStatus::Unknown) => Tunnel::Checking,
         // Выбор сменится на живой при следующей проверке.
         Some(SelectStatus::Dead) if alive => Tunnel::Checking,
-        Some(SelectStatus::Dead) => Tunnel::NoLiveNodes,
         None if !statuses.is_empty() && !checked => Tunnel::Checking,
-        None => Tunnel::NoLiveNodes,
+        Some(SelectStatus::Dead) | None => Tunnel::NoLiveNodes,
     }
 }
 

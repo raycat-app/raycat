@@ -688,7 +688,7 @@ impl Daemon {
         let Some(sub) = self.subs.get_mut(index) else {
             return;
         };
-        let stub = refresh.stub;
+        let answer = refresh.stub;
         match refresh.outcome {
             Outcome::Applied(analysis) => {
                 let analysis = *analysis;
@@ -727,8 +727,8 @@ impl Daemon {
             }
             Outcome::Rejected(reason) => {
                 sub.failures = 0;
-                match stub {
-                    Some(stub) => apply_stub(sub, stub),
+                match answer {
+                    Some(answer) => apply_stub(sub, &answer),
                     None => sub.stub = None,
                 }
                 let level = sub.problem.level(&reason);
@@ -754,14 +754,14 @@ impl Daemon {
 
 /// Заглушка приносит сведения провайдера (срок, трафик, объявление), но не узлы:
 /// узлы последнего рабочего ответа остаются.
-fn apply_stub(sub: &mut Sub, stub: updater::Stub) {
+fn apply_stub(sub: &mut Sub, answer: &updater::Stub) {
     let url = sub.source.config().url.expose();
-    sub.title.clone_from(&stub.info.title);
-    sub.usage.clone_from(&stub.info.usage);
-    if let Some(announce) = stub.info.announce.as_deref() {
+    sub.title.clone_from(&answer.info.title);
+    sub.usage.clone_from(&answer.info.usage);
+    if let Some(announce) = answer.info.announce.as_deref() {
         sub.announce = Some(redact_in(announce, &[url]));
     }
-    sub.stub = Some(stub.device_limit);
+    sub.stub = Some(answer.device_limit);
 }
 
 /// Закрепление из сохранённого файла; без него — из настроек.

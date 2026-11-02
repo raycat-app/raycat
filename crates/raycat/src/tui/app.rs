@@ -1542,11 +1542,6 @@ impl App {
             .cloned()
     }
 
-    /// Исключён маской `deny`: признак от демона, он же видит все маски подписки.
-    pub(super) fn is_excluded(&self, node: &Node) -> bool {
-        node.excluded
-    }
-
     fn deny_of(&self, subscription: &str) -> Vec<String> {
         self.deny
             .iter()
@@ -1724,7 +1719,6 @@ impl App {
         let subscription = self.filter.subscription.as_deref();
         let hide_dead = self.filter.hide_dead;
         let masks: Vec<Pattern> = self.hidden.iter().map(|mask| Pattern::new(mask)).collect();
-        let deny = self.deny.as_slice();
         let hide_excluded = self.filter.hide_excluded;
         self.visible = self
             .nodes
@@ -1733,15 +1727,9 @@ impl App {
             .filter(|(_, node)| {
                 let alive = node.selected || node.status != NodeStatus::Dead;
                 let masked = masks.iter().any(|mask| mask.matches(&node.name));
-                let excluded = deny.iter().any(|(name, masks)| {
-                    *name == node.subscription
-                        && masks
-                            .iter()
-                            .any(|mask| Pattern::new(mask).matches(&node.name))
-                });
                 (!hide_dead || alive)
                     && !masked
-                    && (!hide_excluded || !excluded)
+                    && (!hide_excluded || !node.excluded)
                     && subscription.is_none_or(|name| node.subscription == name)
                     && (needle.is_empty() || node.id.to_lowercase().contains(&needle))
             })
@@ -3229,7 +3217,7 @@ mod tests {
         let mut app = nodes_app(sample());
         app.nodes[1].excluded = true;
         app.refilter();
-        assert!(app.is_excluded(&app.nodes[1]));
+        assert!(app.nodes[1].excluded);
         press(&mut app, KeyCode::Char('e'));
         assert!(!visible_ids(&app).contains(&"main/DE-2"));
         press(&mut app, KeyCode::Char('e'));

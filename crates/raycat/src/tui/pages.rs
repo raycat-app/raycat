@@ -305,7 +305,7 @@ fn nodes_table(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
             for (row, node) in shown.iter().skip(app.offset).take(rows).enumerate() {
                 let index = app.offset + row;
                 let current = index == app.cursor;
-                let flags = (current, app.is_excluded(node));
+                let flags = (current, node.excluded);
                 draw_row(&mut inner, 1 + row, &cols, node, &speed, flags, app.names);
                 found.push(Hit::new(0, y0 + 2 + row, full, Target::NodeRow(index)));
             }
