@@ -1,10 +1,10 @@
 [xray]
-version = "26.10.21"
+version = "26.10.31"
 
 [xray.sha256]
-x86_64 = "0eec3ed4163c273d8c8bf821f7d219e257921cf584aa3fb970715e458e631978"
-aarch64 = "d1304946c486d98e6b886e9b931eaaaebb23835b30e217638037b7f2721d4e9c"
-armv7 = "89978508fa2ebb4a1e661f2c6ed51d241c4091b3cd17f4c65fdf20baae7dedac"
+x86_64 = "e4bd9119f50ae7c41658b1abd0679ae06f98bd864a2907ff33f2f2cf7081b214"
+aarch64 = "1811c8f1da0c3b6dc707ebaf1c8390e987ba39859a8f0a7aadd8526157f2ec8d"
+armv7 = "2387f55239ee7799fd67d5382e79f589c1da07a97d993e86b058f2290b8e456b"
 
 # Сборка xray для процессоров без аппаратного AES (Raspberry Pi 3/4, многие armv7). Тулчейн Go
 # собирается из исходников тега go_version (коммит go_commit) с патчем .github/build/go-noaes.patch:
@@ -12,8 +12,8 @@ armv7 = "89978508fa2ebb4a1e661f2c6ed51d241c4091b3cd17f4c65fdf20baae7dedac"
 # на 40–50% медленнее. Версия и коммит совпадают с [xray]: бот обновляет их вместе. go_image —
 # образ-бутстрап тулчейна, закреплён по digest индекса (многоархитектурного манифеста).
 [xray.noaes]
-version = "26.10.21"
-commit = "1b1647cd9ddf0abc34b981d4611fc03bcac1ca74"
+version = "26.10.31"
+commit = "a4a3dff5b20c2faae567b742c172c7b95e75c083"
 go_version = "1.27.3"
 go_commit = "2aae1000ea1d4b28923b96db28acf4e3b99d6aff"
 go_image = "golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd"
