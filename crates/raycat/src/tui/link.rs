@@ -310,7 +310,7 @@ mod tests {
     use crate::testing::{TempDir, http_response};
 
     const STATUS: &str = r#"{"version":"0.1.0","mode":"gateway","uptime_secs":5,"kill_switch":true,
-        "xray":{"running":true,"pid":7,"restarts":0},"node":null,"subscriptions":[]}"#;
+        "xray":{"running":true,"pid":7,"restarts":0},"tunnel":"working","node":null,"subscriptions":[]}"#;
     const NODES: &str = r#"{"selected":"main/NL-1","nodes":[{"id":"main/NL-1","subscription":"main",
         "name":"NL-1","tag":"t","status":"alive","latency_ms":31,"failures":0,"alive_for_secs":5,
         "last_error":null,"selected":true,"pinned":false,"uplink_bytes":null,"downlink_bytes":null}]}"#;

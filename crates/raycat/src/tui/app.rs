@@ -1243,14 +1243,19 @@ impl App {
     }
 
     fn pin_current(&mut self) -> Option<Effect> {
-        if let Some(node) = self.current() {
-            return Some(Effect::Pin(node.id.clone()));
+        match self.current().map(|node| (node.id.clone(), node.excluded)) {
+            Some((_, true)) => self.notify(
+                Tone::Yellow,
+                "Исключённый узел не закрепить: сначала снимите исключение клавишей x",
+                NOTICE_SECS,
+            ),
+            Some((id, false)) => return Some(Effect::Pin(id)),
+            None => self.notify(
+                Tone::Yellow,
+                "Нет узла, который можно закрепить",
+                NOTICE_SECS,
+            ),
         }
-        self.notify(
-            Tone::Yellow,
-            "Нет узла, который можно закрепить",
-            NOTICE_SECS,
-        );
         None
     }
 
@@ -1537,10 +1542,6 @@ impl App {
             .cloned()
     }
 
-    pub(super) fn is_excluded(&self, node: &Node) -> bool {
-        self.excluding_mask(node).is_some()
-    }
-
     fn deny_of(&self, subscription: &str) -> Vec<String> {
         self.deny
             .iter()
@@ -1565,6 +1566,14 @@ impl App {
             return None;
         };
         let remove = self.excluding_mask(&node);
+        if node.excluded && remove.is_none() {
+            self.notify(
+                Tone::Yellow,
+                "Маска исключения не найдена: откройте «Настройки» (5) и проверьте deny",
+                NOTICE_SECS,
+            );
+            return None;
+        }
         let choices = if let Some(mask) = &remove {
             vec![mask.clone()]
         } else {
@@ -1710,7 +1719,6 @@ impl App {
         let subscription = self.filter.subscription.as_deref();
         let hide_dead = self.filter.hide_dead;
         let masks: Vec<Pattern> = self.hidden.iter().map(|mask| Pattern::new(mask)).collect();
-        let deny = self.deny.as_slice();
         let hide_excluded = self.filter.hide_excluded;
         self.visible = self
             .nodes
@@ -1719,15 +1727,9 @@ impl App {
             .filter(|(_, node)| {
                 let alive = node.selected || node.status != NodeStatus::Dead;
                 let masked = masks.iter().any(|mask| mask.matches(&node.name));
-                let excluded = deny.iter().any(|(name, masks)| {
-                    *name == node.subscription
-                        && masks
-                            .iter()
-                            .any(|mask| Pattern::new(mask).matches(&node.name))
-                });
                 (!hide_dead || alive)
                     && !masked
-                    && (!hide_excluded || !excluded)
+                    && (!hide_excluded || !node.excluded)
                     && subscription.is_none_or(|name| node.subscription == name)
                     && (needle.is_empty() || node.id.to_lowercase().contains(&needle))
             })
@@ -2190,7 +2192,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use raycat_proto::{
-        CurrentNode, Mode, SpeedtestRun, SubscriptionStatus, UpdateResult, XrayStatus,
+        CurrentNode, Mode, SpeedtestRun, SubscriptionStatus, Tunnel, UpdateResult, XrayStatus,
     };
 
     use super::*;
@@ -2243,6 +2245,7 @@ mod tests {
             checks: Vec::new(),
             uplink_bytes: None,
             downlink_bytes: None,
+            excluded: false,
         }
     }
 
@@ -2259,6 +2262,7 @@ mod tests {
                 api_silent_secs: Some(0),
                 api_stuck: false,
             },
+            tunnel: Tunnel::Working,
             node: None,
             subscriptions: subscriptions
                 .iter()
@@ -2278,6 +2282,8 @@ mod tests {
                     platform: "windows".to_owned(),
                     update_interval_secs: None,
                     cut: 0,
+                    note: None,
+                    announce: None,
                 })
                 .collect(),
         }
@@ -3209,9 +3215,9 @@ mod tests {
     #[test]
     fn e_hides_the_excluded_nodes() {
         let mut app = nodes_app(sample());
-        app.deny = vec![("main".to_owned(), vec!["DE*".to_owned()])];
+        app.nodes[1].excluded = true;
         app.refilter();
-        assert!(app.is_excluded(&app.nodes[1]));
+        assert!(app.nodes[1].excluded);
         press(&mut app, KeyCode::Char('e'));
         assert!(!visible_ids(&app).contains(&"main/DE-2"));
         press(&mut app, KeyCode::Char('e'));

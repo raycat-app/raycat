@@ -286,6 +286,7 @@ mod tests {
                 api_silent_secs: Some(0),
                 api_stuck: false,
             },
+            tunnel: raycat_proto::Tunnel::Working,
             node: None,
             subscriptions: Vec::new(),
         }

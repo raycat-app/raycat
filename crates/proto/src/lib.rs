@@ -12,6 +12,23 @@ pub enum Mode {
     Gateway,
 }
 
+/// Состояние туннеля по тому, что видит демон. Шапка и карточка обзора показывают его:
+/// связь с демоном и «узел выбран» сами по себе ничего не говорят о том, идёт ли трафик.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tunnel {
+    /// xray работает, выбранный узел отвечает.
+    Working,
+    /// xray работает, ни один узел не отвечает.
+    NoLiveNodes,
+    /// xray работает, а проверок узлов ещё не было.
+    Checking,
+    /// xray не запущен.
+    XrayDown,
+    /// xray запущен, но его API молчит дольше порога: демон перезапустит его.
+    XrayStuck,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Status {
     pub version: String,
@@ -20,6 +37,7 @@ pub struct Status {
     /// Только в режиме шлюза.
     pub kill_switch: Option<bool>,
     pub xray: XrayStatus,
+    pub tunnel: Tunnel,
     /// Текущий узел; `None`, пока узлов нет.
     pub node: Option<CurrentNode>,
     pub subscriptions: Vec<SubscriptionStatus>,
@@ -82,6 +100,13 @@ pub struct SubscriptionStatus {
     /// Узлов ответа, которые отсекли маски `allow` и `deny`.
     #[serde(default)]
     pub cut: usize,
+    /// Короткая причина, почему подписка не отдаёт узлы: `истекла 25.10.2026`,
+    /// `лимит устройств`, `провайдер не отдал узлы`. `None`, если причины нет.
+    #[serde(default)]
+    pub note: Option<String>,
+    /// Объявление провайдера из последнего ответа, без ссылок.
+    #[serde(default)]
+    pub announce: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,6 +147,10 @@ pub struct Node {
     /// Последние проверки узла, от старой к новой; не больше восьми.
     #[serde(default)]
     pub checks: Vec<NodeCheck>,
+    /// Отсечён маской `deny`: в выборе не участвует. Такие узлы отдаются только для показа
+    /// и снятия маски.
+    #[serde(default)]
+    pub excluded: bool,
 }
 
 /// Одна проверка узла. Адреса и ключи сюда не попадают: только время, результат и задержка.
@@ -405,11 +434,13 @@ mod tests {
                 api_silent_secs: Some(2),
                 api_stuck: false,
             },
+            tunnel: Tunnel::NoLiveNodes,
             node: None,
             subscriptions: Vec::new(),
         };
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["mode"], "gateway");
+        assert_eq!(json["tunnel"], "no_live_nodes");
         assert_eq!(json["xray"]["pid"], 7);
         assert_eq!(json["xray"]["api_silent_secs"], 2);
         assert_eq!(serde_json::from_value::<Status>(json).unwrap(), status);

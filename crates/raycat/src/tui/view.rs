@@ -180,26 +180,31 @@ fn header(canvas: &mut Canvas<'_>, app: &App, y: usize, limit: usize) -> usize {
     1
 }
 
-fn link_seg(link: &Link) -> Seg {
-    match link {
-        Link::Up => Seg::new("● подключено", Tone::Green, 0),
-        Link::Connecting => Seg::new("● подключение…", Tone::Yellow, 0),
-        Link::Down { .. } => Seg::new("● нет связи", Tone::Red, 0),
+/// Состояние туннеля: по нему видно, идёт ли трафик через VPN. Связь с демоном — отдельно,
+/// без неё состояния туннеля нет.
+pub(super) fn tunnel_seg(app: &App) -> Seg {
+    match (&app.link, &app.status) {
+        (Link::Down { .. }, _) => Seg::new("● нет связи с демоном", Tone::Red, 0),
+        (Link::Connecting, _) | (Link::Up, None) => Seg::new("● подключение…", Tone::Yellow, 0),
+        (Link::Up, Some(status)) => {
+            let text = render::tunnel_text(status.tunnel, status.mode, status.kill_switch);
+            Seg::new(text.headline, text.tone, 0)
+        }
     }
 }
 
-/// Xray показывается только когда с ним что-то не так.
+/// Пояснение к состоянию туннеля, когда живых узлов нет.
+pub(super) fn tunnel_hint(app: &App) -> Option<&'static str> {
+    let status = app
+        .status
+        .as_ref()
+        .filter(|_| matches!(app.link, Link::Up))?;
+    render::tunnel_text(status.tunnel, status.mode, status.kill_switch).hint
+}
+
+/// Перезапуски xray; состояние самого процесса и API показывает `tunnel_seg`.
 pub(super) fn xray_segs(xray: &XrayStatus) -> Vec<Seg> {
     let mut segs = Vec::new();
-    if !xray.running {
-        segs.push(Seg::new("xray не запущен", Tone::Red, 0));
-    } else if xray.api_stuck {
-        let text = format!(
-            "xray не отвечает ({} с)",
-            xray.api_silent_secs.unwrap_or_default()
-        );
-        segs.push(Seg::new(text, Tone::Red, 0));
-    }
     if xray.restarts > 0 {
         let text = format!("xray перезапускался: {}", xray.restarts);
         segs.push(Seg::new(text, Tone::Yellow, 1));
@@ -212,7 +217,7 @@ fn header_top(canvas: &mut Canvas<'_>, app: &App, y: usize) {
     if let Some(status) = &app.status {
         segs.push(Seg::new(render::mode_name(status.mode), Tone::Plain, 0));
     }
-    segs.push(link_seg(&app.link));
+    segs.push(tunnel_seg(app));
     if let Some(status) = &app.status {
         segs.extend(xray_segs(&status.xray));
         if let Some(on) = status.kill_switch {
@@ -284,29 +289,33 @@ pub(super) fn traffic_seg(used: u64, total: Option<u64>) -> Seg {
 }
 
 /// Состояние подписки одним словом; ошибка уходит в отдельную вкладку.
-pub(super) fn sub_phrase(sub: &SubscriptionStatus, now: u64) -> (&'static str, Tone) {
+pub(super) fn sub_phrase(sub: &SubscriptionStatus, now: u64) -> (String, Tone) {
+    // Заглушка провайдера называет причину: «истекла 25.10.2026», «лимит устройств».
+    if let Some(note) = &sub.note {
+        return (note.clone(), Tone::Red);
+    }
     if sub.last_error.is_some() {
-        return ("ошибка", Tone::Red);
+        return ("ошибка".to_owned(), Tone::Red);
     }
     if sub
         .expire
         .is_some_and(|expire| expire != 0 && expire <= now)
     {
-        return ("истекла", Tone::Red);
+        return ("истекла".to_owned(), Tone::Red);
     }
     if let (Some(used), Some(total)) = (sub.used_bytes, sub.total_bytes)
         && total > 0
         && used >= total
     {
-        return ("трафик исчерпан", Tone::Red);
+        return ("трафик исчерпан".to_owned(), Tone::Red);
     }
     if sub.updating {
-        return ("обновляется", Tone::Green);
+        return ("обновляется".to_owned(), Tone::Green);
     }
     if sub.updated_at.is_none() {
-        return ("ещё не получена", Tone::Yellow);
+        return ("ещё не получена".to_owned(), Tone::Yellow);
     }
-    ("работает", Tone::Green)
+    ("работает".to_owned(), Tone::Green)
 }
 
 /// Подсказки «клавиша описание»: клавиша жирным, описание тусклым.
@@ -420,8 +429,8 @@ fn exclude_lines(
     let summary = if dialog.remove {
         let mask = dialog.choices.first().map_or("", String::as_str);
         format!(
-            "Снять исключение «{}»: его исключает маска «{mask}»",
-            dialog.node
+            "Снять маску «{mask}»: вернётся узлов: {}",
+            app.affected(&dialog.subscription, mask)
         )
     } else {
         let choice = dialog
@@ -575,7 +584,7 @@ mod tests {
     use ratatui::style::{Color, Modifier};
     use raycat_proto::{
         CurrentNode, Event, Mode, Node, NodeCheck, NodeStatus, Nodes, SettingItem, SettingValue,
-        SettingsView, Status, XHTTP_PROVIDER,
+        SettingsView, Status, Tunnel, XHTTP_PROVIDER,
     };
 
     use super::super::app::{Confirm, Edit, Msg, Setting, Snapshot, Tab};
@@ -603,6 +612,7 @@ mod tests {
             checks: Vec::new(),
             uplink_bytes: Some(10 * 1024),
             downlink_bytes: Some(200 * 1024),
+            excluded: false,
         }
     }
 
@@ -631,6 +641,7 @@ mod tests {
                 api_silent_secs: Some(0),
                 api_stuck: false,
             },
+            tunnel: Tunnel::Working,
             node: Some(CurrentNode {
                 id: "main/NL-1".to_owned(),
                 subscription: "main".to_owned(),
@@ -655,6 +666,8 @@ mod tests {
                 platform: "windows".to_owned(),
                 update_interval_secs: None,
                 cut: 0,
+                note: None,
+                announce: None,
             }],
         }
     }
@@ -748,7 +761,7 @@ mod tests {
     fn the_overview_shows_the_connection_the_subscriptions_and_the_buttons() {
         let mut app = sample_app();
         let lines = screen(&mut app, 100, 30);
-        assert!(has_line(&lines, "● подключено"), "{lines:?}");
+        assert!(has_line(&lines, "● VPN работает"), "{lines:?}");
         assert!(has_line(&lines, "Подписки · всего 1"), "{lines:?}");
         assert!(has_line(&lines, "[u] Обновить подписки"), "{lines:?}");
         assert!(has_line(&lines, "работает"), "{lines:?}");
@@ -803,7 +816,7 @@ mod tests {
             "демон недоступен: демон не запущен: сокета /run/raycat/raycat.sock нет"
         );
         assert_eq!(lines[2], "повторное подключение через 2 с");
-        assert_eq!(lines[3], "raycat · ● нет связи");
+        assert_eq!(lines[3], "raycat · ● нет связи с демоном");
     }
 
     #[test]
@@ -834,12 +847,9 @@ mod tests {
         let terminal = paint(&mut app, 80, 24, true);
         let buffer = terminal.backend().buffer();
         let lines = rows(buffer);
-        assert_eq!(
-            lines[3],
-            format!(
-                "raycat · шлюз · ● нет связи · kill switch ●{}время работы 5 мин 12 с",
-                " ".repeat(14)
-            )
+        assert!(
+            lines[3].starts_with("raycat · шлюз · ● нет связи с демоном"),
+            "{lines:?}"
         );
         assert_eq!(buffer[(16, 3)].symbol(), "●");
         assert_eq!(buffer[(16, 3)].style().fg, Some(Color::LightRed));
@@ -970,7 +980,7 @@ mod tests {
         status.kill_switch = None;
         let mut app = app_with(status, sample_nodes());
         let lines = screen(&mut app, 80, 20);
-        assert!(lines[1].starts_with("raycat · прокси · ● подключено"));
+        assert!(lines[1].starts_with("raycat · прокси · ● VPN работает"));
         assert!(!lines[1].contains("kill switch"));
     }
 
@@ -985,23 +995,19 @@ mod tests {
             api_stuck: false,
         };
         status.kill_switch = Some(false);
+        status.tunnel = Tunnel::XrayDown;
         status.node = None;
         let mut app = app_with(status, Vec::new());
         let lines = screen(&mut app, 80, 20);
-        assert_eq!(
-            lines[1],
-            "raycat · шлюз · ● подключено · xray не запущен · kill switch ●"
-        );
+        assert!(lines[1].contains("● xray не запущен"), "{lines:?}");
         assert!(has_line(&lines, "узел не выбран"), "{lines:?}");
 
         let mut status = sample_status();
         status.xray.restarts = 2;
         let mut app = app_with(status, sample_nodes());
         let lines = screen(&mut app, 80, 20);
-        assert_eq!(
-            lines[1],
-            "raycat · шлюз · ● подключено · xray перезапускался: 2 · kill switch ●"
-        );
+        assert!(lines[1].contains("● VPN работает"), "{lines:?}");
+        assert!(lines[1].contains("xray перезапускался: 2"), "{lines:?}");
     }
 
     #[test]
@@ -1009,9 +1015,31 @@ mod tests {
         let mut status = sample_status();
         status.xray.api_stuck = true;
         status.xray.api_silent_secs = Some(120);
+        status.tunnel = Tunnel::XrayStuck;
         let mut app = app_with(status, sample_nodes());
         let lines = screen(&mut app, 80, 20);
-        assert!(lines[1].contains("xray не отвечает (120 с)"));
+        assert!(lines[1].contains("● xray не отвечает"), "{lines:?}");
+    }
+
+    #[test]
+    fn without_live_nodes_the_card_says_what_happens_to_the_traffic() {
+        let mut status = sample_status();
+        status.tunnel = Tunnel::NoLiveNodes;
+        status.kill_switch = Some(true);
+        let mut app = app_with(status, sample_nodes());
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "● нет живых узлов"), "{lines:?}");
+        assert!(has_line(&lines, "мимо VPN он не уйдёт"), "{lines:?}");
+    }
+
+    #[test]
+    fn checking_nodes_is_yellow_and_has_no_hint() {
+        let mut status = sample_status();
+        status.tunnel = Tunnel::Checking;
+        let mut app = app_with(status, sample_nodes());
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "● проверяю узлы"), "{lines:?}");
+        assert!(!has_line(&lines, "не уйдёт"), "{lines:?}");
     }
 
     #[test]

@@ -5,10 +5,11 @@
 use jiff::tz::TimeZone;
 use raycat_proto::{Node, NodeCheck, NodeStatus, SubscriptionStatus};
 
-use super::app::{App, Hit, InputMode, LEVELS, Link, Setting, SortBy, Target};
+use super::app::{App, Hit, InputMode, LEVELS, Setting, SortBy, Target};
 use super::canvas::{Canvas, GAP, Seg, highlight, wrap};
 use super::view::{
-    delay_tone, speed_label, sub_phrase, subscription_title, traffic_seg, xray_segs,
+    delay_tone, speed_label, sub_phrase, subscription_title, traffic_seg, tunnel_hint, tunnel_seg,
+    xray_segs,
 };
 use crate::names::{NameStyle, country_code, display_name, node_reason, node_reason_short};
 use crate::render;
@@ -17,8 +18,8 @@ use crate::util::{format_moment, is_utc};
 
 /// Рамка занимает две строки (верх и низ) и два столбца сбоку — по одной ячейке отступа.
 const FRAME: usize = 2;
-/// Карточка подключения: рамка и две строки.
-const CARD_ROWS: usize = 4;
+/// Карточка подключения: рамка, состояние, узел и пояснение без живых узлов.
+const CARD_ROWS: usize = 5;
 /// Сколько последних событий показывает обзор.
 const RECENT: usize = 5;
 const STATUS_WIDTH: usize = 13;
@@ -106,22 +107,13 @@ fn card(canvas: &mut Canvas<'_>, app: &App, y: usize) {
     let mut inner = canvas.framed(y, CARD_ROWS, vec![Seg::new("Подключение", Tone::Bold, 0)]);
     inner.line(0, 0, state_segs(app));
     inner.line(1, 0, node_segs(app));
+    if let Some(hint) = tunnel_hint(app) {
+        inner.line(2, 0, vec![Seg::new(hint, Tone::Dim, 0)]);
+    }
 }
 
 fn state_segs(app: &App) -> Vec<Seg> {
-    let state = match (&app.link, &app.status) {
-        (Link::Down { .. }, _) => Seg::new("● нет связи с демоном", Tone::Red, 0),
-        (Link::Connecting, _) => Seg::new("● подключение…", Tone::Yellow, 0),
-        (Link::Up, Some(status)) if status.node.is_none() => {
-            if status.kill_switch == Some(true) {
-                Seg::new("● kill switch держит трафик: узла нет", Tone::Yellow, 0)
-            } else {
-                Seg::new("● нет связи: узел не выбран", Tone::Red, 0)
-            }
-        }
-        (Link::Up, _) => Seg::new("● подключено", Tone::Green, 0),
-    };
-    let mut segs = vec![state];
+    let mut segs = vec![tunnel_seg(app)];
     if let Some(status) = &app.status {
         segs.push(Seg::new(render::mode_name(status.mode), Tone::Plain, 1));
         segs.extend(xray_segs(&status.xray));
@@ -182,8 +174,8 @@ fn subscription_brief(canvas: &mut Canvas<'_>, app: &App, y: usize, rows: usize,
             segs.push(Seg::new(text, tone, 2));
         }
         let (phrase, tone) = sub_phrase(sub, app.now);
-        let phrase = if sub.last_error.is_some() {
-            "ошибка — подробнее во вкладке «Подписки»"
+        let phrase = if sub.note.is_none() && sub.last_error.is_some() {
+            "ошибка — подробнее во вкладке «Подписки»".to_owned()
         } else {
             phrase
         };
@@ -313,7 +305,7 @@ fn nodes_table(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
             for (row, node) in shown.iter().skip(app.offset).take(rows).enumerate() {
                 let index = app.offset + row;
                 let current = index == app.cursor;
-                let flags = (current, app.is_excluded(node));
+                let flags = (current, node.excluded);
                 draw_row(&mut inner, 1 + row, &cols, node, &speed, flags, app.names);
                 found.push(Hit::new(0, y0 + 2 + row, full, Target::NodeRow(index)));
             }
@@ -324,15 +316,23 @@ fn nodes_table(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
 
 fn nodes_title(app: &App) -> Vec<Seg> {
     let total = app.nodes.len();
-    let shown = app.visible.len();
+    let excluded = app.nodes.iter().filter(|node| node.excluded).count();
+    let usable = app
+        .visible
+        .iter()
+        .filter(|&&index| app.nodes.get(index).is_some_and(|node| !node.excluded))
+        .count();
     let mut segs = vec![Seg::new(
-        format!("Узлы · {shown} из {total}"),
+        format!("Узлы · {usable} из {total}"),
         Tone::Bold,
         0,
     )];
-    if shown < total {
+    if excluded > 0 {
+        segs.push(Seg::new(format!("({excluded} исключено)"), Tone::Dim, 2));
+    }
+    if app.visible.len() < total {
         segs.push(Seg::new(
-            format!("({} скрыто)", total - shown),
+            format!("({} скрыто)", total - app.visible.len()),
             Tone::Dim,
             2,
         ));
@@ -624,6 +624,7 @@ fn cell(kind: Kind, node: &Node, speed: &str, style: NameStyle, excluded: bool) 
             country_code(&node.name).unwrap_or_else(|| "—".to_owned()),
             Tone::Plain,
         ),
+        Kind::Status if excluded => ("исключён".to_owned(), Tone::Dim),
         Kind::Status => {
             let (text, tone) = render::node_status_mark(node.status);
             (text.to_owned(), tone)
@@ -903,6 +904,7 @@ fn sub_details(
             Seg::new(phrase, phrase_tone, 0),
         ],
     ];
+    lines.extend(announce_lines(sub, width));
     match &sub.last_error {
         Some(error) if app.details => {
             lines.push(vec![Seg::new("Ошибка полностью:", Tone::Red, 0)]);
@@ -926,6 +928,18 @@ fn sub_details(
     for (row, segs) in lines.into_iter().take(rows).enumerate() {
         inner.line(row, 0, segs);
     }
+}
+
+/// Объявление провайдера из последнего ответа: сначала заголовок, потом текст с переносом.
+fn announce_lines(sub: &SubscriptionStatus, width: usize) -> Vec<Vec<Seg>> {
+    let Some(announce) = &sub.announce else {
+        return Vec::new();
+    };
+    let mut lines = vec![vec![Seg::new("Объявление провайдера:", Tone::Plain, 0)]];
+    for line in wrap(announce, width, usize::MAX) {
+        lines.push(vec![Seg::new(line, Tone::Dim, 0)]);
+    }
+    lines
 }
 
 pub(super) fn journal(

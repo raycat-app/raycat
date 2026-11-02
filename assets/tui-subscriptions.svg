@@ -15,9 +15,9 @@
 <text x="804" y="930" textLength="168" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6"> ·</text>
 <text x="1056" y="930" textLength="336" xml:space="preserve" fill="#cdd6f4">шлюз</text>
 <text x="1392" y="930" textLength="168" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6"> ·</text>
-<text x="1644" y="930" textLength="1008" xml:space="preserve" fill="#a6e3a1">● подключено</text>
-<text x="2652" y="930" textLength="168" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6"> ·</text>
-<text x="2904" y="930" textLength="1092" xml:space="preserve" fill="#a6e3a1">kill switch ●</text>
+<text x="1644" y="930" textLength="1176" xml:space="preserve" fill="#a6e3a1">● VPN работает</text>
+<text x="2820" y="930" textLength="168" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6"> ·</text>
+<text x="3072" y="930" textLength="1092" xml:space="preserve" fill="#a6e3a1">kill switch ●</text>
 <text x="6768" y="930" textLength="1932" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">время работы 3 ч 12 мин</text>
 <text x="300" y="1110" textLength="1008" xml:space="preserve" fill="#cdd6f4" font-weight="bold">[u] Обновить</text>
 <text x="1476" y="1110" textLength="756" xml:space="preserve" fill="#cdd6f4" font-weight="bold">[m] Маски</text>

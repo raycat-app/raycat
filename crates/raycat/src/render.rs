@@ -7,7 +7,7 @@ use std::time::Duration;
 use jiff::tz::TimeZone;
 use raycat_proto::{
     CurrentNode, Event, Mode, Node, NodeStatus, Nodes, Reloaded, SpeedtestProgress,
-    SpeedtestResult, Status, SubscriptionStatus, Updates, XrayState, XrayStatus,
+    SpeedtestResult, Status, SubscriptionStatus, Tunnel, Updates, XrayState, XrayStatus,
 };
 
 use crate::names::{NameStyle, display_name, node_reason};
@@ -150,16 +150,56 @@ fn xray_text(term: Term, xray: &XrayStatus) -> String {
     format!("{state}{pid}{restarts}")
 }
 
-fn header_lines(term: Term, status: &Status) -> Vec<String> {
-    let mut lines = vec![
-        term.paint(
-            Tone::Header,
-            &format!("raycat {}", sanitize(&status.version)),
+/// Состояние туннеля: строка для шапки TUI и для `raycat status`, пояснение при отсутствии
+/// живых узлов.
+pub(crate) struct TunnelText {
+    pub(crate) headline: &'static str,
+    pub(crate) tone: Tone,
+    pub(crate) hint: Option<&'static str>,
+}
+
+pub(crate) fn tunnel_text(tunnel: Tunnel, mode: Mode, kill_switch: Option<bool>) -> TunnelText {
+    let (headline, tone) = match tunnel {
+        Tunnel::Working => ("● VPN работает", Tone::Green),
+        Tunnel::NoLiveNodes => ("● нет живых узлов", Tone::Red),
+        Tunnel::Checking => ("● проверяю узлы", Tone::Yellow),
+        Tunnel::XrayDown => ("● xray не запущен", Tone::Red),
+        Tunnel::XrayStuck => ("● xray не отвечает", Tone::Red),
+    };
+    // Что на самом деле происходит с трафиком без живых узлов: перехват идёт через xray,
+    // а kill switch закрывает то, что перехват не затрагивает (ICMP и прочее вне TCP/UDP).
+    let hint = match (tunnel, mode, kill_switch) {
+        (Tunnel::NoLiveNodes, Mode::Gateway, Some(true)) => Some(
+            "трафик заблокирован, мимо VPN он не уйдёт; адреса «напрямую» и локальной сети идут как обычно",
         ),
-        field(term, 2, "режим:", mode_name(status.mode)),
-        field(term, 2, "время работы:", &span(status.uptime_secs)),
-        field(term, 2, "xray:", &xray_text(term, &status.xray)),
-    ];
+        (Tunnel::NoLiveNodes, Mode::Gateway, _) => {
+            Some("TCP и UDP через узлы не пройдут; ICMP и прочий трафик вне TCP/UDP идёт напрямую")
+        }
+        (Tunnel::NoLiveNodes, Mode::Proxy, _) => {
+            Some("трафик через узлы не пройдёт; адреса «напрямую» идут как обычно")
+        }
+        _ => None,
+    };
+    TunnelText {
+        headline,
+        tone,
+        hint,
+    }
+}
+
+fn header_lines(term: Term, status: &Status) -> Vec<String> {
+    let tunnel = tunnel_text(status.tunnel, status.mode, status.kill_switch);
+    let mut lines = vec![term.paint(tunnel.tone, tunnel.headline)];
+    if let Some(hint) = tunnel.hint {
+        lines.push(format!("  {}", term.paint(Tone::Dim, hint)));
+    }
+    lines.push(term.paint(
+        Tone::Header,
+        &format!("raycat {}", sanitize(&status.version)),
+    ));
+    lines.push(field(term, 2, "режим:", mode_name(status.mode)));
+    lines.push(field(term, 2, "время работы:", &span(status.uptime_secs)));
+    lines.push(field(term, 2, "xray:", &xray_text(term, &status.xray)));
     match status.kill_switch {
         Some(true) => lines.push(field(
             term,
@@ -261,6 +301,17 @@ fn subscription_lines(
             "сейчас:",
             &term.paint(Tone::Green, "идёт обновление"),
         ));
+    }
+    if let Some(note) = &sub.note {
+        lines.push(field(
+            term,
+            4,
+            "узлов нет:",
+            &term.paint(Tone::Red, &sanitize(note)),
+        ));
+    }
+    if let Some(announce) = &sub.announce {
+        lines.push(field(term, 4, "объявление:", &sanitize(announce)));
     }
     if let Some(error) = &sub.last_error {
         lines.push(field(
@@ -398,7 +449,11 @@ fn node_row(node: &Node) -> Vec<Cell> {
     } else {
         Tone::Plain
     };
-    let (status_text, status_tone) = node_status_mark(node.status);
+    let (status_text, status_tone) = if node.excluded {
+        ("⊘ исключён", Tone::Dim)
+    } else {
+        node_status_mark(node.status)
+    };
     let failures_tone = if node.failures > 0 {
         Tone::Yellow
     } else {
@@ -723,6 +778,8 @@ mod tests {
             platform: "windows".to_owned(),
             update_interval_secs: None,
             cut: 0,
+            note: None,
+            announce: None,
         }
     }
 
@@ -739,6 +796,7 @@ mod tests {
                 api_silent_secs: Some(0),
                 api_stuck: false,
             },
+            tunnel: Tunnel::Working,
             node: Some(CurrentNode {
                 id: "main/NL-1".to_owned(),
                 subscription: "main".to_owned(),
@@ -770,6 +828,7 @@ mod tests {
             checks: Vec::new(),
             uplink_bytes: Some(10 * 1024),
             downlink_bytes: Some(200 * 1024),
+            excluded: false,
         }
     }
 
@@ -789,6 +848,7 @@ mod tests {
     fn status_tells_the_whole_story() {
         let text = status(plain(), &sample_status(), NOW, &TimeZone::UTC);
         let expected = [
+            "● VPN работает",
             "raycat 0.1.0",
             "  режим:        шлюз",
             "  время работы: 5 мин 12 с",
@@ -865,6 +925,7 @@ mod tests {
         let mut data = sample_status();
         data.xray.api_stuck = true;
         data.xray.api_silent_secs = Some(120);
+        data.tunnel = Tunnel::XrayStuck;
         let text = status(plain(), &data, NOW, &TimeZone::UTC);
         assert!(text.contains("не отвечает (120 с) (pid 4127)"));
         assert!(!text.contains("работает"));

@@ -115,7 +115,12 @@ impl Subscription {
     /// Узел участвует в выборе: он в белом списке (если тот не пуст) и не в чёрном.
     pub fn allows(&self, node: &str) -> bool {
         let allowed = self.allow.is_empty() || self.allow.iter().any(|p| p.matches(node));
-        allowed && !self.deny.iter().any(|p| p.matches(node))
+        allowed && !self.denies(node)
+    }
+
+    /// Узел исключён маской `deny` (независимо от `allow`).
+    pub fn denies(&self, node: &str) -> bool {
+        self.deny.iter().any(|p| p.matches(node))
     }
 }
 
