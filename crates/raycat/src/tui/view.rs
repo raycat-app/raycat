@@ -574,8 +574,8 @@ mod tests {
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::style::{Color, Modifier};
     use raycat_proto::{
-        CurrentNode, Event, Mode, Node, NodeStatus, Nodes, SettingItem, SettingValue, SettingsView,
-        Status, XHTTP_PROVIDER,
+        CurrentNode, Event, Mode, Node, NodeCheck, NodeStatus, Nodes, SettingItem, SettingValue,
+        SettingsView, Status, XHTTP_PROVIDER,
     };
 
     use super::super::app::{Confirm, Edit, Msg, Setting, Snapshot, Tab};
@@ -597,6 +597,10 @@ mod tests {
             last_error: None,
             selected: false,
             pinned: false,
+            protocol: None,
+            transport: None,
+            security: None,
+            checks: Vec::new(),
             uplink_bytes: Some(10 * 1024),
             downlink_bytes: Some(200 * 1024),
         }
@@ -1209,6 +1213,39 @@ mod tests {
         ] {
             assert!(has_line(&lines, word), "{word}: {lines:?}");
         }
+    }
+
+    #[test]
+    fn the_node_details_show_protocol_security_and_the_last_checks() {
+        let mut nodes = sample_nodes();
+        nodes[0].protocol = Some("vless".to_owned());
+        nodes[0].transport = Some("xhttp".to_owned());
+        nodes[0].security = Some("reality".to_owned());
+        nodes[0].checks = vec![
+            NodeCheck {
+                at: NOW - 120,
+                alive: true,
+                latency_ms: Some(31),
+            },
+            NodeCheck {
+                at: NOW - 60,
+                alive: false,
+                latency_ms: None,
+            },
+        ];
+        let mut app = app_with(sample_status(), nodes);
+        on_nodes(&mut app);
+        press(&mut app, KeyCode::Enter);
+        let lines = screen(&mut app, 100, 30);
+        assert!(
+            has_line(
+                &lines,
+                "Протокол: vless, транспорт: xhttp, безопасность: reality"
+            ),
+            "{lines:?}"
+        );
+        assert!(has_line(&lines, "31 мс"), "{lines:?}");
+        assert!(has_line(&lines, "сбой"), "{lines:?}");
     }
 
     #[test]

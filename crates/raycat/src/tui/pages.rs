@@ -3,7 +3,7 @@
 //! в `App::hits` уже после рисования, чтобы не держать заимствования на время цикла.
 
 use jiff::tz::TimeZone;
-use raycat_proto::{Node, NodeStatus, SubscriptionStatus};
+use raycat_proto::{Node, NodeCheck, NodeStatus, SubscriptionStatus};
 
 use super::app::{App, Hit, InputMode, LEVELS, Link, Setting, SortBy, Target};
 use super::canvas::{Canvas, GAP, Seg, highlight, wrap};
@@ -390,6 +390,16 @@ fn node_details(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
             0,
         )],
         vec![Seg::new(
+            format!(
+                "Протокол: {}, транспорт: {}, безопасность: {}",
+                node.protocol.as_deref().unwrap_or("—"),
+                node.transport.as_deref().unwrap_or("—"),
+                security_text(node.security.as_deref())
+            ),
+            Tone::Plain,
+            0,
+        )],
+        vec![Seg::new(
             format!("Причина: {}", reason.unwrap_or("нет")),
             reason_tone,
             0,
@@ -406,6 +416,7 @@ fn node_details(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
         )],
         vec![Seg::new("Ошибка полностью:", Tone::Dim, 1)],
     ];
+    lines.extend(check_lines(node, app.now, width));
     let error = node.last_error.as_deref().unwrap_or("—");
     for line in wrap(error, width, 4) {
         lines.push(vec![Seg::new(line, Tone::Dim, 0)]);
@@ -427,6 +438,40 @@ fn node_details(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
         speed_width,
         Target::SpeedNode,
     ));
+}
+
+/// Безопасность для показа: без шифрования в настройках xray пишут `none`, в строке — «нет».
+fn security_text(security: Option<&str>) -> &str {
+    match security {
+        None | Some("none") => "нет",
+        Some(other) => other,
+    }
+}
+
+/// Последние проверки узла одной строкой с переносом: «2 мин назад: 31 мс · …».
+fn check_lines(node: &Node, now: u64, width: usize) -> Vec<Vec<Seg>> {
+    let text = if node.checks.is_empty() {
+        "ещё не проверялся".to_owned()
+    } else {
+        node.checks
+            .iter()
+            .map(|check| check_text(check, now))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    };
+    wrap(&text, width, 3)
+        .into_iter()
+        .map(|line| vec![Seg::new(line, Tone::Dim, 0)])
+        .collect()
+}
+
+fn check_text(check: &NodeCheck, now: u64) -> String {
+    let when = render::ago(now, check.at);
+    if check.alive {
+        format!("{when}: {}", render::latency_text(check.latency_ms))
+    } else {
+        format!("{when}: сбой")
+    }
 }
 
 /// Колонки в порядке важности: на узком экране последние пропадают первыми. Скорость

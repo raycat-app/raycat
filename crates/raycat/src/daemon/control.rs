@@ -1,6 +1,7 @@
 //! Команды API, выбор узла и состояние для API: часть `Daemon`, которой нужны
 //! поля родительского модуля.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use raycat_config::Mode;
@@ -8,12 +9,13 @@ use raycat_proto::{
     CurrentNode, Event, Mode as ApiMode, Node as ApiNode, NodeStatus, Nodes, Pinned, Status,
     SubscriptionStatus, UpdateResult, Updates, XrayStatus,
 };
-use raycat_select::{Decision, Reason, Status as SelectStatus};
+use raycat_select::{Decision, Health, Reason, Status as SelectStatus};
 use raycat_subscription::Usage;
 use raycat_xray_api::{ApiError, XrayApi};
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 
+use super::details;
 use super::{Daemon, PendingUpdate, Restart, Sub};
 use crate::api::{Command, Refusal};
 use crate::log::{self, Level, info, warn};
@@ -180,8 +182,48 @@ impl Daemon {
         self.api_problem.clear();
         self.last_api_ok = Some(Instant::now());
         let health = selection::health(&statuses);
+        self.record_checks(&health);
         let decision = self.selector.step(selection::now(), &health);
         self.apply_decision(&api, decision).await;
+    }
+
+    /// Записывает новые проверки в историю узлов. Узел ищется по тегу xray, а история
+    /// хранится по имени узла: при пересборке конфига теги сдвигаются, история остаётся.
+    pub(super) fn record_checks(&mut self, health: &[Health]) {
+        let ids: HashMap<String, String> = self
+            .selector
+            .snapshot(selection::now())
+            .nodes
+            .into_iter()
+            .map(|node| (node.tag, node.id))
+            .collect();
+        for check in health {
+            if let Some(id) = ids.get(&check.tag) {
+                self.checks
+                    .record(id, check.checked_at, check.alive, check.latency_ms);
+            }
+        }
+    }
+
+    /// Подробности всех узлов по идентификатору «подписка/имя». У одинаковых имён в одной
+    /// подписке идентификатор получает номер, как в выборе узла.
+    fn node_details(&self) -> HashMap<String, details::Details> {
+        let mut infos = HashMap::new();
+        for sub in &self.subs {
+            let mut seen: HashMap<String, u32> = HashMap::new();
+            for node in &sub.nodes {
+                let base = selection::node_id(sub.source.name(), &node.name);
+                let count = seen.entry(base.clone()).or_insert(0);
+                *count += 1;
+                let id = if *count == 1 {
+                    base
+                } else {
+                    format!("{base} ({count})")
+                };
+                infos.insert(id, details::details(node));
+            }
+        }
+        infos
     }
 
     async fn connect_api(&mut self) -> Option<XrayApi> {
@@ -345,27 +387,42 @@ impl Daemon {
 
     pub(super) fn nodes_view(&self) -> Nodes {
         let snapshot = self.selector.snapshot(selection::now());
+        let infos = self.node_details();
         let nodes = snapshot
             .nodes
             .into_iter()
-            .map(|node| ApiNode {
-                id: node.id,
-                subscription: node.subscription,
-                name: node.name,
-                tag: node.tag,
-                status: match node.status {
-                    SelectStatus::Alive => NodeStatus::Alive,
-                    SelectStatus::Dead => NodeStatus::Dead,
-                    SelectStatus::Unknown => NodeStatus::Unknown,
-                },
-                latency_ms: node.latency_ms,
-                failures: node.failures,
-                alive_for_secs: node.alive_for_secs,
-                last_error: node.last_error,
-                selected: node.selected,
-                pinned: node.pinned,
-                uplink_bytes: None,
-                downlink_bytes: None,
+            .map(|node| {
+                let info = infos.get(&node.id);
+                let secrets: &[String] = info.map_or(&[], |info| info.secrets.as_slice());
+                // Адрес сервера из текста ошибки убирается до того, как ответ уйдёт наружу.
+                let last_error = node
+                    .last_error
+                    .as_deref()
+                    .map(|text| details::mask(text, secrets));
+                let checks = self.checks.of(&node.id);
+                ApiNode {
+                    id: node.id,
+                    subscription: node.subscription,
+                    name: node.name,
+                    tag: node.tag,
+                    status: match node.status {
+                        SelectStatus::Alive => NodeStatus::Alive,
+                        SelectStatus::Dead => NodeStatus::Dead,
+                        SelectStatus::Unknown => NodeStatus::Unknown,
+                    },
+                    latency_ms: node.latency_ms,
+                    failures: node.failures,
+                    alive_for_secs: node.alive_for_secs,
+                    last_error,
+                    selected: node.selected,
+                    pinned: node.pinned,
+                    uplink_bytes: None,
+                    downlink_bytes: None,
+                    protocol: info.and_then(|info| info.protocol.clone()),
+                    transport: info.and_then(|info| info.transport.clone()),
+                    security: info.and_then(|info| info.security.clone()),
+                    checks,
+                }
             })
             .collect();
         Nodes {

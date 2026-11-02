@@ -110,6 +110,28 @@ pub struct Node {
     /// Трафик с запуска xray; `None`, если счётчики недоступны.
     pub uplink_bytes: Option<u64>,
     pub downlink_bytes: Option<u64>,
+    /// Протокол выхода: `vless`, `vmess`, `trojan`, `shadowsocks`…
+    #[serde(default)]
+    pub protocol: Option<String>,
+    /// Транспорт: `tcp`, `ws`, `grpc`, `xhttp`…
+    #[serde(default)]
+    pub transport: Option<String>,
+    /// Безопасность соединения: `reality`, `tls` или `none`.
+    #[serde(default)]
+    pub security: Option<String>,
+    /// Последние проверки узла, от старой к новой; не больше восьми.
+    #[serde(default)]
+    pub checks: Vec<NodeCheck>,
+}
+
+/// Одна проверка узла. Адреса и ключи сюда не попадают: только время, результат и задержка.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeCheck {
+    /// Unix-время проверки.
+    pub at: u64,
+    pub alive: bool,
+    /// Задержка; только у живых.
+    pub latency_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

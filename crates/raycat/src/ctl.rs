@@ -418,6 +418,10 @@ mod tests {
             last_error: None,
             selected: false,
             pinned: false,
+            protocol: None,
+            transport: None,
+            security: None,
+            checks: Vec::new(),
             uplink_bytes: None,
             downlink_bytes: None,
         }

@@ -6,9 +6,11 @@ mod control;
 mod reload;
 
 pub(crate) use self::reload::ConfigFile;
+mod details;
 mod measure;
 mod report;
 
+use std::collections::HashSet;
 use std::fs;
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::PathBuf;
@@ -296,6 +298,8 @@ struct Daemon {
     pin_problem: Latch,
     selection_problem: Latch,
     guard_problem: Latch,
+    /// История проверок узлов по имени: не больше восьми записей на узел.
+    checks: details::Checks,
 }
 
 impl Daemon {
@@ -378,6 +382,7 @@ impl Daemon {
             pin_problem: Latch::default(),
             selection_problem: Latch::default(),
             guard_problem: Latch::default(),
+            checks: details::Checks::default(),
         })
     }
 
@@ -482,8 +487,13 @@ impl Daemon {
             );
         }
         let first = self.applied.is_none();
-        self.selector
-            .set_candidates(selection::candidates(&self.config, &plan.tags));
+        let candidates = selection::candidates(&self.config, &plan.tags);
+        let live: HashSet<String> = candidates
+            .iter()
+            .map(|candidate| candidate.id.clone())
+            .collect();
+        self.checks.keep(&live);
+        self.selector.set_candidates(candidates);
         // Теги узлов в запущенном xray теперь не те: выбор ждёт его перезапуска.
         self.xray_current = false;
         self.applied = Some(plan.json);
@@ -1519,6 +1529,77 @@ mod tests {
         assert_eq!(daemon.config.subscriptions[0].name, "b");
         let names: Vec<&str> = daemon.subs.iter().map(|sub| sub.source.name()).collect();
         assert_eq!(names, ["b", "a"]);
+    }
+
+    fn tag_of(daemon: &Daemon, id: &str) -> String {
+        daemon
+            .selector
+            .snapshot(selection::now())
+            .nodes
+            .iter()
+            .find(|node| node.id == id)
+            .map(|node| node.tag.clone())
+            .unwrap()
+    }
+
+    fn check_at(tag: &str, secs: u64, alive: bool) -> Health {
+        Health {
+            tag: tag.to_owned(),
+            alive,
+            latency_ms: 31,
+            checked_at: Duration::from_secs(secs),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn a_node_shows_its_protocol_and_checks_but_not_the_server_address() {
+        let temp = TempDir::new("node-details");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished("a", applied(ONE));
+        let tag = tag_of(&daemon, "a/One");
+        let failed = Health {
+            error: Some("dial tcp 203.0.113.5:8388: i/o timeout (secret)".to_owned()),
+            ..check_at(&tag, 100, false)
+        };
+        daemon.record_checks(std::slice::from_ref(&failed));
+        let _ = daemon
+            .selector
+            .step(selection::now(), std::slice::from_ref(&failed));
+        let view = daemon.nodes_view();
+        let node = view.nodes.iter().find(|node| node.id == "a/One").unwrap();
+        assert_eq!(node.protocol.as_deref(), Some("shadowsocks"));
+        assert_eq!(node.transport.as_deref(), Some("tcp"));
+        assert_eq!(node.security.as_deref(), Some("none"));
+        assert_eq!(node.checks.len(), 1);
+        let error = node.last_error.clone().unwrap();
+        assert!(error.contains("i/o timeout"));
+        let json = serde_json::to_string(&view).unwrap();
+        for hidden in ["203.0.113.5", "8388", "secret"] {
+            assert!(
+                !json.contains(hidden),
+                "в ответ API попал адрес, порт или пароль"
+            );
+        }
+    }
+
+    #[test]
+    fn a_node_keeps_its_checks_through_a_reorder_and_loses_them_when_it_goes() {
+        let temp = TempDir::new("node-history-life");
+        let mut daemon = daemon_with(&["a", "b"], "", &temp);
+        daemon.load_caches();
+        daemon.finished("a", applied(ONE));
+        daemon.finished("b", applied(TWO));
+        let tag = tag_of(&daemon, "a/One");
+        daemon.record_checks(&[check_at(&tag, 10, true)]);
+        let reversed = Config::from_toml_str(&subs_text(&["b", "a"]), &Env::new()).unwrap();
+        daemon.apply_config(&reversed).unwrap();
+        let tag = tag_of(&daemon, "a/One");
+        daemon.record_checks(&[check_at(&tag, 20, true)]);
+        assert_eq!(daemon.checks.of("a/One").len(), 2);
+        daemon.finished("a", applied(TWO));
+        assert_eq!(daemon.checks.of("a/One").len(), 0);
     }
 
     fn mark_in_flight(daemon: &mut Daemon, name: &str) {
