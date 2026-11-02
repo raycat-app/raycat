@@ -8,8 +8,8 @@ use raycat_proto::{Node, NodeCheck, NodeStatus, SubscriptionStatus};
 use super::app::{App, Hit, InputMode, LEVELS, Setting, SortBy, Target};
 use super::canvas::{Canvas, GAP, Seg, highlight, wrap};
 use super::view::{
-    delay_tone, speed_label, sub_phrase, subscription_title, traffic_seg, tunnel_hint, tunnel_seg,
-    xray_segs,
+    delay_tone, is_expired, speed_label, sub_phrase, subscription_title, traffic_seg, tunnel_hint,
+    tunnel_seg, xray_segs,
 };
 use crate::names::{NameStyle, country_code, display_name, node_reason, node_reason_short};
 use crate::render;
@@ -169,11 +169,13 @@ fn subscription_brief(canvas: &mut Canvas<'_>, app: &App, y: usize, rows: usize,
         if let Some(used) = sub.used_bytes {
             segs.push(traffic_seg(used, sub.total_bytes));
         }
-        if let Some(expire) = sub.expire {
+        if let Some(expire) = sub.expire
+            && !is_expired(sub, app.now)
+        {
             let (text, tone) = render::expiry_text(expire, app.now, zone);
             segs.push(Seg::new(text, tone, 2));
         }
-        let (phrase, tone) = sub_phrase(sub, app.now);
+        let (phrase, tone) = sub_phrase(sub, app.now, zone);
         let phrase = if sub.note.is_none() && sub.last_error.is_some() {
             "ошибка — подробнее во вкладке «Подписки»".to_owned()
         } else {
@@ -809,11 +811,13 @@ fn sub_list(
         if let Some(used) = sub.used_bytes {
             segs.push(traffic_seg(used, sub.total_bytes));
         }
-        if let Some(expire) = sub.expire {
+        if let Some(expire) = sub.expire
+            && !is_expired(sub, app.now)
+        {
             let (text, tone) = render::expiry_text(expire, app.now, zone);
             segs.push(Seg::new(text, tone, 2));
         }
-        let (phrase, tone) = sub_phrase(sub, app.now);
+        let (phrase, tone) = sub_phrase(sub, app.now, zone);
         segs.push(Seg::new(phrase, tone, 0));
         inner.line(index, 0, segs);
         found.push(Hit::new(0, y0 + 1 + index, full, Target::SubRow(index)));
@@ -873,7 +877,7 @@ fn sub_details(
         ),
         None => "ещё не получена".to_owned(),
     };
-    let (phrase, phrase_tone) = sub_phrase(sub, now);
+    let (phrase, phrase_tone) = sub_phrase(sub, now, zone);
     let mut lines: Vec<Vec<Seg>> = vec![
         vec![
             Seg::new(format!("Провайдер: {provider}"), Tone::Plain, 0),

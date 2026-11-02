@@ -99,7 +99,10 @@ pub fn apply(text: &str, changes: &[Change]) -> Result<String, Error> {
                 text = uncomment(&text, table, change.key, &value.to_string());
             }
             (Target::Table(table), None) => text = comment_out(&text, table, change.key),
-            (Target::Subscription(_), _) => {}
+            (Target::Subscription(name), None) => {
+                text = comment_out_subscription(&text, name, change.key)?;
+            }
+            (Target::Subscription(_), Some(_)) => {}
         }
     }
     let mut doc: DocumentMut = text
@@ -250,12 +253,91 @@ fn comment_out(text: &str, table: &str, key: &str) -> String {
             continue;
         }
         if section == table && starts_key(&trimmed, key) {
-            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-            *line = format!("{indent}# {trimmed}");
+            comment(line);
             break;
         }
     }
     join(text, &lines)
+}
+
+/// То же для ключа подписки `name`: её строка становится образцом, соседние строки и
+/// комментарии остаются. Массив на несколько строк закомментируется целиком.
+fn comment_out_subscription(text: &str, name: &str, key: &str) -> Result<String, Error> {
+    let doc: DocumentMut = text
+        .parse()
+        .map_err(|error: toml_edit::TomlError| Error::Parse(error.to_string()))?;
+    let tables = doc
+        .get("subscription")
+        .and_then(Item::as_array_of_tables)
+        .ok_or_else(|| Error::NoSubscription(name.to_owned()))?;
+    let index = tables
+        .iter()
+        .enumerate()
+        .position(|(index, table)| subscription_name(index, table) == name)
+        .ok_or_else(|| Error::NoSubscription(name.to_owned()))?;
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    let headers: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.trim_start().starts_with("[[subscription]]"))
+        .map(|(number, _)| number)
+        .collect();
+    if headers.len() != tables.len() {
+        return Err(Error::Parse(
+            "заголовки [[subscription]] записаны нестандартно, маска не снята".to_owned(),
+        ));
+    }
+    let Some(&header) = headers.get(index) else {
+        return Err(Error::NoSubscription(name.to_owned()));
+    };
+    let end = lines[header + 1..]
+        .iter()
+        .position(|line| line.trim_start().starts_with('['))
+        .map_or(lines.len(), |offset| header + 1 + offset);
+    let Some(start) = (header + 1..end).find(|&number| starts_key(lines[number].trim(), key))
+    else {
+        return Ok(join(text, &lines));
+    };
+    let mut last = start;
+    if opens_array(lines[start].trim()) {
+        while last + 1 < end {
+            last += 1;
+            if closes_array(lines[last].trim()) {
+                break;
+            }
+        }
+    }
+    for line in &mut lines[start..=last] {
+        comment(line);
+    }
+    Ok(join(text, &lines))
+}
+
+/// Строка становится комментарием, отступ остаётся на месте.
+fn comment(line: &mut String) {
+    let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+    let trimmed = line.trim().to_owned();
+    *line = format!("{indent}# {trimmed}");
+}
+
+/// Значение начато массивом `[`, который не закрыт на этой строке.
+fn opens_array(trimmed: &str) -> bool {
+    trimmed
+        .split_once('=')
+        .is_some_and(|(_, value)| value.trim_start().starts_with('[') && !closes_array(value))
+}
+
+/// В строке есть `]` вне строки в кавычках: массив закрыт.
+fn closes_array(text: &str) -> bool {
+    let mut quoted = false;
+    for c in text.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            ']' if !quoted => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Переставляет блок `[[subscription]]` с именем `name` на место `to` (с нуля). Блоки идут
@@ -364,13 +446,20 @@ pub fn write(path: &Path, text: &str) -> Result<(), Error> {
     result
 }
 
-/// Можно ли записать файл настроек. Проверка та же, что у `write`, но ничего не пишется.
+/// Можно ли записать файл настроек. Проверка та же, что у `write`: в каталоге создаётся и
+/// сразу удаляется временный файл, так видны права каталога и файловая система только для чтения.
 pub fn writable(path: &Path) -> Result<(), Error> {
-    writable_target(path).map(|_| ())
+    let (target, _) = writable_target(path)?;
+    let tmp = target.with_extension("raycat-tmp");
+    let _ = fs::remove_file(&tmp);
+    open_tmp(&tmp).map_err(|error| classify(&target, &error))?;
+    fs::remove_file(&tmp).map_err(|error| classify(&target, &error))
 }
 
 /// Настоящий путь файла (симлинк раскрыт) и его метаданные. Файл только для чтения — ошибка.
+/// Файл на другом устройстве, чем его каталог, смонтирован отдельно: заменить его нельзя.
 fn writable_target(path: &Path) -> Result<(PathBuf, fs::Metadata), Error> {
+    use std::os::unix::fs::MetadataExt as _;
     let target = fs::canonicalize(path)
         .map_err(|error| Error::Io(format!("{}: {error}", path.display())))?;
     let meta = fs::metadata(&target)
@@ -378,17 +467,31 @@ fn writable_target(path: &Path) -> Result<(PathBuf, fs::Metadata), Error> {
     if meta.permissions().readonly() {
         return Err(Error::ReadOnly(target.display().to_string()));
     }
+    let dir = target.parent().unwrap_or_else(|| Path::new("."));
+    let dir_meta =
+        fs::metadata(dir).map_err(|error| Error::Io(format!("{}: {error}", dir.display())))?;
+    if single_file_mount(meta.dev(), dir_meta.dev()) {
+        return Err(Error::SingleFileMount);
+    }
     Ok((target, meta))
 }
 
-/// Код ошибки `rename` (Linux): EBUSY и EXDEV бывают, когда файл смонтирован в контейнер
-/// отдельным файлом и его нельзя заменить.
+/// Файл и его каталог на разных устройствах: так выглядит одиночный файл, смонтированный в
+/// контейнер (`-v ./config.toml:/etc/raycat/config.toml`). `rename` поверх него не пройдёт.
+fn single_file_mount(file_dev: u64, dir_dev: u64) -> bool {
+    file_dev != dir_dev
+}
+
+/// Код ошибки (Linux): EBUSY и EXDEV бывают, когда файл смонтирован в контейнер отдельным
+/// файлом и его нельзя заменить, EROFS — файловая система только для чтения.
 const EBUSY: i32 = 16;
 const EXDEV: i32 = 18;
+const EROFS: i32 = 30;
 
 fn classify(target: &Path, error: &io::Error) -> Error {
     match error.raw_os_error() {
         Some(EBUSY | EXDEV) => Error::SingleFileMount,
+        Some(EROFS) => Error::ReadOnly(target.display().to_string()),
         _ if error.kind() == io::ErrorKind::PermissionDenied => {
             Error::ReadOnly(target.display().to_string())
         }
@@ -702,5 +805,91 @@ mod tests {
         assert!(matches!(busy, Error::SingleFileMount));
         let cross = classify(target, &io::Error::from_raw_os_error(18));
         assert!(cross.to_string().contains("смонтирован отдельным файлом"));
+    }
+
+    #[test]
+    fn a_file_on_another_device_than_its_directory_is_a_single_file_mount() {
+        assert!(single_file_mount(7, 3));
+        assert!(!single_file_mount(3, 3));
+    }
+
+    #[test]
+    fn a_read_only_filesystem_says_the_file_is_read_only() {
+        let target = Path::new("/etc/raycat/config.toml");
+        let error = classify(target, &io::Error::from_raw_os_error(30));
+        assert!(matches!(error, Error::ReadOnly(_)), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_that_takes_no_new_file_is_refused_before_the_save() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = scratch("dir-readonly");
+        let path = dir.join("config.toml");
+        fs::write(&path, "old = 1\n").unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+        // Root пишет и в каталог без прав: тогда отказа нет и проверять нечего.
+        let privileged = open_tmp(&dir.join("probe")).is_ok();
+        let _ = fs::remove_file(dir.join("probe"));
+        if !privileged {
+            assert!(matches!(writable(&path), Err(Error::ReadOnly(_))));
+        }
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "old = 1\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_emptied_mask_becomes_a_commented_sample_and_its_neighbours_stay() {
+        let text = "[routing]\nru_direct = true\n\n[[subscription]]\nname = \"main\"\nurl = \"https://a.example.com/x\"\n# маски\ndeny = [\"*Info*\"]   # скрыть\npriority = [\"*NL*\"]\n\n[xray]\npath = \"/x\"\n";
+        let change = Change {
+            target: Target::Subscription("main".to_owned()),
+            key: "deny",
+            value: None,
+        };
+        let out = apply(text, &[change]).unwrap();
+        assert_eq!(
+            out,
+            "[routing]\nru_direct = true\n\n[[subscription]]\nname = \"main\"\nurl = \"https://a.example.com/x\"\n# маски\n# deny = [\"*Info*\"]   # скрыть\npriority = [\"*NL*\"]\n\n[xray]\npath = \"/x\"\n"
+        );
+    }
+
+    #[test]
+    fn an_emptied_multi_line_mask_is_commented_out_whole() {
+        let text = "[[subscription]]\nname = \"main\"\ndeny = [\n  \"*Info*\",\n  \"*[NL]*\",\n]\npriority = [\"*NL*\"]\n";
+        let change = Change {
+            target: Target::Subscription("main".to_owned()),
+            key: "deny",
+            value: None,
+        };
+        let out = apply(text, &[change]).unwrap();
+        assert_eq!(
+            out,
+            "[[subscription]]\nname = \"main\"\n# deny = [\n  # \"*Info*\",\n  # \"*[NL]*\",\n# ]\npriority = [\"*NL*\"]\n"
+        );
+    }
+
+    #[test]
+    fn an_emptied_mask_that_is_not_in_the_file_changes_nothing() {
+        let text = "[[subscription]]\nname = \"main\"\nurl = \"https://a.example.com/x\"\n";
+        let change = Change {
+            target: Target::Subscription("main".to_owned()),
+            key: "deny",
+            value: None,
+        };
+        assert_eq!(apply(text, &[change]).unwrap(), text);
+    }
+
+    #[test]
+    fn an_emptied_mask_of_an_unknown_subscription_is_refused() {
+        let change = Change {
+            target: Target::Subscription("nope".to_owned()),
+            key: "deny",
+            value: None,
+        };
+        assert!(matches!(
+            apply(EXAMPLE, &[change]),
+            Err(Error::NoSubscription(_))
+        ));
     }
 }
