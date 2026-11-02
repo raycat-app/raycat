@@ -14,8 +14,8 @@ use raycat_proto::{
     SpeedtestProgress, SpeedtestResult, Status, Updates,
 };
 
-use raycat_config::{Pattern, escape_literal};
 use raycat_config::names::without_code;
+use raycat_config::{Pattern, escape_literal};
 
 use crate::names::{NameStyle, display_name};
 use crate::render;
