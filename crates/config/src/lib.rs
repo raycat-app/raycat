@@ -21,7 +21,7 @@ pub use model::{
     Mode, Pin, Platform, ProxyAuth, Routing, Rule, Secret, Selection, Subscription, TcpCongestion,
     Xray,
 };
-pub use pattern::Pattern;
+pub use pattern::{Pattern, escape_literal};
 pub use show::effective;
 
 #[cfg(feature = "schema")]

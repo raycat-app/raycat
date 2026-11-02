@@ -21,7 +21,7 @@
 <text x="2904" y="930" textLength="1092" xml:space="preserve" fill="#a6e3a1">kill switch ●</text>
 <text x="6768" y="930" textLength="1932" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">время работы 3 ч 12 мин</text>
 <text x="300" y="1110" textLength="1680" xml:space="preserve" fill="#cdd6f4" font-weight="bold">[d] Скрыть мёртвые ✗</text>
-<text x="1980" y="1110" textLength="4452" xml:space="preserve" fill="#cdd6f4">  [s] Подписка: все ▾  [/] Поиск: —  [h] Скрытые: нет</text>
+<text x="1980" y="1110" textLength="6720" xml:space="preserve" fill="#cdd6f4">  [s] Подписка: все ▾  [/] Поиск: —  [h] Скрытые: нет  [e] Исключённые: показыва</text>
 <text x="300" y="1290" textLength="168" xml:space="preserve" fill="#585b70">╭─</text>
 <text x="552" y="1290" textLength="1092" xml:space="preserve" fill="#cdd6f4" font-weight="bold">Узлы · 9 из 9</text>
 <text x="1644" y="1290" textLength="7056" xml:space="preserve" fill="#585b70"> ──────────────────────────────────────────────────────────────────────────────────╮</text>
@@ -124,11 +124,11 @@
 <text x="3996" y="5970" textLength="672" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">скорость</text>
 <text x="4836" y="5970" textLength="84" xml:space="preserve" fill="#cdd6f4" font-weight="bold">d</text>
 <text x="5004" y="5970" textLength="588" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">мёртвые</text>
-<text x="5760" y="5970" textLength="84" xml:space="preserve" fill="#cdd6f4" font-weight="bold">/</text>
-<text x="5928" y="5970" textLength="420" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">поиск</text>
-<text x="6516" y="5970" textLength="84" xml:space="preserve" fill="#cdd6f4" font-weight="bold">?</text>
-<text x="6684" y="5970" textLength="588" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">справка</text>
-<text x="7440" y="5970" textLength="84" xml:space="preserve" fill="#cdd6f4" font-weight="bold">q</text>
-<text x="7608" y="5970" textLength="420" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">выход</text>
+<text x="5760" y="5970" textLength="84" xml:space="preserve" fill="#cdd6f4" font-weight="bold">x</text>
+<text x="5928" y="5970" textLength="756" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">исключить</text>
+<text x="6852" y="5970" textLength="84" xml:space="preserve" fill="#cdd6f4" font-weight="bold">?</text>
+<text x="7020" y="5970" textLength="588" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">справка</text>
+<text x="7776" y="5970" textLength="84" xml:space="preserve" fill="#cdd6f4" font-weight="bold">q</text>
+<text x="7944" y="5970" textLength="420" xml:space="preserve" fill="#cdd6f4" fill-opacity="0.6">выход</text>
 </g>
 </svg>
