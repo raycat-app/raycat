@@ -238,7 +238,7 @@ fn comment_out(text: &str, table: &str, key: &str) -> String {
     for line in &mut lines {
         let trimmed = line.trim().to_owned();
         if trimmed.starts_with('[') {
-            section = header_name(&trimmed).unwrap_or_default().to_owned();
+            header_name(&trimmed).unwrap_or_default().clone_into(&mut section);
             continue;
         }
         if section == table && starts_key(&trimmed, key) {

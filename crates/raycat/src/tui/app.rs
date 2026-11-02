@@ -3167,7 +3167,7 @@ mod tests {
             result: Err("тест".to_owned()),
         });
         press(&mut app, KeyCode::Enter);
-        app.field = "4".to_owned();
+        app.field = String::from("4");
         let edit = checked_edit(press(&mut app, KeyCode::Enter));
         assert_eq!(
             edit.changes,

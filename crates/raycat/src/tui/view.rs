@@ -1084,6 +1084,8 @@ mod tests {
                     "по умолчанию",
                 ),
                 setting_item("selection", "check_interval", text("30s"), "по умолчанию"),
+                setting_item("selection", "switch_gain", text("150ms"), "по умолчанию"),
+                setting_item("selection", "return_delay", text("5m"), "по умолчанию"),
                 setting_item("selection", "failures", SettingValue::Number(3), "из файла"),
                 setting_item(
                     "xray",
