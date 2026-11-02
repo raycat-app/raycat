@@ -30,6 +30,8 @@ pub enum Error {
     ReadOnly(String),
     /// Файл смонтирован отдельным файлом (Docker): его нельзя заменить через rename.
     SingleFileMount,
+    /// Не удалось передать владельца и группу исходного файла: файл не заменён.
+    Owner(String),
     Io(String),
 }
 
@@ -45,6 +47,10 @@ impl fmt::Display for Error {
             Self::SingleFileMount => write!(
                 f,
                 "файл настроек смонтирован отдельным файлом, его нельзя заменить: смонтируйте каталог или правьте файл на хосте и выполните raycat reload"
+            ),
+            Self::Owner(text) => write!(
+                f,
+                "не удалось сохранить владельца файла настроек, файл не изменён: {text}"
             ),
             Self::Io(text) => write!(f, "не удалось записать файл настроек: {text}"),
         }
@@ -351,13 +357,11 @@ pub fn write(path: &Path, text: &str) -> Result<(), Error> {
     let tmp = target.with_extension("raycat-tmp");
     // Остаток прошлого сбоя мешал бы создать tmp. remove_file не идёт по ссылке.
     let _ = fs::remove_file(&tmp);
-    match replace(&target, &tmp, text, &meta) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            let _ = fs::remove_file(&tmp);
-            Err(classify(&target, &error))
-        }
+    let result = replace(&target, &tmp, text, &meta);
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
     }
+    result
 }
 
 /// Можно ли записать файл настроек. Проверка та же, что у `write`, но ничего не пишется.
@@ -402,15 +406,31 @@ fn open_tmp(tmp: &Path) -> io::Result<fs::File> {
         .open(tmp)
 }
 
-fn replace(target: &Path, tmp: &Path, text: &str, meta: &fs::Metadata) -> io::Result<()> {
-    let mut file = open_tmp(tmp)?;
-    file.write_all(text.as_bytes())?;
-    file.sync_all()?;
+fn replace(target: &Path, tmp: &Path, text: &str, meta: &fs::Metadata) -> Result<(), Error> {
+    let fail = |error: io::Error| classify(target, &error);
+    let mut file = open_tmp(tmp).map_err(fail)?;
+    file.write_all(text.as_bytes()).map_err(fail)?;
+    file.sync_all().map_err(fail)?;
     drop(file);
-    fs::set_permissions(tmp, meta.permissions())?;
-    fs::rename(tmp, target)?;
+    keep_owner(tmp, meta)
+        .map_err(|error| Error::Owner(format!("{}: {error}", target.display())))?;
+    fs::set_permissions(tmp, meta.permissions()).map_err(fail)?;
+    fs::rename(tmp, target).map_err(fail)?;
     let dir = target.parent().unwrap_or_else(|| Path::new("."));
-    fs::File::open(dir)?.sync_all()
+    fs::File::open(dir)
+        .and_then(|dir| dir.sync_all())
+        .map_err(fail)
+}
+
+/// Временный файл принадлежит процессу. Владелец и группа исходного файла переходят на него,
+/// иначе после замены файл настроек достаётся пользователю процесса (root в службе).
+fn keep_owner(tmp: &Path, meta: &fs::Metadata) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt as _;
+    let made = fs::metadata(tmp)?;
+    if made.uid() == meta.uid() && made.gid() == meta.gid() {
+        return Ok(());
+    }
+    std::os::unix::fs::chown(tmp, Some(meta.uid()), Some(meta.gid()))
 }
 
 #[cfg(test)]
@@ -593,6 +613,24 @@ mod tests {
         write(&path, "new = 2\n").unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "new = 2\n");
         assert!(!dir.join("config.raycat-tmp").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_write_keeps_the_owner_and_the_mode() {
+        use std::os::unix::fs::MetadataExt as _;
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = scratch("owner");
+        let path = dir.join("config.toml");
+        fs::write(&path, "old = 1\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        let before = fs::metadata(&path).unwrap();
+        write(&path, "new = 2\n").unwrap();
+        let after = fs::metadata(&path).unwrap();
+        assert_eq!((after.uid(), after.gid()), (before.uid(), before.gid()));
+        assert_eq!(after.mode() & 0o777, 0o640);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new = 2\n");
         let _ = fs::remove_dir_all(&dir);
     }
 
