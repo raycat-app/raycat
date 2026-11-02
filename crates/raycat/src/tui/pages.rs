@@ -431,17 +431,7 @@ fn node_details(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
         room,
         vec![Seg::new("Узел · подробности", Tone::Bold, 0)],
     );
-    // Кнопки под именем не уезжают: прокручивается только тело панели.
-    let rows = inner.height;
-    let body = lines.split_off(NODE_HEADER_ROWS.min(lines.len()));
-    let visible = rows.saturating_sub(NODE_HEADER_ROWS);
-    app.details_offset = app.details_offset.min(body.len().saturating_sub(visible));
-    let shown = lines
-        .into_iter()
-        .chain(body.into_iter().skip(app.details_offset).take(visible));
-    for (row, segs) in shown.take(rows).enumerate() {
-        inner.line(row, 0, segs);
-    }
+    scroll_rows(&mut inner, lines, &mut app.details_offset);
     app.hits.push(Hit::new(2, y0 + 2, pin_width, Target::Pin));
     let speed_width = display_width("[t] тест скорости");
     app.hits.push(Hit::new(
@@ -450,6 +440,21 @@ fn node_details(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
         speed_width,
         Target::SpeedNode,
     ));
+}
+
+/// Выводит строки панели. Первые `NODE_HEADER_ROWS` неподвижны (имя и кнопки), остальные
+/// идут от `offset`; смещение ограничивается концом тела, чтобы прокрутка не уходила дальше.
+fn scroll_rows(inner: &mut Canvas<'_>, mut lines: Vec<Vec<Seg>>, offset: &mut usize) {
+    let rows = inner.height;
+    let body = lines.split_off(NODE_HEADER_ROWS.min(lines.len()));
+    let visible = rows.saturating_sub(NODE_HEADER_ROWS);
+    *offset = (*offset).min(body.len().saturating_sub(visible));
+    let shown = lines
+        .into_iter()
+        .chain(body.into_iter().skip(*offset).take(visible));
+    for (row, segs) in shown.take(rows).enumerate() {
+        inner.line(row, 0, segs);
+    }
 }
 
 /// Безопасность для показа: без шифрования в настройках xray пишут `none`, в строке — «нет».
