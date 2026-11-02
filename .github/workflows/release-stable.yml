@@ -128,7 +128,7 @@ jobs:
             cat notes.md
           } >>"$GITHUB_STEP_SUMMARY"
       - name: Вход в GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -363,7 +363,7 @@ jobs:
           exit 1
       - name: Вход в GHCR
         if: ${{ env.DRY_RUN != 'true' }}
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
