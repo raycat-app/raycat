@@ -1,6 +1,6 @@
 app = "happ"
 platform = "windows"
-version = "4.5.4"
+version = "4.6.1"
 marker = "moscow-day-parity"
 user_agent = "Happ/{app_version}/{os}/{build}{marker}{tail}"
 
@@ -12,13 +12,13 @@ hwid = "windows-machine-guid"
 locale = "qt-windows"
 
 [builds.x64]
-build = "2610141139"
-tail = "02"
+build = "2610271012"
+tail = "08"
 cpu = "x86_64"
 
 [builds.arm64]
-build = "2610141146"
-tail = "02"
+build = "2610271019"
+tail = "08"
 cpu = "arm64"
 
 [[headers]]
