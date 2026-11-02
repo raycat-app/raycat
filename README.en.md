@@ -241,9 +241,15 @@ and `Settings`. Switch tabs with a click, the keys `1`–`5`, `Tab`, `Shift+Tab`
   searches. `Enter` opens node details, `p` or a double click pins the node.
 - **Subscriptions**: a list with traffic, expiry and status; `Enter` shows details and the full error.
 - **Log**: local time, long messages wrap; `w` shows only warnings and errors.
-- **Settings**: the daemon state and the "Names in labels" switch. Node names show the country code
-  instead of the flag (`🇩🇪 Германия` → `DE Германия`), so the rows do not shift in different
-  terminals. The "as is" mode shows names unchanged. The choice is saved to
+- **Settings**: the daemon's main settings as rows: name, value, source (`from file` or `default`)
+  and a short hint under the row. Pick a row with `↑` `↓` or a click. Change a value with `Enter`,
+  `Space` or a click on it; numbers and durations are typed into a field, and the log level is
+  picked by clicking the level. Before a change is saved, the TUI checks it and asks for
+  confirmation if xray will restart, and when the kill switch is turned off: `Enter` confirms,
+  `Esc` cancels. Only the daemon writes the settings file, and its comments are kept.
+  "Names in labels" is a TUI setting: node names show the country code instead of the flag
+  (`🇩🇪 Германия` → `DE Германия`), so the rows do not shift in different terminals; the "as is"
+  mode shows names unchanged. The choice and the hidden-node masks are saved to
   `$XDG_CONFIG_HOME/raycat/tui.toml` (or `~/.config/raycat/tui.toml`). Other settings are changed
   in the daemon's settings file.
 
@@ -254,7 +260,8 @@ reason and reconnects by itself.
 | --- | --- |
 | `1`–`5`, `Tab`, `←` `→` | switch tab; `Shift+Tab` goes back |
 | `↑` `↓`, `j` `k`, `PgUp` `PgDn`, `Home` `End`, `g` `G` | select a row and scroll |
-| `Enter` | node or subscription details; on "Settings", toggle the view |
+| `Enter` | node or subscription details; on "Settings", change the selected row |
+| `Space` | on "Settings", toggle the value of the row |
 | `p` | pin the selected node (on "Nodes", a double click also pins) |
 | `a` | return to automatic selection |
 | `u` | update all subscriptions (on "Subscriptions", the selected one) |

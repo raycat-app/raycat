@@ -742,6 +742,7 @@ mod tests {
     use raycat_subscription::RoutingProfile;
 
     use raycat_config::Env;
+    use raycat_proto::{SettingChange, SettingValue, SettingsPatch, XHTTP_PROVIDER};
     use raycat_select::Health;
     use raycat_subscription::analyze;
 
@@ -1286,6 +1287,7 @@ mod tests {
                 key: "failures".to_owned(),
                 value: raycat_proto::SettingValue::Number(9),
             }],
+            dry_run: false,
         };
         let reloaded = daemon.patch(request).unwrap();
         assert!(reloaded.changed);
@@ -1316,6 +1318,7 @@ mod tests {
                 key: "failures".to_owned(),
                 value: raycat_proto::SettingValue::Text("много".to_owned()),
             }],
+            dry_run: false,
         };
         assert!(matches!(
             daemon.patch(request),
@@ -1342,7 +1345,123 @@ mod tests {
                 .find(|item| item.key == key)
                 .map(|item| item.source.clone())
         };
-        assert_eq!(source("failures").as_deref(), Some("файл"));
+        assert_eq!(source("failures").as_deref(), Some("из файла"));
         assert_eq!(source("ru_direct").as_deref(), Some("по умолчанию"));
+        let connections = view
+            .items
+            .iter()
+            .find(|item| item.key == "xhttp_connections")
+            .unwrap();
+        assert_eq!(
+            connections.value,
+            raycat_proto::SettingValue::Text(raycat_proto::XHTTP_PROVIDER.to_owned())
+        );
+        assert_eq!(connections.source, "по умолчанию");
+        let json = serde_json::to_string(&view).unwrap();
+        assert!(!json.contains("token1234"), "{json}");
+    }
+
+    /// Изменение настройки таблицы из запроса `PATCH /v1/settings`.
+    fn table_change(table: &str, key: &str, value: SettingValue) -> SettingChange {
+        SettingChange {
+            table: Some(table.to_owned()),
+            subscription: None,
+            key: key.to_owned(),
+            value,
+        }
+    }
+
+    /// Демон на временном файле настроек `text`; путь файла возвращается вместе с ним.
+    fn file_daemon(temp: &TempDir, text: &str) -> (Daemon, PathBuf) {
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, text).unwrap();
+        let mut daemon = daemon(&["a"], temp);
+        daemon.file = ConfigFile {
+            path: Some(path.clone()),
+            env: Env::new(),
+            root: false,
+        };
+        (daemon, path)
+    }
+
+    fn patch(changes: Vec<SettingChange>, dry_run: bool) -> SettingsPatch {
+        SettingsPatch { changes, dry_run }
+    }
+
+    #[test]
+    fn a_dry_run_says_what_would_change_and_writes_nothing() {
+        let temp = TempDir::new("patch-dry");
+        let text = config_text("", "[selection]\nfailures = 3\n");
+        let (mut daemon, path) = file_daemon(&temp, &text);
+        daemon.load_caches();
+        daemon.finished(0, applied(BOTH));
+        let failures = table_change("selection", "failures", SettingValue::Number(9));
+        let reloaded = daemon.patch(patch(vec![failures], true)).unwrap();
+        assert!(reloaded.changed);
+        assert!(!reloaded.xray_restart);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        assert_eq!(daemon.selector.settings().failures, 3);
+    }
+
+    #[test]
+    fn a_dry_run_reports_the_xray_restart_that_a_deny_would_cause() {
+        let temp = TempDir::new("patch-dry-deny");
+        let text = config_text("", "");
+        let (mut daemon, path) = file_daemon(&temp, &text);
+        daemon.load_caches();
+        daemon.finished(0, applied(BOTH));
+        assert_eq!(daemon.applied_nodes, 2);
+        daemon.restart = Restart::Idle;
+        let deny = SettingChange {
+            table: None,
+            subscription: Some("a".to_owned()),
+            key: "deny".to_owned(),
+            value: SettingValue::Texts(vec!["Two".to_owned()]),
+        };
+        let reloaded = daemon.patch(patch(vec![deny.clone()], true)).unwrap();
+        assert!(reloaded.xray_restart);
+        assert_eq!(daemon.applied_nodes, 2);
+        assert_eq!(daemon.restart, Restart::Idle);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        let real = daemon.patch(patch(vec![deny], false)).unwrap();
+        assert!(real.xray_restart);
+        assert_eq!(daemon.applied_nodes, 1);
+    }
+
+    #[test]
+    fn a_dry_run_on_a_read_only_file_is_refused_without_changes() {
+        let temp = TempDir::new("patch-dry-readonly");
+        let text = config_text("", "[selection]\nfailures = 3\n");
+        let (mut daemon, path) = file_daemon(&temp, &text);
+        let mut readonly = std::fs::metadata(&path).unwrap().permissions();
+        readonly.set_readonly(true);
+        std::fs::set_permissions(&path, readonly).unwrap();
+        let failures = table_change("selection", "failures", SettingValue::Number(9));
+        let result = daemon.patch(patch(vec![failures], true));
+        let Err(crate::api::Refusal::Unavailable(message)) = result else {
+            panic!("файл только для чтения должен давать отказ Unavailable");
+        };
+        assert!(message.contains("только для чтения"), "{message}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[test]
+    fn as_provider_takes_the_connections_key_out_of_the_file() {
+        let temp = TempDir::new("patch-provider");
+        let text = config_text("", "[xray]\nxhttp_connections = 4\n");
+        let (mut daemon, path) = file_daemon(&temp, &text);
+        let provider = SettingValue::Text(XHTTP_PROVIDER.to_owned());
+        let choice = table_change("xray", "xhttp_connections", provider);
+        daemon.patch(patch(vec![choice], false)).unwrap();
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(!written.contains("\nxhttp_connections = 4"), "{written}");
+        assert!(daemon.config.xray.xhttp_connections.is_none());
+        let view = daemon.settings();
+        let item = view
+            .items
+            .iter()
+            .find(|item| item.key == "xhttp_connections")
+            .unwrap();
+        assert_eq!(item.source, "по умолчанию");
     }
 }
