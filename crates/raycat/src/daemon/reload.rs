@@ -383,8 +383,8 @@ impl Daemon {
         let restart_required = restart_keys(&self.config, next);
         let effective = effective(&self.config, next);
         let changed = effective != self.config;
-        let xray_restart = changed
-            && self.applied.as_deref() != Some(self.xray_config(&effective)?.as_slice());
+        let xray_restart =
+            changed && self.applied.as_deref() != Some(self.xray_config(&effective)?.as_slice());
         Ok(Reloaded {
             changed,
             xray_restart,
@@ -467,7 +467,12 @@ impl Daemon {
             Some(connections) => SettingValue::Number(i64::from(connections)),
             None => SettingValue::Text(XHTTP_PROVIDER.to_owned()),
         };
-        items.push(item(&text, Target::Table("xray"), "xhttp_connections", connections));
+        items.push(item(
+            &text,
+            Target::Table("xray"),
+            "xhttp_connections",
+            connections,
+        ));
         for subscription in &config.subscriptions {
             let masks = [
                 ("allow", &subscription.allow),
@@ -545,7 +550,8 @@ mod tests {
 
     #[test]
     fn a_refusal_after_the_write_says_the_file_is_saved() {
-        let Refusal::Unavailable(text) = unapplied(Refusal::Invalid("плохо".to_owned())) else {
+        let Refusal::Unavailable(text) = unapplied(Refusal::Invalid("плохо".to_owned()))
+        else {
             panic!("ожидался отказ Unavailable");
         };
         assert_eq!(text, "сохранено, но не применено: плохо");

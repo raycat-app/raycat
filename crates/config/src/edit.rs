@@ -103,7 +103,10 @@ pub fn apply(text: &str, changes: &[Change]) -> Result<String, Error> {
         match &change.target {
             Target::Table(name) => {
                 if change.value.is_none() {
-                    let table = doc.as_table_mut().get_mut(name).and_then(Item::as_table_mut);
+                    let table = doc
+                        .as_table_mut()
+                        .get_mut(name)
+                        .and_then(Item::as_table_mut);
                     if let Some(table) = table {
                         remove(table, change.key);
                     }
@@ -511,7 +514,8 @@ mod tests {
 
     #[test]
     fn a_removed_key_becomes_a_commented_sample_and_its_neighbours_stay() {
-        let text = "[xray]\n# сколько соединений\nxhttp_connections = 4   # быстрее\npath = \"/x\"\n";
+        let text =
+            "[xray]\n# сколько соединений\nxhttp_connections = 4   # быстрее\npath = \"/x\"\n";
         let change = Change {
             target: Target::Table("xray"),
             key: "xhttp_connections",

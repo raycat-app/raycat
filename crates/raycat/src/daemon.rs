@@ -1287,6 +1287,7 @@ mod tests {
                 key: "failures".to_owned(),
                 value: raycat_proto::SettingValue::Number(9),
             }],
+            dry_run: false,
         };
         let reloaded = daemon.patch(request).unwrap();
         assert!(reloaded.changed);
@@ -1317,6 +1318,7 @@ mod tests {
                 key: "failures".to_owned(),
                 value: raycat_proto::SettingValue::Text("много".to_owned()),
             }],
+            dry_run: false,
         };
         assert!(matches!(
             daemon.patch(request),

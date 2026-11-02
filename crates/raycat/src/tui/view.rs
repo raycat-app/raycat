@@ -557,8 +557,8 @@ mod tests {
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::style::{Color, Modifier};
     use raycat_proto::{
-        CurrentNode, Event, Mode, Node, NodeStatus, Nodes, SettingItem, SettingValue,
-        SettingsView, Status, XHTTP_PROVIDER,
+        CurrentNode, Event, Mode, Node, NodeStatus, Nodes, SettingItem, SettingValue, SettingsView,
+        Status, XHTTP_PROVIDER,
     };
 
     use super::super::app::{Confirm, Edit, Msg, Setting, Snapshot, Tab};
@@ -1077,10 +1077,20 @@ mod tests {
         SettingsView {
             items: vec![
                 setting_item("routing", "ru_direct", SettingValue::Bool(true), "из файла"),
-                setting_item("mode", "kill_switch", SettingValue::Bool(true), "по умолчанию"),
+                setting_item(
+                    "mode",
+                    "kill_switch",
+                    SettingValue::Bool(true),
+                    "по умолчанию",
+                ),
                 setting_item("selection", "check_interval", text("30s"), "по умолчанию"),
                 setting_item("selection", "failures", SettingValue::Number(3), "из файла"),
-                setting_item("xray", "xhttp_connections", text(XHTTP_PROVIDER), "по умолчанию"),
+                setting_item(
+                    "xray",
+                    "xhttp_connections",
+                    text(XHTTP_PROVIDER),
+                    "по умолчанию",
+                ),
                 setting_item("log", "level", text("warn"), "из файла"),
             ],
         }
@@ -1118,7 +1128,10 @@ mod tests {
         press(&mut app, KeyCode::Char('9'));
         let lines = screen(&mut app, 100, 30);
         assert!(has_line(&lines, "[30s9█]"), "{lines:?}");
-        assert!(has_line(&lines, "Enter — сохранить · Esc — отмена"), "{lines:?}");
+        assert!(
+            has_line(&lines, "Enter — сохранить · Esc — отмена"),
+            "{lines:?}"
+        );
     }
 
     #[test]

@@ -816,7 +816,10 @@ impl App {
         if self.confirm.is_some() && !matches!(target, Target::ConfirmYes | Target::ConfirmNo) {
             return None;
         }
-        if matches!(self.input, InputMode::Filter | InputMode::Masks | InputMode::Field) {
+        if matches!(
+            self.input,
+            InputMode::Filter | InputMode::Masks | InputMode::Field
+        ) {
             self.input = InputMode::Normal;
         }
         self.click(target, at)
@@ -920,10 +923,7 @@ impl App {
             }
             KeyCode::Char('u') if ctrl => self.field.clear(),
             KeyCode::Char(c)
-                if !ctrl
-                    && !alt
-                    && !c.is_control()
-                    && self.field.chars().count() < FILTER_MAX =>
+                if !ctrl && !alt && !c.is_control() && self.field.chars().count() < FILTER_MAX =>
             {
                 self.field.push(c);
             }
@@ -1752,7 +1752,11 @@ impl App {
     fn choose_level(&mut self, level: &'static str) -> Option<Effect> {
         self.select_setting(Setting::LogLevel.row());
         if self.view.is_none() {
-            self.notify(Tone::Yellow, "Настройки демона ещё не получены", NOTICE_SECS);
+            self.notify(
+                Tone::Yellow,
+                "Настройки демона ещё не получены",
+                NOTICE_SECS,
+            );
             return None;
         }
         let wanted = SettingValue::Text(level.to_owned());
@@ -2923,7 +2927,11 @@ mod tests {
         assert_eq!(dialog.choices, ["NL*"]);
         assert_eq!(
             press(&mut app, KeyCode::Enter),
-            Some(Effect::Check(deny_edit("main", &[], "Исключение «main/NL-1» снято")))
+            Some(Effect::Check(deny_edit(
+                "main",
+                &[],
+                "Исключение «main/NL-1» снято"
+            )))
         );
     }
 
@@ -2981,16 +2989,31 @@ mod tests {
     /// Ответ `GET /v1/settings`: без `kill_switch` демон в режиме прокси.
     fn settings_view(kill_switch: bool) -> SettingsView {
         let mut items = vec![
-            item_of("routing", "ru_direct", SettingValue::Bool(false), "по умолчанию"),
+            item_of(
+                "routing",
+                "ru_direct",
+                SettingValue::Bool(false),
+                "по умолчанию",
+            ),
             item_of("selection", "check_interval", text("30s"), "по умолчанию"),
             item_of("selection", "failures", SettingValue::Number(3), "из файла"),
             item_of("selection", "switch_gain", text("150ms"), "по умолчанию"),
             item_of("selection", "return_delay", text("5m"), "по умолчанию"),
-            item_of("xray", "xhttp_connections", text(XHTTP_PROVIDER), "по умолчанию"),
+            item_of(
+                "xray",
+                "xhttp_connections",
+                text(XHTTP_PROVIDER),
+                "по умолчанию",
+            ),
             item_of("log", "level", text("info"), "из файла"),
         ];
         if kill_switch {
-            items.push(item_of("mode", "kill_switch", SettingValue::Bool(true), "по умолчанию"));
+            items.push(item_of(
+                "mode",
+                "kill_switch",
+                SettingValue::Bool(true),
+                "по умолчанию",
+            ));
         }
         SettingsView { items }
     }
@@ -3036,7 +3059,10 @@ mod tests {
     fn a_switch_is_checked_and_saved_when_nothing_needs_a_question() {
         let mut app = settings_app(true);
         let edit = checked_edit(press(&mut app, KeyCode::Enter));
-        assert_eq!(edit.changes, [change("routing", "ru_direct", SettingValue::Bool(true))]);
+        assert_eq!(
+            edit.changes,
+            [change("routing", "ru_direct", SettingValue::Bool(true))]
+        );
         assert_eq!(edit.row, Some(Setting::RuDirect.row()));
         assert_eq!(edit.done, "Россия напрямую: вкл");
         let saved = app.apply(Msg::Checked {
@@ -3059,7 +3085,11 @@ mod tests {
         });
         assert!(asked.is_none());
         let confirm = app.confirm.as_ref().unwrap();
-        assert!(confirm.question.contains("трафик пойдёт мимо VPN"), "{}", confirm.question);
+        assert!(
+            confirm.question.contains("трафик пойдёт мимо VPN"),
+            "{}",
+            confirm.question
+        );
         assert!(app.saving.is_none());
         assert_eq!(press(&mut app, KeyCode::Char('q')), None);
         assert!(!app.quit, "пока ждут ответа, q не выходит");
@@ -3102,7 +3132,10 @@ mod tests {
         press(&mut app, KeyCode::Backspace);
         typed(&mut app, "5");
         let edit = checked_edit(press(&mut app, KeyCode::Enter));
-        assert_eq!(edit.changes, [change("selection", "failures", SettingValue::Number(5))]);
+        assert_eq!(
+            edit.changes,
+            [change("selection", "failures", SettingValue::Number(5))]
+        );
         assert_eq!(app.input, InputMode::Normal);
     }
 
@@ -3125,7 +3158,10 @@ mod tests {
         assert_eq!(press(&mut app, KeyCode::Enter), None);
         assert_eq!(app.field, "как у провайдера");
         let edit = checked_edit(press(&mut app, KeyCode::Enter));
-        assert_eq!(edit.changes, [change("xray", "xhttp_connections", text(XHTTP_PROVIDER))]);
+        assert_eq!(
+            edit.changes,
+            [change("xray", "xhttp_connections", text(XHTTP_PROVIDER))]
+        );
         app.apply(Msg::Checked {
             edit,
             result: Err("тест".to_owned()),
@@ -3133,7 +3169,10 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         app.field = "4".to_owned();
         let edit = checked_edit(press(&mut app, KeyCode::Enter));
-        assert_eq!(edit.changes, [change("xray", "xhttp_connections", SettingValue::Number(4))]);
+        assert_eq!(
+            edit.changes,
+            [change("xray", "xhttp_connections", SettingValue::Number(4))]
+        );
     }
 
     #[test]
@@ -3166,7 +3205,11 @@ mod tests {
         assert!(app.saving.is_none());
         assert_eq!(app.shown(Setting::RuDirect).value, "вкл");
         let notice = app.notice.as_ref().unwrap();
-        assert!(notice.text.starts_with("Россия напрямую: вкл"), "{}", notice.text);
+        assert!(
+            notice.text.starts_with("Россия напрямую: вкл"),
+            "{}",
+            notice.text
+        );
         assert!(notice.text.contains("связь прервалась"), "{}", notice.text);
         assert!(notice.text.contains("mode.listen"), "{}", notice.text);
         assert_eq!(notice.tone, Tone::Yellow);
@@ -3200,16 +3243,34 @@ mod tests {
             result: Err(reason),
         });
         assert!(app.saving.is_none());
-        assert!(app.notice.as_ref().unwrap().text.contains("только для чтения"));
-        assert!(matches!(press(&mut app, KeyCode::Enter), Some(Effect::Check(_))));
+        assert!(
+            app.notice
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("только для чтения")
+        );
+        assert!(matches!(
+            press(&mut app, KeyCode::Enter),
+            Some(Effect::Check(_))
+        ));
     }
 
     #[test]
     fn a_second_change_waits_while_the_first_one_is_saved() {
         let mut app = settings_app(true);
-        assert!(matches!(press(&mut app, KeyCode::Enter), Some(Effect::Check(_))));
+        assert!(matches!(
+            press(&mut app, KeyCode::Enter),
+            Some(Effect::Check(_))
+        ));
         assert_eq!(press(&mut app, KeyCode::Enter), None);
-        assert!(app.notice.as_ref().unwrap().text.contains("уже сохраняются"));
+        assert!(
+            app.notice
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("уже сохраняются")
+        );
     }
 
     #[test]
@@ -3217,7 +3278,13 @@ mod tests {
         let mut app = App::new(NOW);
         press(&mut app, KeyCode::Char('5'));
         assert_eq!(press(&mut app, KeyCode::Enter), None);
-        assert!(app.notice.as_ref().unwrap().text.contains("ещё не получены"));
+        assert!(
+            app.notice
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("ещё не получены")
+        );
         assert_eq!(app.shown(Setting::RuDirect).source, "нет данных");
 
         let mut proxy = settings_app(false);
@@ -3232,7 +3299,10 @@ mod tests {
     fn the_names_row_saves_only_the_view_preference() {
         let mut app = settings_app(true);
         app.setting_cursor = Setting::Names.row();
-        assert!(matches!(press(&mut app, KeyCode::Char(' ')), Some(Effect::SavePrefs(_))));
+        assert!(matches!(
+            press(&mut app, KeyCode::Char(' ')),
+            Some(Effect::SavePrefs(_))
+        ));
         assert_eq!(app.shown(Setting::Names).source, "вид TUI");
     }
 
