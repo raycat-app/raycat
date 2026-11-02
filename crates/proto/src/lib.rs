@@ -70,6 +70,18 @@ pub struct SubscriptionStatus {
     pub last_error: Option<String>,
     /// Обновление идёт прямо сейчас.
     pub updating: bool,
+    /// Приложение, которое эмулирует raycat (`happ`, `incy`…).
+    #[serde(default)]
+    pub app: String,
+    /// Платформа эмуляции (`windows`, `android`).
+    #[serde(default)]
+    pub platform: String,
+    /// Интервал обновления из настроек; `None` — интервал от провайдера.
+    #[serde(default)]
+    pub update_interval_secs: Option<u64>,
+    /// Узлов ответа, которые отсекли маски `allow` и `deny`.
+    #[serde(default)]
+    pub cut: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,7 +226,8 @@ pub enum SettingValue {
 pub struct SettingChange {
     /// Таблица верхнего уровня: `routing`, `selection`, `xray`, `log`, `mode`.
     pub table: Option<String>,
-    /// Подписка по имени (для `allow`, `deny`, `priority`).
+    /// Подписка по имени (для `allow`, `deny`, `priority`). Ключ `position` с числом —
+    /// новое место подписки с нуля: блок переставляется в файле.
     pub subscription: Option<String>,
     pub key: String,
     pub value: SettingValue,

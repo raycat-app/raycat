@@ -365,9 +365,10 @@ impl Daemon {
 }
 
 fn subscription_status(sub: &Sub) -> SubscriptionStatus {
+    let config = sub.source.config();
     SubscriptionStatus {
         name: sub.source.name().to_owned(),
-        url: sub.source.config().masked_url(),
+        url: config.masked_url(),
         title: sub.title.clone(),
         used_bytes: sub.usage.as_ref().map(Usage::used),
         total_bytes: sub.usage.as_ref().map(|usage| usage.total),
@@ -377,5 +378,13 @@ fn subscription_status(sub: &Sub) -> SubscriptionStatus {
         next_update: sub.next_update,
         last_error: sub.last_error.clone(),
         updating: sub.in_flight,
+        app: config.app.as_str().to_owned(),
+        platform: config.platform.as_str().to_owned(),
+        update_interval_secs: config.update_interval.map(|interval| interval.as_secs()),
+        cut: sub
+            .nodes
+            .iter()
+            .filter(|node| !config.allows(&node.name))
+            .count(),
     }
 }

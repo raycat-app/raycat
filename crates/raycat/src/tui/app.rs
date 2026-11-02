@@ -29,6 +29,7 @@ const TEXT_WIDTH: usize = 400;
 const NOTICE_SECS: u64 = 8;
 const RESULT_SECS: u64 = 20;
 const FILTER_MAX: usize = 64;
+const MASKS_MAX: usize = 512;
 const DEFAULT_ROWS: usize = 10;
 const WHEEL_ROWS: usize = 3;
 const DOUBLE_CLICK: Duration = Duration::from_millis(500);
@@ -94,6 +95,12 @@ pub(super) enum Target {
     SettingLevel(&'static str),
     ConfirmYes,
     ConfirmNo,
+    /// Правка масок выбранной подписки.
+    SubMasks,
+    /// Подписка на одно место выше (приоритет выше).
+    SubUp,
+    /// Подписка на одно место ниже.
+    SubDown,
 }
 
 /// Порядок узлов в таблице; `Priority` — порядок из подписок, как его отдаёт демон.
@@ -177,7 +184,57 @@ pub(super) enum InputMode {
     Masks,
     /// Правка значения строки «Настроек».
     Field,
+    /// Правка списка масок выбранной подписки.
+    SubMasks,
     Help,
+}
+
+/// Список масок подписки: белый список, чёрный список или предпочтительные узлы.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ListKind {
+    Allow,
+    Deny,
+    Priority,
+}
+
+impl ListKind {
+    /// Порядок переключения клавишей Tab.
+    const ALL: [Self; 3] = [Self::Allow, Self::Deny, Self::Priority];
+
+    /// Ключ подписки в API и в файле.
+    pub(super) fn key(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+            Self::Priority => "priority",
+        }
+    }
+
+    pub(super) fn title(self) -> &'static str {
+        match self {
+            Self::Allow => "allow (только эти узлы)",
+            Self::Deny => "deny (не брать эти узлы)",
+            Self::Priority => "priority (предпочтительные)",
+        }
+    }
+
+    fn step(self, forward: bool) -> Self {
+        let index = Self::ALL.iter().position(|kind| *kind == self).unwrap_or(0);
+        let count = Self::ALL.len();
+        let next = if forward {
+            (index + 1) % count
+        } else {
+            (index + count - 1) % count
+        };
+        Self::ALL[next]
+    }
+}
+
+/// Правка масок подписки: список через запятую, Tab переключает список.
+pub(super) struct SubEdit {
+    pub(super) subscription: String,
+    pub(super) kind: ListKind,
+    pub(super) text: String,
 }
 
 /// Изменение настроек демона: проверяется, при необходимости спрашивает подтверждение и
@@ -583,6 +640,26 @@ fn deny_lists(view: &SettingsView) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
+/// Маски всех списков подписок из ответа демона: подписка, список и маски.
+fn sub_lists(view: &SettingsView) -> Vec<(String, ListKind, Vec<String>)> {
+    view.items
+        .iter()
+        .filter_map(|item| {
+            let name = item.subscription.clone()?;
+            let kind = match item.key.as_str() {
+                "allow" => ListKind::Allow,
+                "deny" => ListKind::Deny,
+                "priority" => ListKind::Priority,
+                _ => return None,
+            };
+            match &item.value {
+                SettingValue::Texts(masks) => Some((name, kind, masks.clone())),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 /// Название вида для подсказок и строк.
 pub(super) fn names_label(style: NameStyle) -> &'static str {
     match style {
@@ -639,6 +716,10 @@ pub(super) struct App {
     pub(super) saving: Option<u64>,
     /// Ошибка у строки «Настроек»: номер строки и короткий текст.
     pub(super) setting_error: Option<(usize, String)>,
+    /// Правка масок выбранной подписки.
+    pub(super) sub_edit: Option<SubEdit>,
+    /// Маски всех подписок из ответа демона: подписка, список и маски.
+    pub(super) sub_lists: Vec<(String, ListKind, Vec<String>)>,
     pub(super) log: VecDeque<LogEntry>,
     pub(super) notice: Option<Notice>,
     pub(super) update: Option<UpdateRun>,
@@ -696,6 +777,8 @@ impl App {
             confirm: None,
             saving: None,
             setting_error: None,
+            sub_edit: None,
+            sub_lists: Vec::new(),
             log: VecDeque::new(),
             notice: None,
             update: None,
@@ -786,6 +869,7 @@ impl App {
             }
             InputMode::Masks => self.masks_key(key),
             InputMode::Field => self.field_key(key),
+            InputMode::SubMasks => self.sub_masks_key(key),
             InputMode::Normal => self.normal_key(key),
         }
     }
@@ -818,9 +902,10 @@ impl App {
         }
         if matches!(
             self.input,
-            InputMode::Filter | InputMode::Masks | InputMode::Field
+            InputMode::Filter | InputMode::Masks | InputMode::Field | InputMode::SubMasks
         ) {
             self.input = InputMode::Normal;
+            self.sub_edit = None;
         }
         self.click(target, at)
     }
@@ -831,7 +916,7 @@ impl App {
         });
         self.last_click = Some((target, at));
         match target {
-            Target::Tab(tab) => self.switch(tab),
+            Target::Tab(tab) => return self.switch(tab),
             Target::NodeRow(index) => {
                 self.move_to(index);
                 if double {
@@ -860,6 +945,9 @@ impl App {
             Target::SettingLevel(level) => return self.choose_level(level),
             Target::ConfirmYes => return self.confirm_yes(),
             Target::ConfirmNo => self.cancel_confirm(),
+            Target::SubMasks => self.start_sub_edit(),
+            Target::SubUp => return self.move_sub(true),
+            Target::SubDown => return self.move_sub(false),
         }
         None
     }
@@ -874,13 +962,16 @@ impl App {
         match key.code {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Esc => return self.escape(),
-            KeyCode::Char('1') => self.switch(Tab::Overview),
-            KeyCode::Char('2') => self.switch(Tab::Nodes),
-            KeyCode::Char('3') => self.switch(Tab::Subscriptions),
-            KeyCode::Char('4') => self.switch(Tab::Journal),
-            KeyCode::Char('5') => self.switch(Tab::Settings),
-            KeyCode::Tab | KeyCode::Right => self.step_tab(true),
-            KeyCode::BackTab | KeyCode::Left => self.step_tab(false),
+            KeyCode::Char('1') => return self.switch(Tab::Overview),
+            KeyCode::Char('2') => return self.switch(Tab::Nodes),
+            KeyCode::Char('3') => return self.switch(Tab::Subscriptions),
+            KeyCode::Char('4') => return self.switch(Tab::Journal),
+            KeyCode::Char('5') => return self.switch(Tab::Settings),
+            KeyCode::Tab | KeyCode::Right => return self.step_tab(true),
+            KeyCode::BackTab | KeyCode::Left => return self.step_tab(false),
+            KeyCode::Char('m') if self.tab == Tab::Subscriptions => self.start_sub_edit(),
+            KeyCode::Char('[') if self.tab == Tab::Subscriptions => return self.move_sub(true),
+            KeyCode::Char(']') if self.tab == Tab::Subscriptions => return self.move_sub(false),
             KeyCode::Up | KeyCode::Char('k') => self.scroll_up(1),
             KeyCode::Down | KeyCode::Char('j') => self.scroll_down(1),
             KeyCode::PageUp => self.scroll_up(self.page()),
@@ -1366,14 +1457,17 @@ impl App {
         None
     }
 
-    fn switch(&mut self, tab: Tab) {
-        if self.tab != tab {
+    /// Переход на вкладку. Вход на «Настройки» перечитывает их: файл мог поменяться руками.
+    fn switch(&mut self, tab: Tab) -> Option<Effect> {
+        let entering = self.tab != tab;
+        if entering {
             self.details = false;
         }
         self.tab = tab;
+        (entering && tab == Tab::Settings).then_some(Effect::LoadSettings)
     }
 
-    fn step_tab(&mut self, forward: bool) {
+    fn step_tab(&mut self, forward: bool) -> Option<Effect> {
         let count = Tab::ALL.len();
         let index = Tab::ALL
             .iter()
@@ -1384,9 +1478,7 @@ impl App {
         } else {
             (index + count - 1) % count
         };
-        if let Some(tab) = Tab::ALL.get(next) {
-            self.switch(*tab);
-        }
+        Tab::ALL.get(next).and_then(|tab| self.switch(*tab))
     }
 
     fn scroll_up(&mut self, by: usize) {
@@ -1693,6 +1785,7 @@ impl App {
     /// Новые настройки демона: по ним показываются строки и маски исключений.
     fn set_view(&mut self, view: SettingsView) {
         self.deny = deny_lists(&view);
+        self.sub_lists = sub_lists(&view);
         self.view = Some(view);
         self.refilter();
     }
@@ -1711,6 +1804,163 @@ impl App {
         } else if self.setting_cursor >= self.setting_offset + rows {
             self.setting_offset = self.setting_cursor + 1 - rows;
         }
+    }
+
+    /// `m` на вкладке «Подписки»: правка масок выбранной подписки, сначала `allow`.
+    fn start_sub_edit(&mut self) {
+        let Some(name) = self.subscription_names().get(self.sub_cursor).cloned() else {
+            self.notify(Tone::Yellow, "Нет подписки для правки масок", NOTICE_SECS);
+            return;
+        };
+        self.open_sub_edit(name, ListKind::Allow);
+    }
+
+    fn open_sub_edit(&mut self, subscription: String, kind: ListKind) {
+        let text = self.sub_masks(&subscription, kind).join(", ");
+        self.sub_edit = Some(SubEdit {
+            subscription,
+            kind,
+            text,
+        });
+        self.input = InputMode::SubMasks;
+    }
+
+    fn sub_masks(&self, subscription: &str, kind: ListKind) -> Vec<String> {
+        self.sub_lists
+            .iter()
+            .find(|(name, list, _)| name.as_str() == subscription && *list == kind)
+            .map(|(_, _, masks)| masks.clone())
+            .unwrap_or_default()
+    }
+
+    /// Сколько узлов подписки задевает список масок. Для `allow` — те, что он отсекает.
+    pub(super) fn sub_affected(&self, subscription: &str, kind: ListKind, text: &str) -> usize {
+        let masks: Vec<Pattern> = split_masks(text)
+            .iter()
+            .map(|mask| Pattern::new(mask))
+            .collect();
+        self.nodes
+            .iter()
+            .filter(|node| node.subscription == subscription)
+            .filter(|node| {
+                let hit = masks.iter().any(|pattern| pattern.matches(&node.name));
+                match kind {
+                    ListKind::Allow => !masks.is_empty() && !hit,
+                    ListKind::Deny | ListKind::Priority => hit,
+                }
+            })
+            .count()
+    }
+
+    fn sub_masks_key(&mut self, key: KeyEvent) -> Option<Effect> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        match key.code {
+            KeyCode::Esc => self.close_sub_edit(),
+            KeyCode::Enter => return self.save_sub_edit(),
+            KeyCode::Tab => self.switch_sub_list(true),
+            KeyCode::BackTab => self.switch_sub_list(false),
+            KeyCode::Backspace => {
+                if let Some(edit) = self.sub_edit.as_mut() {
+                    edit.text.pop();
+                }
+            }
+            KeyCode::Char('u') if ctrl => {
+                if let Some(edit) = self.sub_edit.as_mut() {
+                    edit.text.clear();
+                }
+            }
+            KeyCode::Char(c) if !ctrl && !alt && !c.is_control() => {
+                if let Some(edit) = self.sub_edit.as_mut()
+                    && edit.text.chars().count() < MASKS_MAX
+                {
+                    edit.text.push(c);
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Tab переключает список. Несохранённый текст при этом сбрасывается к сохранённому.
+    fn switch_sub_list(&mut self, forward: bool) {
+        let Some(edit) = self.sub_edit.as_ref() else {
+            return;
+        };
+        let kind = edit.kind.step(forward);
+        let subscription = edit.subscription.clone();
+        self.open_sub_edit(subscription, kind);
+    }
+
+    fn close_sub_edit(&mut self) {
+        self.sub_edit = None;
+        self.input = InputMode::Normal;
+        self.notify(Tone::Yellow, "Маски не изменены", NOTICE_SECS);
+    }
+
+    /// Enter: маски уходят на проверку, дальше как у остальных изменений.
+    fn save_sub_edit(&mut self) -> Option<Effect> {
+        if self.saving.is_some() {
+            self.notify(Tone::Yellow, "Настройки уже сохраняются", NOTICE_SECS);
+            return None;
+        }
+        let edit = self.sub_edit.take()?;
+        self.input = InputMode::Normal;
+        let done = format!("«{}»: {} сохранены", edit.subscription, edit.kind.title());
+        let change = SettingChange {
+            table: None,
+            subscription: Some(edit.subscription),
+            key: edit.kind.key().to_owned(),
+            value: SettingValue::Texts(split_masks(&edit.text)),
+        };
+        self.begin_check(Edit {
+            changes: vec![change],
+            done,
+            row: None,
+            warn: None,
+        })
+    }
+
+    /// `[` и `]`: подписка на одно место выше или ниже. Порядок подписок — их приоритет.
+    fn move_sub(&mut self, up: bool) -> Option<Effect> {
+        let names: Vec<String> = self.status.as_ref().map_or_else(Vec::new, |status| {
+            status
+                .subscriptions
+                .iter()
+                .map(|sub| sub.name.clone())
+                .collect()
+        });
+        let Some(name) = names.get(self.sub_cursor).cloned() else {
+            self.notify(Tone::Yellow, "Нет подписки для перестановки", NOTICE_SECS);
+            return None;
+        };
+        let target = if up {
+            self.sub_cursor.checked_sub(1)
+        } else {
+            self.sub_cursor.checked_add(1)
+        };
+        let Some(to) = target.filter(|to| *to < names.len()) else {
+            let text = if up {
+                "Подписка уже первая"
+            } else {
+                "Подписка уже последняя"
+            };
+            self.notify(Tone::Yellow, text, NOTICE_SECS);
+            return None;
+        };
+        let change = SettingChange {
+            table: None,
+            subscription: Some(name.clone()),
+            key: "position".to_owned(),
+            value: SettingValue::Number(i64::try_from(to).unwrap_or(i64::MAX)),
+        };
+        self.sub_cursor = to;
+        self.begin_check(Edit {
+            changes: vec![change],
+            done: format!("«{name}» теперь на месте {}", to + 1),
+            row: None,
+            warn: None,
+        })
     }
 
     /// Enter, пробел или клик по значению: переключает, меняет по кругу или открывает поле.
@@ -2007,6 +2257,10 @@ mod tests {
                     next_update: None,
                     last_error: None,
                     updating: false,
+                    app: "happ".to_owned(),
+                    platform: "windows".to_owned(),
+                    update_interval_secs: None,
+                    cut: 0,
                 })
                 .collect(),
         }
@@ -3359,6 +3613,77 @@ mod tests {
         });
         assert_eq!(app.deny, [("main".to_owned(), vec!["NL-1".to_owned()])]);
         assert!(app.saving.is_none());
+    }
+
+    #[test]
+    fn m_edits_the_masks_of_the_selected_subscription_and_tab_switches_the_list() {
+        let mut app = app_with(sample());
+        app.sub_lists = vec![("main".to_owned(), ListKind::Allow, vec!["DE*".to_owned()])];
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('m'));
+        assert_eq!(app.input, InputMode::SubMasks);
+        let edit = app.sub_edit.as_ref().unwrap();
+        assert_eq!(edit.subscription, "main");
+        assert_eq!(edit.kind, ListKind::Allow);
+        assert_eq!(edit.text, "DE*");
+        press(&mut app, KeyCode::Tab);
+        let edit = app.sub_edit.as_ref().unwrap();
+        assert_eq!(edit.kind, ListKind::Deny);
+        assert_eq!(edit.text, "");
+    }
+
+    #[test]
+    fn enter_checks_the_masks_and_escape_drops_them() {
+        let mut app = app_with(sample());
+        press(&mut app, KeyCode::Char('3'));
+        press(&mut app, KeyCode::Char('m'));
+        typed(&mut app, "NL*");
+        let Some(Effect::Check(edit)) = press(&mut app, KeyCode::Enter) else {
+            panic!("ожидалась проверка масок");
+        };
+        let expected = SettingChange {
+            table: None,
+            subscription: Some("main".to_owned()),
+            key: "allow".to_owned(),
+            value: SettingValue::Texts(vec!["NL*".to_owned()]),
+        };
+        assert_eq!(edit.changes, [expected]);
+        assert_eq!(app.input, InputMode::Normal);
+        assert!(app.sub_edit.is_none());
+
+        app.saving = None;
+        press(&mut app, KeyCode::Char('m'));
+        assert_eq!(press(&mut app, KeyCode::Esc), None);
+        assert_eq!(app.input, InputMode::Normal);
+        assert!(app.notice.as_ref().unwrap().text.contains("не изменены"));
+    }
+
+    #[test]
+    fn the_brackets_move_a_subscription_one_place_and_say_when_it_cannot() {
+        let mut app = app_with(sample());
+        press(&mut app, KeyCode::Char('3'));
+        assert_eq!(press(&mut app, KeyCode::Char('[')), None);
+        assert!(app.notice.as_ref().unwrap().text.contains("уже первая"));
+        let Some(Effect::Check(edit)) = press(&mut app, KeyCode::Char(']')) else {
+            panic!("ожидалась проверка перестановки");
+        };
+        let expected = SettingChange {
+            table: None,
+            subscription: Some("main".to_owned()),
+            key: "position".to_owned(),
+            value: SettingValue::Number(1),
+        };
+        assert_eq!(edit.changes, [expected]);
+        assert_eq!(app.sub_cursor, 1);
+    }
+
+    #[test]
+    fn entering_the_settings_tab_asks_the_daemon_for_fresh_values() {
+        let mut app = App::new(NOW);
+        assert_eq!(press(&mut app, KeyCode::Char('5')), Some(Effect::LoadSettings));
+        assert_eq!(press(&mut app, KeyCode::Char('5')), None);
+        assert_eq!(press(&mut app, KeyCode::Char('3')), None);
+        assert_eq!(press(&mut app, KeyCode::Char('5')), Some(Effect::LoadSettings));
     }
 
     #[test]

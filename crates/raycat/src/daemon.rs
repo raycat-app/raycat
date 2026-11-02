@@ -1445,6 +1445,58 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
     }
 
+    /// Подписки `names` по порядку с комментарием над каждой.
+    fn subs_text(names: &[&str]) -> String {
+        let mut text = String::new();
+        for name in names {
+            let _ = write!(
+                text,
+                "# {name}\n[[subscription]]\nname = \"{name}\"\nurl = \"https://{name}.example.com/sub/token1234\"\napp = \"happ\"\nplatform = \"windows\"\npriority = [\"Two\"]\n\n"
+            );
+        }
+        text
+    }
+
+    #[test]
+    fn a_new_order_of_the_same_subscriptions_applies_without_a_restart() {
+        let temp = TempDir::new("reorder-live");
+        let mut daemon = daemon_with(&["a", "b"], "", &temp);
+        daemon.load_caches();
+        let reversed = Config::from_toml_str(&subs_text(&["b", "a"]), &Env::new()).unwrap();
+        let reloaded = daemon.apply_config(&reversed).unwrap();
+        assert!(reloaded.restart_required.is_empty(), "{:?}", reloaded.restart_required);
+        let names: Vec<&str> = daemon.subs.iter().map(|sub| sub.source.name()).collect();
+        assert_eq!(names, ["b", "a"]);
+        assert_eq!(daemon.config.subscriptions[0].name, "b");
+    }
+
+    #[test]
+    fn a_patch_moves_the_subscription_block_in_the_file_and_keeps_its_comment() {
+        let temp = TempDir::new("reorder-file");
+        let mut daemon = daemon_with(&["a", "b"], "", &temp);
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, subs_text(&["a", "b"])).unwrap();
+        daemon.file = ConfigFile {
+            path: Some(path.clone()),
+            env: Env::new(),
+            root: false,
+        };
+        let mut place = table_change("", "position", SettingValue::Number(0));
+        place.table = None;
+        place.subscription = Some("b".to_owned());
+        let reloaded = daemon.patch(patch(vec![place], false)).unwrap();
+        assert!(reloaded.restart_required.is_empty(), "{:?}", reloaded.restart_required);
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            written.starts_with("# b\n[[subscription]]\nname = \"b\""),
+            "{written}"
+        );
+        assert!(written.contains("# a\n[[subscription]]\nname = \"a\""), "{written}");
+        assert_eq!(daemon.config.subscriptions[0].name, "b");
+        let names: Vec<&str> = daemon.subs.iter().map(|sub| sub.source.name()).collect();
+        assert_eq!(names, ["b", "a"]);
+    }
+
     #[test]
     fn as_provider_takes_the_connections_key_out_of_the_file() {
         let temp = TempDir::new("patch-provider");

@@ -23,7 +23,7 @@ const MIN_SPEED: u64 = 1_000;
 /// Строки, которые всегда остаются телу вкладки.
 pub(super) const BODY_MIN: usize = 3;
 
-const HELP: [(&str, &str); 20] = [
+const HELP: [(&str, &str); 21] = [
     ("1–5  Tab", "вкладки; Shift+Tab и ← → — перелистывание"),
     ("↑ ↓  j k", "выбор строки, прокрутка"),
     ("PgUp PgDn", "страница вверх и вниз"),
@@ -54,6 +54,10 @@ const HELP: [(&str, &str); 20] = [
         "исключить узел из автовыбора маской или снять исключение",
     ),
     ("e", "скрыть или показать исключённые узлы (вкладка «Узлы»)"),
+    (
+        "m  [ ]",
+        "подписки: маски allow, deny, priority (m); порядок подписок — приоритет ([ выше, ] ниже)",
+    ),
     ("/", "поиск по узлам (Enter — применить, Esc — сбросить)"),
     ("w", "в журнале — только предупреждения и ошибки"),
     (
@@ -341,8 +345,10 @@ fn normal_hints(app: &App) -> Vec<Seg> {
         ],
         Tab::Subscriptions => &[
             ("↑↓ выбор", 1),
-            ("Enter подробности", 2),
             ("u обновить", 1),
+            ("m маски", 1),
+            ("[ ] приоритет", 2),
+            ("Enter ошибка", 2),
             ("? справка", 0),
             ("q выход", 0),
         ],
@@ -477,6 +483,18 @@ fn bottom(canvas: &mut Canvas<'_>, app: &mut App) {
     }
     if let Some(dialog) = &app.exclude {
         exclude_lines(canvas, app, dialog, status_y, hints_y);
+        return;
+    }
+    if let Some(edit) = &app.sub_edit {
+        let affected = app.sub_affected(&edit.subscription, edit.kind, &edit.text);
+        let text = format!(
+            "Маски {}: {}█ · затронет узлов: {affected}",
+            edit.kind.title(),
+            edit.text
+        );
+        canvas.line(status_y, 0, vec![Seg::new(text, Tone::Bold, 0)]);
+        let hint = "Tab — другой список · Enter — проверить и сохранить · Esc — отмена";
+        canvas.line(hints_y, 0, vec![Seg::new(hint, Tone::Dim, 0)]);
         return;
     }
     if app.saving.is_some() {
@@ -630,6 +648,10 @@ mod tests {
                 next_update: Some(NOW + 3 * 3_600),
                 last_error: None,
                 updating: false,
+                app: "happ".to_owned(),
+                platform: "windows".to_owned(),
+                update_interval_secs: None,
+                cut: 0,
             }],
         }
     }
@@ -1155,6 +1177,35 @@ mod tests {
         assert!(lines[23].contains("[Esc] Отмена"), "{lines:?}");
         assert!(app.hits.iter().any(|hit| hit.target == Target::ConfirmYes));
         assert!(app.hits.iter().any(|hit| hit.target == Target::ConfirmNo));
+    }
+
+    #[test]
+    fn a_narrow_settings_tab_keeps_names_and_values_and_drops_the_source_first() {
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('5'));
+        app.apply(Msg::Settings(Ok(settings_view())));
+        let lines = screen(&mut app, 44, 30);
+        for word in ["Россия напрямую", "[вкл]", "[как у провайдера]", "[warn]"] {
+            assert!(has_line(&lines, word), "{word}: {lines:?}");
+        }
+        assert!(!has_line(&lines, "из файла"), "{lines:?}");
+        assert!(lines.iter().all(|line| display_width(line) <= 44), "{lines:?}");
+    }
+
+    #[test]
+    fn the_subscriptions_panel_shows_the_selected_subscription() {
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('3'));
+        let lines = screen(&mut app, 100, 30);
+        for word in [
+            "Подписка «main»",
+            "эмуляция: happ · windows",
+            "отсечено масками: 0",
+            "Узлов живых",
+            "[m] Маски",
+        ] {
+            assert!(has_line(&lines, word), "{word}: {lines:?}");
+        }
     }
 
     #[test]

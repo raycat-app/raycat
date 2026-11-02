@@ -16,7 +16,7 @@ use raycat_proto::{
 use tokio::time::Instant;
 use toml_edit::Value;
 
-use super::{Daemon, stored_pin};
+use super::{Daemon, Sub, stored_pin};
 use crate::api::Refusal;
 use crate::gateway;
 use crate::log;
@@ -39,6 +39,18 @@ const EDITABLE: &[(&str, &str)] = &[
 
 /// Ключи подписки, которые меняет `PATCH`: маски.
 const SUBSCRIPTION_KEYS: &[&str] = &["allow", "deny", "priority"];
+
+/// Место подписки в списке (с нуля): `PATCH` переставляет блок подписки в файле.
+const POSITION: &str = "position";
+
+/// Новое место подписки из запроса.
+fn new_place(item: &SettingChange) -> Result<usize, Refusal> {
+    let refused = || Refusal::Invalid("место подписки — число от 0".to_owned());
+    let SettingValue::Number(number) = item.value else {
+        return Err(refused());
+    };
+    usize::try_from(number).map_err(|_| refused())
+}
 
 /// Файл настроек: где лежит и с каким окружением его читать. Перечитывание всегда берёт
 /// файл заново, поэтому правка руками и `PATCH` для демона одинаковы.
@@ -89,13 +101,14 @@ fn is_proxy(mode: Mode) -> bool {
     matches!(mode, Mode::Proxy { .. })
 }
 
+/// Те же подписки по именам, возможно в другом порядке. Порядок меняется на лету.
 fn same_names(old: &Config, new: &Config) -> bool {
     old.subscriptions.len() == new.subscriptions.len()
-        && old
-            .subscriptions
-            .iter()
-            .zip(&new.subscriptions)
-            .all(|(before, after)| before.name == after.name)
+        && old.subscriptions.iter().all(|before| {
+            new.subscriptions
+                .iter()
+                .any(|after| after.name == before.name)
+        })
 }
 
 /// Подписка та же по адресу, приложению, платформе и устройству: маски можно менять на лету.
@@ -137,8 +150,9 @@ pub(crate) fn restart_keys(old: &Config, new: &Config) -> Vec<String> {
         keys.push("xray.tcp_congestion".to_owned());
     }
     if same_names(old, new) {
-        for (before, after) in old.subscriptions.iter().zip(&new.subscriptions) {
-            if !same_identity(before, after) {
+        for before in &old.subscriptions {
+            let after = new.subscriptions.iter().find(|after| after.name == before.name);
+            if after.is_some_and(|after| !same_identity(before, after)) {
                 keys.push(format!(
                     "subscription.{}: url, app, platform, seed",
                     before.name
@@ -146,7 +160,7 @@ pub(crate) fn restart_keys(old: &Config, new: &Config) -> Vec<String> {
             }
         }
     } else {
-        keys.push("subscription (состав и порядок)".to_owned());
+        keys.push("subscription (состав)".to_owned());
     }
     keys
 }
@@ -171,12 +185,15 @@ pub(crate) fn effective(old: &Config, new: &Config) -> Config {
         _ => old.mode,
     };
     if same_names(old, new) {
-        next.subscriptions = old
+        next.subscriptions = new
             .subscriptions
             .iter()
-            .zip(&new.subscriptions)
-            .map(|(before, after)| {
-                if same_identity(before, after) {
+            .filter_map(|after| {
+                let before = old
+                    .subscriptions
+                    .iter()
+                    .find(|before| before.name == after.name)?;
+                Some(if same_identity(before, after) {
                     Subscription {
                         allow: after.allow.clone(),
                         deny: after.deny.clone(),
@@ -186,11 +203,24 @@ pub(crate) fn effective(old: &Config, new: &Config) -> Config {
                     }
                 } else {
                     before.clone()
-                }
+                })
             })
             .collect();
     }
     next
+}
+
+/// Порядок подписок из конфига: соответствие по имени, а не по позиции. Подписки без
+/// записи в конфиге остаются в конце.
+fn follow_order(subs: &mut [Sub], config: &Config) {
+    subs.sort_by_key(|sub| {
+        let name = sub.source.name();
+        config
+            .subscriptions
+            .iter()
+            .position(|subscription| subscription.name == name)
+            .unwrap_or(usize::MAX)
+    });
 }
 
 fn toml_value(value: &SettingValue) -> Value {
@@ -305,6 +335,7 @@ impl Daemon {
         }
         let rules = plan::gateway_rules(&effective)
             .map_err(|error| Refusal::Invalid(format!("{error:#}")))?;
+        follow_order(&mut self.subs, &effective);
         let mut sources = Vec::new();
         for (index, sub) in self.subs.iter().enumerate() {
             if let Some(subscription) = effective.subscriptions.get(index)
@@ -362,13 +393,20 @@ impl Daemon {
     /// применяется: ответ говорит, что изменилось бы.
     pub(super) fn patch(&mut self, patch: SettingsPatch) -> Result<Reloaded, Refusal> {
         let (target, source) = self.file.text()?;
-        let changes = patch
+        let (places, changes): (Vec<SettingChange>, Vec<SettingChange>) = patch
             .changes
             .into_iter()
-            .map(|item| change(&item))
-            .collect::<Result<Vec<_>, _>>()?;
+            .partition(|item| item.key == POSITION && item.subscription.is_some());
+        let mut text = source;
+        for item in &places {
+            let to = new_place(item)?;
+            let name = item.subscription.as_deref().unwrap_or_default();
+            text = edit::move_subscription(&text, name, to)
+                .map_err(|error| Refusal::Invalid(error.to_string()))?;
+        }
+        let changes = changes.iter().map(change).collect::<Result<Vec<_>, _>>()?;
         let edited =
-            edit::apply(&source, &changes).map_err(|error| Refusal::Invalid(error.to_string()))?;
+            edit::apply(&text, &changes).map_err(|error| Refusal::Invalid(error.to_string()))?;
         let next = self.file.parse(&edited)?;
         if patch.dry_run {
             edit::writable(&target).map_err(|error| Refusal::Unavailable(error.to_string()))?;
@@ -395,11 +433,16 @@ impl Daemon {
     /// Конфиг xray, который собрала бы `config` из нынешних узлов подписок. Как в `reconcile`,
     /// только без записи и без перезапуска.
     fn xray_config(&self, config: &Config) -> Result<Vec<u8>, Refusal> {
-        let inputs: Vec<_> = self
-            .subs
+        let inputs: Vec<_> = config
+            .subscriptions
             .iter()
-            .zip(&config.subscriptions)
-            .map(|(sub, subscription)| (subscription, sub.nodes.as_slice(), sub.routing.as_ref()))
+            .filter_map(|subscription| {
+                let sub = self
+                    .subs
+                    .iter()
+                    .find(|sub| sub.source.name() == subscription.name)?;
+                Some((subscription, sub.nodes.as_slice(), sub.routing.as_ref()))
+            })
             .collect();
         let plan = plan::compile_config(
             config,

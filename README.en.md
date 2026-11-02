@@ -239,7 +239,12 @@ and `Settings`. Switch tabs with a click, the keys `1`–`5`, `Tab`, `Shift+Tab`
 - **Nodes**: a table with the `▶` marker (selected) and `★` (pinned by hand), country, status and
   the failure reason in Russian. Filters: `d` hides dead nodes, `s` filters by subscription, `/`
   searches. `Enter` opens node details, `p` or a double click pins the node.
-- **Subscriptions**: a list with traffic, expiry and status; `Enter` shows details and the full error.
+- **Subscriptions**: a list and a panel for the selected subscription: provider, traffic bar,
+  expiry, update interval, last and next update, live nodes out of all, how many nodes the masks
+  cut, the emulated app and platform, and the link masked. A short line for an error; `Enter`
+  shows it in full. `m` edits the `allow`, `deny` and `priority` masks: `Tab` switches the list,
+  and the line shows how many nodes the list affects. `[` and `]` move the subscription up and
+  down: the order of subscriptions is their priority, and it applies on the fly.
 - **Log**: local time, long messages wrap; `w` shows only warnings and errors.
 - **Settings**: the daemon's main settings as rows: name, value, source (`from file` or `default`)
   and a short hint under the row. Pick a row with `↑` `↓` or a click. Change a value with `Enter`,
@@ -265,6 +270,8 @@ reason and reconnects by itself.
 | `p` | pin the selected node (on "Nodes", a double click also pins) |
 | `a` | return to automatic selection |
 | `u` | update all subscriptions (on "Subscriptions", the selected one) |
+| `m` | on "Subscriptions", the masks of the selected subscription (`Tab` switches the list, `Enter` saves) |
+| `[` `]` | on "Subscriptions", move the subscription up or down (priority) |
 | `d` | hide dead nodes (Nodes tab) |
 | `s` | filter by subscription (Nodes tab); on "Overview" — speed test |
 | `o` | sort nodes in turn: latency, name, subscription, status (click a column header for the direction) |
