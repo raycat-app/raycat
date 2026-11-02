@@ -20,8 +20,8 @@ use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use raycat_proto::{
-    ErrorBody, Event, Nodes, PinRequest, Pinned, SpeedtestProgress, SpeedtestRequest,
-    SpeedtestResult, Status, UpdateRequest, Updates,
+    ErrorBody, Event, Nodes, PinRequest, Pinned, Reloaded, SettingsPatch, SettingsView,
+    SpeedtestProgress, SpeedtestRequest, SpeedtestResult, Status, UpdateRequest, Updates,
 };
 use raycat_select::PinTarget;
 use raycat_xray_api::XrayApi;
@@ -67,6 +67,19 @@ pub(crate) enum Command {
     SpeedtestRestore {
         pin: Option<PinTarget>,
         ack: oneshot::Sender<()>,
+    },
+    /// Перечитать файл настроек (`POST /v1/reload`).
+    Reload {
+        reply: oneshot::Sender<Result<Reloaded, Refusal>>,
+    },
+    /// Изменить настройки в файле и применить (`PATCH /v1/settings`).
+    Patch {
+        patch: SettingsPatch,
+        reply: oneshot::Sender<Result<Reloaded, Refusal>>,
+    },
+    /// Текущие значения настроек (`GET /v1/settings`).
+    Settings {
+        reply: oneshot::Sender<Result<SettingsView, Refusal>>,
     },
 }
 
@@ -236,6 +249,8 @@ pub(crate) fn router(shared: Arc<Shared>) -> Router {
         .route("/v1/nodes", get(nodes))
         .route("/v1/pin", post(pin).delete(unpin))
         .route("/v1/update", post(update))
+        .route("/v1/reload", post(reload))
+        .route("/v1/settings", get(settings).patch(patch_settings))
         .route(
             "/v1/speedtest",
             post(run_speedtest)
@@ -367,6 +382,34 @@ async fn run_speedtest(
             "тест скорости не уложился в срок",
         )),
     }
+}
+
+/// Больше такого тела `PATCH /v1/settings` не принимается.
+const PATCH_LIMIT: usize = 64 * 1024;
+
+/// `POST /v1/reload`: перечитать файл настроек. Битый файл — ошибка, демон держит старый конфиг.
+async fn reload(State(shared): State<Arc<Shared>>) -> Result<Json<Reloaded>, ApiError> {
+    ask(&shared, |reply| Command::Reload { reply }).await
+}
+
+/// Частичное изменение через `PATCH /v1/settings`; размер тела ограничен `PATCH_LIMIT`.
+async fn patch_settings(
+    State(shared): State<Arc<Shared>>,
+    body: Bytes,
+) -> Result<Json<Reloaded>, ApiError> {
+    if body.len() > PATCH_LIMIT {
+        return Err(ApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "тело запроса больше 64 КиБ",
+        ));
+    }
+    let patch: SettingsPatch = parse(&body)?;
+    ask(&shared, |reply| Command::Patch { patch, reply }).await
+}
+
+/// `GET /v1/settings`: значения, которые можно менять через API, и откуда они взяты.
+async fn settings(State(shared): State<Arc<Shared>>) -> Result<Json<SettingsView>, ApiError> {
+    ask(&shared, |reply| Command::Settings { reply }).await
 }
 
 /// Отмена теста скорости: `true`, если тест шёл и его прерывают; `false` — теста нет.
@@ -630,6 +673,7 @@ mod tests {
                     Command::SpeedtestRestore { ack, .. } => {
                         let _ = ack.send(());
                     }
+                    Command::Reload { .. } | Command::Patch { .. } | Command::Settings { .. } => {}
                 }
             }
         });
@@ -946,6 +990,18 @@ mod tests {
         assert!(shared.cancel_speedtest());
         shared.end_speedtest();
         assert!(!shared.cancel_speedtest());
+    }
+
+    #[tokio::test]
+    async fn a_settings_body_over_64_kib_is_refused() {
+        let fixture = fixture();
+        let body = format!(
+            "{{\"changes\":[{{\"key\":\"{}\"}}]}}",
+            "x".repeat(70 * 1024)
+        );
+        let (code, text) = json(&fixture.socket, "PATCH", "/v1/settings", &body).await;
+        assert_eq!(code, 413, "{text}");
+        assert!(text.to_string().contains("64 КиБ"), "{text}");
     }
 
     #[test]

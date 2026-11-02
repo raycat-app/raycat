@@ -379,7 +379,7 @@ write_example_config() {
   cat <<'EOF'
 #:schema https://raw.githubusercontent.com/raycat-app/raycat/main/deploy/config.schema.json
 # Настройки raycat: /etc/raycat/config.toml. В файле ссылка подписки, поэтому права 0600.
-# После правки: sudo systemctl restart raycat
+# После правки: sudo raycat reload
 # Проверить файл и подписки: sudo raycat check
 # Итоговые значения, как их видит raycat: sudo raycat config
 # Все ключи: https://github.com/raycat-app/raycat#настройки

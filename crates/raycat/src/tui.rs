@@ -264,6 +264,7 @@ async fn session(socket: PathBuf, palette: Palette, setup: Setup) -> Result<()> 
         file: setup.file,
         speed: None,
     };
+    runner.dispatch(Effect::LoadSettings);
     let mut ticks = interval(TICK);
     ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut app = App::new(now_unix());

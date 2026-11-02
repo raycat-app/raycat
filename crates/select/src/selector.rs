@@ -47,6 +47,15 @@ impl Selector {
         self.current.map(|index| self.id(index))
     }
 
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    /// Новые настройки выбора без перезапуска: пороги, число сбоев и закрепление.
+    pub fn set_settings(&mut self, settings: Settings) {
+        self.settings = settings;
+    }
+
     pub fn set_pin(&mut self, pin: Option<PinTarget>) {
         self.settings.pin = pin;
     }

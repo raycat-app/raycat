@@ -5,7 +5,7 @@ use jiff::tz::TimeZone;
 use ratatui::Frame;
 use raycat_proto::{SubscriptionStatus, XrayStatus};
 
-use super::app::{App, Hit, InputMode, Link, Tab, Target};
+use super::app::{App, ExcludeDialog, Hit, InputMode, Link, Tab, Target};
 use super::canvas::{Canvas, GAP, Palette, Seg, fit, highlight, wrap};
 use super::pages;
 use crate::render;
@@ -23,7 +23,7 @@ const MIN_SPEED: u64 = 1_000;
 /// Строки, которые всегда остаются телу вкладки.
 pub(super) const BODY_MIN: usize = 3;
 
-const HELP: [(&str, &str); 18] = [
+const HELP: [(&str, &str); 20] = [
     ("1–5  Tab", "вкладки; Shift+Tab и ← → — перелистывание"),
     ("↑ ↓  j k", "выбор строки, прокрутка"),
     ("PgUp PgDn", "страница вверх и вниз"),
@@ -49,6 +49,11 @@ const HELP: [(&str, &str); 18] = [
         "скрытые узлы: маски через запятую, * — любая часть имени",
     ),
     ("t", "тест скорости через выбранный узел (Esc — отменить)"),
+    (
+        "x",
+        "исключить узел из автовыбора маской или снять исключение",
+    ),
+    ("e", "скрыть или показать исключённые узлы (вкладка «Узлы»)"),
     ("/", "поиск по узлам (Enter — применить, Esc — сбросить)"),
     ("w", "в журнале — только предупреждения и ошибки"),
     (
@@ -328,6 +333,8 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("s подписка", 4),
             ("o сортировка", 4),
             ("h скрытые", 4),
+            ("x исключить", 3),
+            ("e исключённые", 4),
             ("/ поиск", 3),
             ("? справка", 0),
             ("q выход", 0),
@@ -391,9 +398,55 @@ fn masks_hint(app: &App) -> Vec<Seg> {
     ]
 }
 
+/// Диалог исключения занимает строку состояния и строку подсказок.
+fn exclude_lines(
+    canvas: &mut Canvas<'_>,
+    app: &App,
+    dialog: &ExcludeDialog,
+    status_y: usize,
+    hints_y: usize,
+) {
+    let summary = if dialog.remove {
+        let mask = dialog.choices.first().map_or("", String::as_str);
+        format!(
+            "Снять исключение «{}»: его исключает маска «{mask}»",
+            dialog.node
+        )
+    } else {
+        let choice = dialog
+            .choices
+            .get(dialog.selected)
+            .map_or("", String::as_str);
+        format!(
+            "Исключить «{}» маской «{choice}»: затронет узлов: {}",
+            dialog.node,
+            app.affected(&dialog.subscription, choice)
+        )
+    };
+    canvas.line(status_y, 0, vec![Seg::new(summary, Tone::Bold, 0)]);
+    let options: Vec<String> = dialog
+        .choices
+        .iter()
+        .enumerate()
+        .map(|(index, mask)| {
+            let mark = if index == dialog.selected { "▶" } else { " " };
+            format!("{mark}{} «{mask}»", index + 1)
+        })
+        .collect();
+    let hint = format!(
+        "{} · Enter — подтвердить · Esc — отмена · xray перезапустится, если набор узлов изменится: связь прервётся на несколько секунд",
+        options.join("   ")
+    );
+    canvas.line(hints_y, 0, vec![Seg::new(hint, Tone::Dim, 0)]);
+}
+
 fn bottom(canvas: &mut Canvas<'_>, app: &App) {
     let status_y = canvas.height.saturating_sub(BOTTOM);
     let hints_y = canvas.height.saturating_sub(1);
+    if let Some(dialog) = &app.exclude {
+        exclude_lines(canvas, app, dialog, status_y, hints_y);
+        return;
+    }
     if let Some(run) = &app.update {
         let target = run.target.as_deref().map_or_else(
             || "всех подписок".to_owned(),

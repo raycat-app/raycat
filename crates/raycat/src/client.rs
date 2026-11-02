@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use raycat_proto::{
-    ErrorBody, Event, Nodes, PinRequest, Pinned, SpeedtestProgress, SpeedtestRequest,
-    SpeedtestResult, Status, UpdateRequest, Updates,
+    ErrorBody, Event, Nodes, PinRequest, Pinned, Reloaded, SettingsPatch, SettingsView,
+    SpeedtestProgress, SpeedtestRequest, SpeedtestResult, Status, UpdateRequest, Updates,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -146,6 +146,25 @@ impl Client {
         let body = json_body(request)?;
         self.call("POST", "/v1/speedtest", Some(&body), SPEEDTEST_TIMEOUT)
             .await
+    }
+
+    pub(crate) async fn settings(&self) -> Result<SettingsView, ClientError> {
+        self.call("GET", "/v1/settings", None, self.timeout).await
+    }
+
+    /// Меняет настройки в файле и применяет их (`PATCH /v1/settings`).
+    pub(crate) async fn settings_patch(
+        &self,
+        patch: &SettingsPatch,
+    ) -> Result<Reloaded, ClientError> {
+        let body = json_body(patch)?;
+        self.call("PATCH", "/v1/settings", Some(&body), self.timeout)
+            .await
+    }
+
+    /// Перечитывает файл настроек (`POST /v1/reload`).
+    pub(crate) async fn reload(&self) -> Result<Reloaded, ClientError> {
+        self.call("POST", "/v1/reload", None, self.timeout).await
     }
 
     /// Прерывает идущий тест скорости; `false`, если теста нет.

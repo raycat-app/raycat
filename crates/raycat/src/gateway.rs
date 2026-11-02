@@ -64,6 +64,18 @@ pub(crate) fn install(rules: &Rules) -> Result<()> {
     Ok(())
 }
 
+/// Заменяет действующие правила новыми без окна, в котором трафик идёт мимо kill switch.
+/// Если новые не встали, старые остаются, и это ошибка.
+pub(crate) fn replace(old: &Rules, new: &Rules) -> Result<()> {
+    let warnings = raycat_netfilter::replace(old, new)
+        .context("правила перехвата не заменены, прежние остаются")?;
+    for text in warnings {
+        warn!("старые маршруты перехвата не сняты: {text}");
+    }
+    info!("правила перехвата обновлены");
+    Ok(())
+}
+
 fn forwarding_enabled(text: &str) -> bool {
     text.trim() == "1"
 }

@@ -188,6 +188,59 @@ pub struct SpeedtestProgress {
     pub percent: u8,
 }
 
+/// Итог перечитывания файла настроек: `POST /v1/reload` и `PATCH /v1/settings`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reloaded {
+    /// Действующие настройки изменились.
+    pub changed: bool,
+    /// Конфиг xray изменился: xray перезапустится.
+    pub xray_restart: bool,
+    /// Ключи, которые действуют только после `raycat restart`; демон держит старые значения.
+    pub restart_required: Vec<String>,
+}
+
+/// Значение настройки в запросе или ответе.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SettingValue {
+    Bool(bool),
+    Number(i64),
+    Text(String),
+    Texts(Vec<String>),
+}
+
+/// Одно изменение для `PATCH /v1/settings`: таблица или подписка, ключ и значение.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingChange {
+    /// Таблица верхнего уровня: `routing`, `selection`, `xray`, `log`, `mode`.
+    pub table: Option<String>,
+    /// Подписка по имени (для `allow`, `deny`, `priority`).
+    pub subscription: Option<String>,
+    pub key: String,
+    pub value: SettingValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingsPatch {
+    pub changes: Vec<SettingChange>,
+}
+
+/// Текущее значение настройки для `GET /v1/settings`; секретов нет.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingItem {
+    pub table: Option<String>,
+    pub subscription: Option<String>,
+    pub key: String,
+    pub value: SettingValue,
+    /// `файл` — ключ записан в файле настроек, `по умолчанию` — значение не задано.
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingsView {
+    pub items: Vec<SettingItem>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ErrorBody {
     pub error: String,

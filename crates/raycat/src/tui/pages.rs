@@ -259,6 +259,18 @@ fn filter_panel(app: &App) -> Vec<Chip> {
             Tone::Plain,
             Some(Target::HiddenEdit),
         ),
+        (
+            format!(
+                "[e] Исключённые: {}",
+                if app.filter.hide_excluded {
+                    "скрыть"
+                } else {
+                    "показывать"
+                }
+            ),
+            Tone::Plain,
+            Some(Target::ExcludedToggle),
+        ),
     ]
 }
 
@@ -299,7 +311,8 @@ fn nodes_table(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
             for (row, node) in shown.iter().skip(app.offset).take(rows).enumerate() {
                 let index = app.offset + row;
                 let current = index == app.cursor;
-                draw_row(&mut inner, 1 + row, &cols, node, &speed, current, app.names);
+                let flags = (current, app.is_excluded(node));
+                draw_row(&mut inner, 1 + row, &cols, node, &speed, flags, app.names);
                 found.push(Hit::new(0, y0 + 2 + row, full, Target::NodeRow(index)));
             }
         }
@@ -523,8 +536,9 @@ fn columns(nodes: &[&Node], speed: &str, width: usize, style: NameStyle) -> Vec<
     cols
 }
 
-fn cell(kind: Kind, node: &Node, speed: &str, style: NameStyle) -> (String, Tone) {
+fn cell(kind: Kind, node: &Node, speed: &str, style: NameStyle, excluded: bool) -> (String, Tone) {
     match kind {
+        Kind::Marker if excluded => ("⊘".to_owned(), Tone::Red),
         Kind::Marker => {
             let (mark, tone) = render::node_marker(node);
             (mark.to_owned(), tone)
@@ -577,7 +591,7 @@ fn draw_row(
     cols: &[Col],
     node: &Node,
     speed: &str,
-    current: bool,
+    (current, excluded): (bool, bool),
     style: NameStyle,
 ) {
     let marked = highlight();
@@ -586,7 +600,7 @@ fn draw_row(
     }
     let mut x = 0;
     for col in cols {
-        let (text, tone) = cell(col.kind, node, speed, style);
+        let (text, tone) = cell(col.kind, node, speed, style, excluded);
         let text = truncate(&text, col.width);
         let shift = if col.right {
             col.width.saturating_sub(display_width(&text))
