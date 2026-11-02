@@ -548,7 +548,7 @@ pub(crate) async fn serve(
 #[cfg(test)]
 mod tests {
     use raycat_proto::{
-        CurrentNode, Mode, Node, NodeStatus, SubscriptionStatus, UpdateResult, XrayState,
+        CurrentNode, Mode, Node, NodeStatus, SubscriptionStatus, Tunnel, UpdateResult, XrayState,
         XrayStatus,
     };
     use std::os::unix::net::UnixListener as StdListener;
@@ -570,6 +570,7 @@ mod tests {
                 api_silent_secs: Some(0),
                 api_stuck: false,
             },
+            tunnel: Tunnel::Working,
             node: Some(CurrentNode {
                 id: "main/NL-1".to_owned(),
                 subscription: "main".to_owned(),
@@ -594,6 +595,8 @@ mod tests {
                 platform: "windows".to_owned(),
                 update_interval_secs: None,
                 cut: 0,
+                note: None,
+                announce: None,
             }],
         }
     }
@@ -619,6 +622,7 @@ mod tests {
                 checks: Vec::new(),
                 uplink_bytes: None,
                 downlink_bytes: None,
+                excluded: false,
             }],
         }
     }

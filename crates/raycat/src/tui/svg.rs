@@ -14,7 +14,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Color, Modifier};
 use raycat_proto::{
     CurrentNode, Event, Mode, Node, NodeStatus, Nodes, SettingItem, SettingValue, SettingsView,
-    Status, SubscriptionStatus, XrayStatus,
+    Status, SubscriptionStatus, Tunnel, XrayStatus,
 };
 
 use super::app::{App, Msg, Snapshot};
@@ -319,6 +319,7 @@ fn node(subscription: &str, name: &str, status: NodeStatus, latency_ms: Option<u
         checks: Vec::new(),
         uplink_bytes: Some(6 * MIB),
         downlink_bytes: Some(96 * MIB),
+        excluded: false,
     }
 }
 
@@ -360,6 +361,7 @@ fn demo_status() -> Status {
             api_silent_secs: Some(0),
             api_stuck: false,
         },
+        tunnel: Tunnel::Working,
         node: Some(CurrentNode {
             id: SELECTED.to_owned(),
             subscription: "main".to_owned(),
@@ -385,6 +387,8 @@ fn demo_status() -> Status {
                 platform: "windows".to_owned(),
                 update_interval_secs: Some(6 * HOUR),
                 cut: 1,
+                note: None,
+                announce: None,
             },
             SubscriptionStatus {
                 name: "backup".to_owned(),
@@ -402,6 +406,8 @@ fn demo_status() -> Status {
                 platform: "windows".to_owned(),
                 update_interval_secs: Some(6 * HOUR),
                 cut: 1,
+                note: None,
+                announce: None,
             },
         ],
     }

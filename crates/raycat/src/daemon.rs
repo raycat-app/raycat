@@ -20,7 +20,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use raycat_config::{Config, Mode, ProxyAuth, Subscription};
 use raycat_netfilter::Rules;
-use raycat_proto::{Event, Mode as ApiMode, Status, UpdateResult, Updates, XrayState, XrayStatus};
+use raycat_proto::{
+    Event, Mode as ApiMode, Status, Tunnel, UpdateResult, Updates, XrayState, XrayStatus,
+};
 use raycat_select::{PinTarget, Selector};
 use raycat_subscription::{Routing, Usage, redact_in};
 use raycat_xray::{Node, SpeedtestInbound};
@@ -94,6 +96,7 @@ fn initial_status(config: &Config) -> Status {
             api_silent_secs: None,
             api_stuck: false,
         },
+        tunnel: Tunnel::XrayDown,
         node: None,
         subscriptions: Vec::new(),
     }
@@ -228,6 +231,9 @@ struct Sub {
     updated_at: Option<u64>,
     next_update: Option<u64>,
     last_error: Option<String>,
+    /// Последний ответ провайдера — заглушка (срок вышел, подписка не найдена, лимит
+    /// устройств): `Some(true)` — лимит устройств. Сбрасывается любым другим исходом.
+    stub: Option<bool>,
 }
 
 /// Запрос `POST /v1/update`, ждущий результата обновления подписок.
@@ -338,6 +344,7 @@ impl Daemon {
                     updated_at: None,
                     next_update: None,
                     last_error: None,
+                    stub: None,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -681,11 +688,13 @@ impl Daemon {
         let Some(sub) = self.subs.get_mut(index) else {
             return;
         };
+        let stub = refresh.stub;
         match refresh.outcome {
             Outcome::Applied(analysis) => {
                 let analysis = *analysis;
                 sub.failures = 0;
                 sub.last_error = None;
+                sub.stub = None;
                 sub.updated_at = Some(now_unix());
                 sub.title.clone_from(&analysis.info.title);
                 sub.usage.clone_from(&analysis.info.usage);
@@ -718,6 +727,10 @@ impl Daemon {
             }
             Outcome::Rejected(reason) => {
                 sub.failures = 0;
+                match stub {
+                    Some(stub) => apply_stub(sub, stub),
+                    None => sub.stub = None,
+                }
                 let level = sub.problem.level(&reason);
                 let line = report::rejected(&name, &reason, refresh.next_in);
                 sub.last_error = Some(reason);
@@ -725,6 +738,7 @@ impl Daemon {
             }
             Outcome::Failed(message) => {
                 sub.failures = sub.failures.saturating_add(1);
+                sub.stub = None;
                 let level = sub.problem.level(&message);
                 let line = report::failed(&name, &message, refresh.next_in);
                 sub.last_error = Some(message);
@@ -736,6 +750,18 @@ impl Daemon {
             self.finish_gathering();
         }
     }
+}
+
+/// Заглушка приносит сведения провайдера (срок, трафик, объявление), но не узлы:
+/// узлы последнего рабочего ответа остаются.
+fn apply_stub(sub: &mut Sub, stub: updater::Stub) {
+    let url = sub.source.config().url.expose();
+    sub.title.clone_from(&stub.info.title);
+    sub.usage.clone_from(&stub.info.usage);
+    if let Some(announce) = stub.info.announce.as_deref() {
+        sub.announce = Some(redact_in(announce, &[url]));
+    }
+    sub.stub = Some(stub.device_limit);
 }
 
 /// Закрепление из сохранённого файла; без него — из настроек.
@@ -814,6 +840,7 @@ mod tests {
         Refresh {
             outcome: Outcome::Applied(Box::new(analysis)),
             next_in: Duration::from_secs(43_200),
+            stub: None,
         }
     }
 
@@ -821,6 +848,7 @@ mod tests {
         Refresh {
             outcome: Outcome::Failed("нет связи".to_owned()),
             next_in: Duration::from_secs(30),
+            stub: None,
         }
     }
 
@@ -828,6 +856,16 @@ mod tests {
         Refresh {
             outcome: Outcome::Rejected(reason.to_owned()),
             next_in: Duration::from_secs(43_200),
+            stub: None,
+        }
+    }
+
+    /// Ответ провайдера-заглушки: отказ с настоящими сведениями, без узлов.
+    fn stub(info: raycat_subscription::ProviderInfo, device_limit: bool) -> Refresh {
+        Refresh {
+            outcome: Outcome::Rejected("ответ провайдера не применён".to_owned()),
+            next_in: Duration::from_secs(43_200),
+            stub: Some(crate::updater::Stub { info, device_limit }),
         }
     }
 
@@ -1146,6 +1184,66 @@ mod tests {
         let sub = &daemon.status().subscriptions[0];
         assert_eq!(sub.last_error.as_deref(), Some("нет связи"));
         assert_eq!(sub.nodes, 1);
+    }
+
+    #[test]
+    fn a_provider_stub_gives_the_reason_and_keeps_the_nodes() {
+        let temp = TempDir::new("stub-note");
+        let mut daemon = daemon(&["a"], &temp);
+        daemon.load_caches();
+        daemon.finished("a", applied(ONE));
+        assert!(daemon.status().subscriptions[0].note.is_none());
+        let info = raycat_subscription::ProviderInfo {
+            announce: Some("Продлите подписку".to_owned()),
+            ..Default::default()
+        };
+        daemon.finished("a", stub(info, true));
+        let sub = &daemon.status().subscriptions[0];
+        assert_eq!(sub.note.as_deref(), Some("лимит устройств"));
+        assert_eq!(sub.announce.as_deref(), Some("Продлите подписку"));
+        assert_eq!(sub.nodes, 1);
+        daemon.finished("a", failed());
+        assert!(daemon.status().subscriptions[0].note.is_none());
+    }
+
+    #[test]
+    fn an_expired_stub_says_when_the_subscription_expired() {
+        let temp = TempDir::new("stub-expired");
+        let mut daemon = daemon(&["a"], &temp);
+        let expire = 1_000;
+        let info = raycat_subscription::ProviderInfo {
+            usage: Some(raycat_subscription::Usage {
+                expire,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        daemon.finished("a", stub(info, false));
+        assert_eq!(
+            daemon.status().subscriptions[0].note,
+            Some(format!(
+                "истекла {}",
+                crate::util::format_date(expire, crate::util::local_zone())
+            ))
+        );
+    }
+
+    #[test]
+    fn a_denied_node_is_listed_as_excluded_and_never_selected() {
+        let temp = TempDir::new("excluded-view");
+        let mut daemon = daemon_with(&["a"], "deny = [\"Two\"]\n", &temp);
+        daemon.load_caches();
+        daemon.finished("a", applied(BOTH));
+        choice(&mut daemon);
+        let view = daemon.nodes_view();
+        assert_eq!(view.selected.as_deref(), Some("a/One"));
+        let excluded: Vec<&str> = view
+            .nodes
+            .iter()
+            .filter(|node| node.excluded)
+            .map(|node| node.id.as_str())
+            .collect();
+        assert_eq!(excluded, ["a/Two"]);
     }
 
     #[test]

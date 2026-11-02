@@ -239,6 +239,12 @@ async fn use_node(client: &Client, term: Term, json: bool, query: &str) -> Resul
     } else {
         let nodes = client.nodes().await?;
         let node = resolve(&nodes.nodes, query)?;
+        if node.excluded {
+            bail!(
+                "узел «{}» исключён маской deny: закрепить его нельзя, сначала снимите исключение",
+                sanitize(&node.id)
+            );
+        }
         unresponsive = node.status == NodeStatus::Dead;
         client.pin(&node.id).await?
     };
@@ -424,6 +430,7 @@ mod tests {
             checks: Vec::new(),
             uplink_bytes: None,
             downlink_bytes: None,
+            excluded: false,
         }
     }
 
@@ -590,7 +597,7 @@ mod health_tests {
         format!(
             r#"{{"version":"0.1.0","mode":"gateway","uptime_secs":5,"kill_switch":true,
             "xray":{{"running":{running},"pid":null,"restarts":0}},
-            "node":{},"subscriptions":[]}}"#,
+            "tunnel":"no_live_nodes","node":{},"subscriptions":[]}}"#,
             node.unwrap_or("null")
         )
     }
@@ -657,7 +664,7 @@ mod health_tests {
     async fn a_xray_that_does_not_answer_its_api_is_not_ready() {
         let reply = r#"{"version":"0.1.0","mode":"gateway","uptime_secs":5,"kill_switch":true,
             "xray":{"running":true,"pid":7,"restarts":0,"api_silent_secs":120,"api_stuck":true},
-            "node":null,"subscriptions":[]}"#;
+            "tunnel":"xray_stuck","node":null,"subscriptions":[]}"#;
         let fake = fake(reply.to_owned());
         let error = ready(&Client::new(fake.socket.clone())).await.unwrap_err();
         assert_eq!(

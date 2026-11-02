@@ -7,7 +7,7 @@ use std::time::Duration;
 use raycat_config::Mode;
 use raycat_proto::{
     CurrentNode, Event, Mode as ApiMode, Node as ApiNode, NodeStatus, Nodes, Pinned, Status,
-    SubscriptionStatus, UpdateResult, Updates, XrayStatus,
+    SubscriptionStatus, Tunnel, UpdateResult, Updates, XrayStatus,
 };
 use raycat_select::{Decision, Health, Reason, Status as SelectStatus};
 use raycat_subscription::Usage;
@@ -19,6 +19,7 @@ use super::details;
 use super::{Daemon, PendingUpdate, Restart, Sub};
 use crate::api::{Command, Refusal};
 use crate::log::{self, Level, info, warn};
+use crate::util::{format_date, local_zone, now_unix};
 use crate::{plan, schedule, selection};
 
 const API_TIMEOUT: Duration = Duration::from_secs(3);
@@ -350,18 +351,18 @@ impl Daemon {
 
     pub(super) fn status(&self) -> Status {
         let snapshot = self.selector.snapshot(selection::now());
-        let node = snapshot
+        let selected = snapshot
             .selected_id
             .as_deref()
-            .and_then(|id| snapshot.nodes.iter().find(|node| node.id == id))
-            .map(|node| CurrentNode {
-                id: node.id.clone(),
-                subscription: node.subscription.clone(),
-                name: node.name.clone(),
-                latency_ms: node.latency_ms,
-                pinned: node.pinned,
-                reason: self.last_reason.clone(),
-            });
+            .and_then(|id| snapshot.nodes.iter().find(|node| node.id == id));
+        let node = selected.map(|node| CurrentNode {
+            id: node.id.clone(),
+            subscription: node.subscription.clone(),
+            name: node.name.clone(),
+            latency_ms: node.latency_ms,
+            pinned: node.pinned,
+            reason: self.last_reason.clone(),
+        });
         let (mode, kill_switch) = match self.config.mode {
             Mode::Proxy { .. } => (ApiMode::Proxy, None),
             Mode::Gateway { kill_switch, .. } => (ApiMode::Gateway, Some(kill_switch)),
@@ -369,6 +370,15 @@ impl Daemon {
         let pid = self.process.pid();
         let silence = self.api_silence();
         let limit = schedule::api_limit(self.config.selection.check_interval);
+        let stuck = silence.is_some_and(|silence| silence > limit);
+        let statuses: Vec<SelectStatus> = snapshot.nodes.iter().map(|node| node.status).collect();
+        let tunnel = tunnel_state(
+            pid.is_some(),
+            stuck,
+            selected.map(|node| node.status),
+            &statuses,
+        );
+        let now = now_unix();
         Status {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             mode,
@@ -379,17 +389,22 @@ impl Daemon {
                 pid,
                 restarts: self.xray_crashes,
                 api_silent_secs: silence.map(|silence| silence.as_secs()),
-                api_stuck: silence.is_some_and(|silence| silence > limit),
+                api_stuck: stuck,
             },
+            tunnel,
             node,
-            subscriptions: self.subs.iter().map(subscription_status).collect(),
+            subscriptions: self
+                .subs
+                .iter()
+                .map(|sub| subscription_status(sub, now))
+                .collect(),
         }
     }
 
     pub(super) fn nodes_view(&self) -> Nodes {
         let snapshot = self.selector.snapshot(selection::now());
         let infos = self.node_details();
-        let nodes = snapshot
+        let mut nodes: Vec<ApiNode> = snapshot
             .nodes
             .into_iter()
             .map(|node| {
@@ -423,17 +438,100 @@ impl Daemon {
                     transport: info.and_then(|info| info.transport.clone()),
                     security: info.and_then(|info| info.security.clone()),
                     checks,
+                    excluded: false,
                 }
             })
             .collect();
+        nodes.extend(self.excluded_nodes());
         Nodes {
             selected: snapshot.selected_id,
             nodes,
         }
     }
+
+    /// Узлы, которые отсекла маска `deny`. В выборе они не участвуют и xray их не получает;
+    /// здесь только имя и подписка, чтобы их можно было показать и снять маску. Собираются
+    /// из уже загруженных узлов подписок, отдельно не хранятся.
+    fn excluded_nodes(&self) -> Vec<ApiNode> {
+        self.subs
+            .iter()
+            .flat_map(|sub| {
+                let config = sub.source.config();
+                let subscription = config.name.clone();
+                sub.nodes
+                    .iter()
+                    .filter(move |node| config.denies(&node.name))
+                    .map(move |node| ApiNode {
+                        id: format!("{subscription}/{}", node.name),
+                        subscription: subscription.clone(),
+                        name: node.name.clone(),
+                        tag: String::new(),
+                        status: NodeStatus::Unknown,
+                        latency_ms: None,
+                        failures: 0,
+                        alive_for_secs: None,
+                        last_error: None,
+                        selected: false,
+                        pinned: false,
+                        uplink_bytes: None,
+                        downlink_bytes: None,
+                        protocol: None,
+                        transport: None,
+                        security: None,
+                        checks: Vec::new(),
+                        excluded: true,
+                    })
+            })
+            .collect()
+    }
 }
 
-fn subscription_status(sub: &Sub) -> SubscriptionStatus {
+/// Состояние туннеля по тому, что видит демон: процесс xray, его API и проверки узлов.
+/// `selected` — состояние выбранного узла; `None`, если узел не выбран.
+fn tunnel_state(
+    running: bool,
+    stuck: bool,
+    selected: Option<SelectStatus>,
+    statuses: &[SelectStatus],
+) -> Tunnel {
+    if !running {
+        return Tunnel::XrayDown;
+    }
+    if stuck {
+        return Tunnel::XrayStuck;
+    }
+    let alive = statuses.contains(&SelectStatus::Alive);
+    let checked = statuses
+        .iter()
+        .any(|status| *status != SelectStatus::Unknown);
+    match selected {
+        Some(SelectStatus::Alive) => Tunnel::Working,
+        Some(SelectStatus::Unknown) => Tunnel::Checking,
+        // Выбор сменится на живой при следующей проверке.
+        Some(SelectStatus::Dead) if alive => Tunnel::Checking,
+        Some(SelectStatus::Dead) => Tunnel::NoLiveNodes,
+        None if !statuses.is_empty() && !checked => Tunnel::Checking,
+        None => Tunnel::NoLiveNodes,
+    }
+}
+
+/// Почему подписка не отдала узлы: последний ответ провайдера — заглушка. Без заглушки
+/// причины нет (ошибку связи или разбора показывает `last_error`).
+fn sub_note(sub: &Sub, now: u64) -> Option<String> {
+    let device_limit = sub.stub?;
+    let expired = sub
+        .usage
+        .as_ref()
+        .map(|usage| usage.expire)
+        .filter(|&expire| expire != 0 && expire <= now);
+    Some(match expired {
+        Some(expire) => format!("истекла {}", format_date(expire, local_zone())),
+        None if device_limit => "лимит устройств".to_owned(),
+        None => "провайдер не отдал узлы".to_owned(),
+    })
+}
+
+fn subscription_status(sub: &Sub, now: u64) -> SubscriptionStatus {
     let config = sub.source.config();
     SubscriptionStatus {
         name: sub.source.name().to_owned(),
@@ -455,5 +553,31 @@ fn subscription_status(sub: &Sub) -> SubscriptionStatus {
             .iter()
             .filter(|node| !config.allows(&node.name))
             .count(),
+        note: sub_note(sub, now),
+        announce: sub.announce.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tunnel_state_follows_xray_and_the_selected_node() {
+        use SelectStatus::{Alive, Dead, Unknown};
+        let cases = [
+            (tunnel_state(false, false, Some(Alive), &[Alive]), Tunnel::XrayDown),
+            (tunnel_state(true, true, Some(Alive), &[Alive]), Tunnel::XrayStuck),
+            (tunnel_state(true, false, Some(Alive), &[Alive, Dead]), Tunnel::Working),
+            (tunnel_state(true, false, Some(Dead), &[Dead, Dead]), Tunnel::NoLiveNodes),
+            (tunnel_state(true, false, Some(Dead), &[Dead, Alive]), Tunnel::Checking),
+            (tunnel_state(true, false, Some(Unknown), &[Unknown]), Tunnel::Checking),
+            (tunnel_state(true, false, None, &[]), Tunnel::NoLiveNodes),
+            (tunnel_state(true, false, None, &[Unknown, Unknown]), Tunnel::Checking),
+            (tunnel_state(true, false, None, &[Dead]), Tunnel::NoLiveNodes),
+        ];
+        for (actual, expected) in cases {
+            assert_eq!(actual, expected);
+        }
     }
 }

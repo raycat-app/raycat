@@ -563,7 +563,7 @@ mod tests {
     }
 
     const STATUS: &str = r#"{"version":"0.1.0","mode":"gateway","uptime_secs":5,"kill_switch":true,
-        "xray":{"running":true,"pid":7,"restarts":1},
+        "xray":{"running":true,"pid":7,"restarts":1},"tunnel":"working",
         "node":{"id":"main/NL-1","subscription":"main","name":"NL-1","latency_ms":31,"pinned":true,"reason":"причина"},
         "subscriptions":[]}"#;
 

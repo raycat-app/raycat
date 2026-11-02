@@ -357,6 +357,16 @@ pub(crate) struct Refresh {
     pub(crate) outcome: Outcome,
     /// Через сколько обновлять снова.
     pub(crate) next_in: Duration,
+    /// Сведения из ответа-заглушки; только при [`Outcome::Rejected`].
+    pub(crate) stub: Option<Stub>,
+}
+
+/// Ответ провайдера, который нельзя применить, но в котором есть сведения: срок, название,
+/// трафик, объявление. Узлов из него не берём.
+pub(crate) struct Stub {
+    pub(crate) info: ProviderInfo,
+    /// Панель отказала по лимиту устройств.
+    pub(crate) device_limit: bool,
 }
 
 /// Одно обновление подписки вместе с записью в кэш. Блокирует поток: вызывать из
@@ -372,13 +382,16 @@ pub(crate) fn refresh(source: &Source, store: &Store, failures: u32, now: u64) -
             .unwrap_or_else(PoisonError::into_inner);
         fetch_candidates(&candidates, &mut send, &mut latch)
     };
-    let (outcome, next_in) = match fetched {
-        Err(error) => reject(
-            &mut state,
-            Outcome::Failed,
-            format!("{error:#}"),
-            retry_delay(failures.saturating_add(1), cached.is_some()),
-        ),
+    let (outcome, next_in, stub) = match fetched {
+        Err(error) => {
+            let (outcome, next_in) = reject(
+                &mut state,
+                Outcome::Failed,
+                format!("{error:#}"),
+                retry_delay(failures.saturating_add(1), cached.is_some()),
+            );
+            (outcome, next_in, None)
+        }
         Ok(fetched) => process(
             source,
             store,
@@ -396,7 +409,11 @@ pub(crate) fn refresh(source: &Source, store: &Store, failures: u32, now: u64) -
             source.name()
         );
     }
-    Refresh { outcome, next_in }
+    Refresh {
+        outcome,
+        next_in,
+        stub,
+    }
 }
 
 fn reject(
@@ -424,7 +441,7 @@ fn process(
     fetched: &Fetched,
     now: u64,
     failures: u32,
-) -> (Outcome, Duration) {
+) -> (Outcome, Duration, Option<Stub>) {
     let response = &fetched.response;
     let analysis = analyze(response.status, &response.headers, &response.body);
     if let Some(problem) = &analysis.problem {
@@ -433,19 +450,26 @@ fn process(
         if matches!(problem, Problem::Http(_)) && is_outage(response.status) {
             let backoff = retry_delay(failures.saturating_add(1), cached.is_some());
             let delay = after_retry_header(backoff, retry_after);
-            return reject(state, Outcome::Failed, message, delay);
+            let (outcome, delay) = reject(state, Outcome::Failed, message, delay);
+            return (outcome, delay, None);
         }
         let provider = analysis
             .info
             .update_interval
             .or_else(|| last_known_interval(state, cached));
         let regular = interval(source.config.update_interval, provider);
-        return reject(
+        // Шифрованный ответ не расшифровывается: его сведения не берём.
+        let stub = (!matches!(problem, Problem::Encrypted(_))).then(|| Stub {
+            info: analysis.info.clone(),
+            device_limit: matches!(problem, Problem::Refused(_)),
+        });
+        let (outcome, delay) = reject(
             state,
             Outcome::Rejected,
             message,
             rejected_delay(regular, retry_after),
         );
+        return (outcome, delay, stub);
     }
     let body = response.body.as_slice();
     let saved = cached == Some(body)
@@ -466,7 +490,7 @@ fn process(
     state.last_error = None;
     remember_addresses(source.name(), state, &analysis.info, fetched);
     let next_in = interval(source.config.update_interval, analysis.info.update_interval);
-    (Outcome::Applied(Box::new(analysis)), next_in)
+    (Outcome::Applied(Box::new(analysis)), next_in, None)
 }
 
 /// Запоминает адреса из ответа: переезд провайдера и запасной адрес.
