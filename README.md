@@ -45,12 +45,11 @@ raycat — клиент VPN-подписок для Linux-серверов. Он
 
 ### Docker: шлюз для контейнеров
 
-Создайте два файла в одном каталоге. В `config.toml` впишите свою ссылку подписки и параметры от провайдера:
+Создайте `raycat/config.toml` и рядом с каталогом `raycat` файл `compose.yml`. В `config.toml` впишите свою ссылку подписки и параметры от провайдера:
 
 ```toml
-# config.toml
+# raycat/config.toml
 [[subscription]]
-name = "основная"
 url = "https://…"       # ссылка подписки: это секрет, не публикуйте её
 app = "happ"            # приложение, которое принимает провайдер: happ или incy
 platform = "windows"    # windows или android (для incy только android)
@@ -70,7 +69,7 @@ services:
     cap_add: [NET_ADMIN]
     dns: [1.1.1.1]          # обязательно для шлюза, см. раздел «Подробно»
     volumes:
-      - ./config.toml:/etc/raycat/config.toml:ro
+      - ./raycat:/etc/raycat   # каталог, а не файл: так настройки можно менять из TUI
       - raycat-state:/var/lib/raycat
 
   app:

@@ -45,12 +45,11 @@ The most common setup is the Docker gateway: containers reach the internet throu
 
 ### Docker: gateway for containers
 
-Create two files in one directory. In `config.toml`, enter your subscription link and the parameters from your provider:
+Create `raycat/config.toml` and, next to the `raycat` directory, a `compose.yml` file. In `config.toml`, enter your subscription link and the parameters from your provider:
 
 ```toml
-# config.toml
+# raycat/config.toml
 [[subscription]]
-name = "main"
 url = "https://…"       # the subscription link: it is a secret, do not publish it
 app = "happ"            # the app that the provider accepts: happ or incy
 platform = "windows"    # windows or android (for incy, only android)
@@ -70,7 +69,7 @@ services:
     cap_add: [NET_ADMIN]
     dns: [1.1.1.1]          # required for the gateway, see the Details section
     volumes:
-      - ./config.toml:/etc/raycat/config.toml:ro
+      - ./raycat:/etc/raycat   # a directory, not a file: this lets the TUI change settings
       - raycat-state:/var/lib/raycat
 
   app:
