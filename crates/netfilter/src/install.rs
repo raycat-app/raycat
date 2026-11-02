@@ -513,7 +513,7 @@ mod tests {
             ..Rules::default()
         };
         let warnings = replace_with(&fake, &old, &new).unwrap();
-        assert!(warnings.is_empty());
+        assert_eq!(warnings, [] as [String; 0]);
         let calls = fake.calls();
         let loaded = calls.iter().position(|call| call == "nft -f -").unwrap();
         let removed = calls
