@@ -3680,10 +3680,16 @@ mod tests {
     #[test]
     fn entering_the_settings_tab_asks_the_daemon_for_fresh_values() {
         let mut app = App::new(NOW);
-        assert_eq!(press(&mut app, KeyCode::Char('5')), Some(Effect::LoadSettings));
+        assert_eq!(
+            press(&mut app, KeyCode::Char('5')),
+            Some(Effect::LoadSettings)
+        );
         assert_eq!(press(&mut app, KeyCode::Char('5')), None);
         assert_eq!(press(&mut app, KeyCode::Char('3')), None);
-        assert_eq!(press(&mut app, KeyCode::Char('5')), Some(Effect::LoadSettings));
+        assert_eq!(
+            press(&mut app, KeyCode::Char('5')),
+            Some(Effect::LoadSettings)
+        );
     }
 
     #[test]

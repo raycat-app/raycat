@@ -41,10 +41,14 @@ const COMMITTED_SETTINGS: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/tui-settings.svg");
 const WRITTEN_SETTINGS: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/tui-settings.svg");
-const COMMITTED_SUBSCRIPTIONS: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/tui-subscriptions.svg");
-const WRITTEN_SUBSCRIPTIONS: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/tui-subscriptions.svg");
+const COMMITTED_SUBSCRIPTIONS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/tui-subscriptions.svg"
+);
+const WRITTEN_SUBSCRIPTIONS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../target/tui-subscriptions.svg"
+);
 
 // Всё в десятых долях пикселя: так SVG записывается целыми числами.
 const CELL_W: usize = 84;
@@ -508,7 +512,12 @@ fn demo_settings() -> SettingsView {
     SettingsView {
         items: vec![
             demo_setting("routing", "ru_direct", SettingValue::Bool(true), "из файла"),
-            demo_setting("mode", "kill_switch", SettingValue::Bool(true), "по умолчанию"),
+            demo_setting(
+                "mode",
+                "kill_switch",
+                SettingValue::Bool(true),
+                "по умолчанию",
+            ),
             demo_setting("selection", "check_interval", text("30s"), "по умолчанию"),
             demo_setting("selection", "failures", SettingValue::Number(3), "из файла"),
             demo_setting("selection", "switch_gain", text("150ms"), "по умолчанию"),

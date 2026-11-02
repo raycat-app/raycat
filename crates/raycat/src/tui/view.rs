@@ -1185,11 +1185,15 @@ mod tests {
         press(&mut app, KeyCode::Char('5'));
         app.apply(Msg::Settings(Ok(settings_view())));
         let lines = screen(&mut app, 44, 30);
-        for word in ["Россия напрямую", "[вкл]", "[как у провайдера]", "[warn]"] {
+        for word in ["Россия напрямую", "[вкл]", "[как у провайдера]", "[warn]"]
+        {
             assert!(has_line(&lines, word), "{word}: {lines:?}");
         }
         assert!(!has_line(&lines, "из файла"), "{lines:?}");
-        assert!(lines.iter().all(|line| display_width(line) <= 44), "{lines:?}");
+        assert!(
+            lines.iter().all(|line| display_width(line) <= 44),
+            "{lines:?}"
+        );
     }
 
     #[test]

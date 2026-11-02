@@ -295,7 +295,11 @@ pub fn move_subscription(text: &str, name: &str, to: usize) -> Result<String, Er
     }
     let mut starts = Vec::with_capacity(headers.len());
     for (index, header) in headers.iter().enumerate() {
-        let floor = if index == 0 { 0 } else { headers[index - 1] + 1 };
+        let floor = if index == 0 {
+            0
+        } else {
+            headers[index - 1] + 1
+        };
         let mut start = *header;
         while start > floor && lines[start - 1].trim_start().starts_with('#') {
             start -= 1;

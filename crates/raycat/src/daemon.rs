@@ -1464,7 +1464,11 @@ mod tests {
         daemon.load_caches();
         let reversed = Config::from_toml_str(&subs_text(&["b", "a"]), &Env::new()).unwrap();
         let reloaded = daemon.apply_config(&reversed).unwrap();
-        assert!(reloaded.restart_required.is_empty(), "{:?}", reloaded.restart_required);
+        assert!(
+            reloaded.restart_required.is_empty(),
+            "{:?}",
+            reloaded.restart_required
+        );
         let names: Vec<&str> = daemon.subs.iter().map(|sub| sub.source.name()).collect();
         assert_eq!(names, ["b", "a"]);
         assert_eq!(daemon.config.subscriptions[0].name, "b");
@@ -1485,13 +1489,20 @@ mod tests {
         place.table = None;
         place.subscription = Some("b".to_owned());
         let reloaded = daemon.patch(patch(vec![place], false)).unwrap();
-        assert!(reloaded.restart_required.is_empty(), "{:?}", reloaded.restart_required);
+        assert!(
+            reloaded.restart_required.is_empty(),
+            "{:?}",
+            reloaded.restart_required
+        );
         let written = std::fs::read_to_string(&path).unwrap();
         assert!(
             written.starts_with("# b\n[[subscription]]\nname = \"b\""),
             "{written}"
         );
-        assert!(written.contains("# a\n[[subscription]]\nname = \"a\""), "{written}");
+        assert!(
+            written.contains("# a\n[[subscription]]\nname = \"a\""),
+            "{written}"
+        );
         assert_eq!(daemon.config.subscriptions[0].name, "b");
         let names: Vec<&str> = daemon.subs.iter().map(|sub| sub.source.name()).collect();
         assert_eq!(names, ["b", "a"]);

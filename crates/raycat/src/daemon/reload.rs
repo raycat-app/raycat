@@ -151,7 +151,10 @@ pub(crate) fn restart_keys(old: &Config, new: &Config) -> Vec<String> {
     }
     if same_names(old, new) {
         for before in &old.subscriptions {
-            let after = new.subscriptions.iter().find(|after| after.name == before.name);
+            let after = new
+                .subscriptions
+                .iter()
+                .find(|after| after.name == before.name);
             if after.is_some_and(|after| !same_identity(before, after)) {
                 keys.push(format!(
                     "subscription.{}: url, app, platform, seed",
