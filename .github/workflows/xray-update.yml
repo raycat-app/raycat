@@ -181,7 +181,7 @@ jobs:
         run: |
           gh pr list -R "$REPO" --state open --limit 200 --json number,headRefName > "$RUNNER_TEMP/open.json"
           bash .github/bots/superseded.sh "$VERSION" "bot/xray-" < "$RUNNER_TEMP/open.json" > "$RUNNER_TEMP/superseded.txt"
-          while IFS=$'\t' read -r old branch; do
+          while IFS=$'\t' read -r old _; do
             gh pr close "$old" -R "$REPO" --delete-branch --comment "Вышла версия $VERSION, закрываю."
           done < "$RUNNER_TEMP/superseded.txt"
 

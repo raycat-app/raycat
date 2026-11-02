@@ -243,7 +243,7 @@ jobs:
   report:
     name: Отчёт об ошибке
     needs: [update, verify]
-    if: ${{ always() && needs.verify.result == 'failure' }}
+    if: ${{ always() && !inputs.dry_run && (needs.update.result == 'failure' || needs.verify.result == 'failure') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -261,8 +261,12 @@ jobs:
           {
             echo "Автоматическое обновление подсетей РФ не дошло до слияния."
             echo
-            echo "- снимок: $DATE"
-            echo "- PR: #$PR"
+            if [ -n "$DATE" ]; then
+              echo "- снимок: $DATE"
+            fi
+            if [ -n "$PR" ]; then
+              echo "- PR: #$PR"
+            fi
             echo "- прогон: $RUN_URL"
           } > body.md
           existing=$(gh issue list -R "$REPO" --state open --label маршрутизация --json number,title |

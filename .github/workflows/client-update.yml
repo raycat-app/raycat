@@ -180,7 +180,7 @@ jobs:
         run: |
           gh pr list -R "$REPO" --state open --limit 200 --json number,headRefName > "$RUNNER_TEMP/open.json"
           bash .github/bots/superseded.sh "$RELEASE" "bot/client-$APP-$PLATFORM-" < "$RUNNER_TEMP/open.json" > "$RUNNER_TEMP/superseded.txt"
-          while IFS=$'\t' read -r old branch; do
+          while IFS=$'\t' read -r old _; do
             gh pr close "$old" -R "$REPO" --delete-branch --comment "Вышла версия $RELEASE, закрываю."
           done < "$RUNNER_TEMP/superseded.txt"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
