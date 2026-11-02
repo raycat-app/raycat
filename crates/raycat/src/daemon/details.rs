@@ -3,6 +3,7 @@
 //! очищается от адреса сервера и IPv4-адресов до того, как попадёт в ответ.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::net::Ipv6Addr;
 use std::time::Duration;
 
 use raycat_proto::NodeCheck;
@@ -93,13 +94,71 @@ fn collect(value: &Value, out: &mut Vec<String>) {
     }
 }
 
-/// Заменяет секреты узла и IPv4-адреса (с портом) в тексте ошибки.
+/// Заменяет секреты узла, IPv6- и IPv4-адреса (с портом) в тексте ошибки.
 pub(super) fn mask(text: &str, secrets: &[String]) -> String {
     let mut out = text.to_owned();
     for secret in secrets {
         out = out.replace(secret.as_str(), "…");
     }
-    mask_ipv4(&out)
+    mask_ipv4(&mask_ipv6(&out))
+}
+
+/// IPv6-адрес в скобках с портом (`[2a01:4f8::1]:443`) или без скобок. Адрес — это
+/// последовательность шестнадцатеричных цифр, двоеточий и точек, которую разбирает
+/// `Ipv6Addr`. Время вроде `12:34:56` и одиночное `::` под это не подходят.
+fn mask_ipv6(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '['
+            && let Some(close) = chars[i + 1..].iter().position(|c| *c == ']')
+            && chars[i + 1..i + 1 + close]
+                .iter()
+                .collect::<String>()
+                .parse::<Ipv6Addr>()
+                .is_ok()
+        {
+            out.push('…');
+            i += close + 2;
+            if chars.get(i) == Some(&':') && chars.get(i + 1).is_some_and(char::is_ascii_digit) {
+                i += 1;
+                while chars.get(i).is_some_and(char::is_ascii_digit) {
+                    i += 1;
+                }
+            }
+            continue;
+        }
+        if is_address_char(chars[i]) {
+            let start = i;
+            while i < chars.len() && is_address_char(chars[i]) {
+                i += 1;
+            }
+            let run: String = chars[start..i].iter().collect();
+            // Двоеточие или точка сразу за адресом — знаки препинания, не часть адреса.
+            let address = run.trim_end_matches([':', '.']);
+            if is_ipv6(address) {
+                out.push('…');
+                out.push_str(&run[address.len()..]);
+            } else {
+                out.push_str(&run);
+            }
+            continue;
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+fn is_address_char(c: char) -> bool {
+    c.is_ascii_hexdigit() || c == ':' || c == '.'
+}
+
+fn is_ipv6(text: &str) -> bool {
+    text.matches(':').count() >= 2
+        && text.chars().any(|c| c.is_ascii_hexdigit())
+        && text.parse::<Ipv6Addr>().is_ok()
 }
 
 /// Четыре числа через точку — адрес; двоеточие и число после него — порт. Всё
@@ -243,6 +302,33 @@ mod tests {
         assert!(!masked.contains("198.51.100.7"));
         assert!(!masked.contains(":80"));
         assert!(masked.contains("i/o timeout"));
+    }
+
+    #[test]
+    fn an_ipv6_address_is_masked_in_brackets_with_its_port() {
+        assert_eq!(
+            mask("dial tcp [2a01:4f8::1]:443: i/o timeout", &[]),
+            "dial tcp …: i/o timeout"
+        );
+    }
+
+    #[test]
+    fn a_bare_ipv6_address_is_masked_and_the_colon_after_it_stays() {
+        assert_eq!(
+            mask("dial tcp 2a01:4f8::1: i/o timeout", &[]),
+            "dial tcp …: i/o timeout"
+        );
+        assert_eq!(mask("адрес 2a01:4f8::1.", &[]), "адрес ….");
+    }
+
+    #[test]
+    fn times_and_plain_text_with_colons_stay_readable() {
+        assert_eq!(
+            mask("в 12:34:56 ошибка, 2 из 10: готово", &[]),
+            "в 12:34:56 ошибка, 2 из 10: готово"
+        );
+        assert_eq!(mask("разделитель :: здесь", &[]), "разделитель :: здесь");
+        assert_eq!(mask("обычный текст без адреса", &[]), "обычный текст без адреса");
     }
 
     #[test]
