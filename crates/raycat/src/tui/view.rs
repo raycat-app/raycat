@@ -766,8 +766,17 @@ mod tests {
         assert!(has_line(&lines, "DE Германия"), "{lines:?}");
         assert!(has_line(&lines, "Страна"), "{lines:?}");
         assert!(has_line(&lines, "Причина"), "{lines:?}");
-        assert!(has_line(&lines, "не отвечает (тайм-аут)"), "{lines:?}");
+        assert!(has_line(&lines, "нет ответа"), "{lines:?}");
         assert!(app.hits.iter().any(|hit| hit.target == Target::NodeRow(0)));
+    }
+
+    #[test]
+    fn the_country_column_is_dropped_when_no_node_has_a_code() {
+        let mut app = app_with(sample_status(), sample_nodes());
+        on_nodes(&mut app);
+        let lines = screen(&mut app, 100, 30);
+        assert!(!has_line(&lines, "Страна"), "{lines:?}");
+        assert!(has_line(&lines, "Причина"), "{lines:?}");
     }
 
     #[test]
@@ -1246,6 +1255,44 @@ mod tests {
         );
         assert!(has_line(&lines, "31 мс"), "{lines:?}");
         assert!(has_line(&lines, "сбой"), "{lines:?}");
+    }
+
+    #[test]
+    fn the_node_details_list_the_checks_before_the_full_error() {
+        let mut nodes = sample_nodes();
+        nodes[0].checks = vec![NodeCheck {
+            at: NOW - 60,
+            alive: true,
+            latency_ms: Some(31),
+        }];
+        let mut app = app_with(sample_status(), nodes);
+        on_nodes(&mut app);
+        press(&mut app, KeyCode::Enter);
+        let lines = screen(&mut app, 100, 30);
+        let line_of = |text: &str| lines.iter().position(|line| line.contains(text));
+        let checks = line_of("Последние проверки:");
+        let error = line_of("Ошибка полностью:");
+        assert!(checks.is_some() && checks < error, "{lines:?}");
+    }
+
+    #[test]
+    fn the_node_details_scroll_to_the_end_of_a_long_error() {
+        let mut nodes = sample_nodes();
+        nodes[0].last_error = Some(format!("{} ХВОСТ", "ошибка соединения ".repeat(40)));
+        let mut app = app_with(sample_status(), nodes);
+        on_nodes(&mut app);
+        press(&mut app, KeyCode::Enter);
+        let top = screen(&mut app, 100, 20);
+        assert!(has_line(&top, "[p] закрепить"), "{top:?}");
+        assert!(!has_line(&top, "ХВОСТ"), "{top:?}");
+        press(&mut app, KeyCode::End);
+        let end = screen(&mut app, 100, 20);
+        assert!(has_line(&end, "ХВОСТ"), "{end:?}");
+        assert!(has_line(&end, "[p] закрепить"), "{end:?}");
+        press(&mut app, KeyCode::Home);
+        let back = screen(&mut app, 100, 20);
+        assert!(has_line(&back, "Выбор:"), "{back:?}");
+        assert!(!has_line(&back, "ХВОСТ"), "{back:?}");
     }
 
     #[test]
