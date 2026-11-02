@@ -100,39 +100,50 @@ impl Daemon {
         subscription: Option<&str>,
         reply: oneshot::Sender<Result<Updates, Refusal>>,
     ) {
-        let indexes: Vec<usize> = match subscription {
+        let names: Vec<String> = match subscription {
             Some(name) => {
-                let Some(index) = self.subs.iter().position(|sub| sub.source.name() == name) else {
+                if !self.subs.iter().any(|sub| sub.source.name() == name) {
                     let _ = reply.send(Err(Refusal::NotFound(format!(
                         "подписки «{name}» нет в настройках"
                     ))));
                     return;
-                };
-                vec![index]
+                }
+                vec![name.to_owned()]
             }
-            None => (0..self.subs.len()).collect(),
+            None => self
+                .subs
+                .iter()
+                .map(|sub| sub.source.name().to_owned())
+                .collect(),
         };
         let now = Instant::now();
-        for index in &indexes {
-            if let Some(sub) = self.subs.get_mut(*index)
-                && !sub.in_flight
-            {
+        for sub in self
+            .subs
+            .iter_mut()
+            .filter(|sub| names.iter().any(|name| name.as_str() == sub.source.name()))
+        {
+            if !sub.in_flight {
                 sub.due = Some(now);
             }
         }
-        info!("обновление подписок по запросу API: {}", indexes.len());
+        info!("обновление подписок по запросу API: {}", names.len());
         self.pending_updates.push(PendingUpdate {
-            waiting: indexes,
+            waiting: names,
             results: Vec::new(),
             reply,
         });
     }
 
-    /// Отдаёт результат обновления подписки ждущим запросам `POST /v1/update`.
-    pub(super) fn complete_updates(&mut self, index: usize, result: &UpdateResult) {
+    /// Отдаёт результат обновления подписки ждущим запросам `POST /v1/update`. Сопоставление
+    /// по имени: подписки могли переставить, пока шло обновление.
+    pub(super) fn complete_updates(&mut self, name: &str, result: &UpdateResult) {
         let mut finished = Vec::new();
         for (position, pending) in self.pending_updates.iter_mut().enumerate() {
-            if let Some(slot) = pending.waiting.iter().position(|waiting| *waiting == index) {
+            if let Some(slot) = pending
+                .waiting
+                .iter()
+                .position(|waiting| waiting.as_str() == name)
+            {
                 pending.waiting.remove(slot);
                 pending.results.push(result.clone());
                 if pending.waiting.is_empty() {

@@ -338,20 +338,33 @@ impl Daemon {
         }
         let rules = plan::gateway_rules(&effective)
             .map_err(|error| Refusal::Invalid(format!("{error:#}")))?;
-        follow_order(&mut self.subs, &effective);
-        let mut sources = Vec::new();
-        for (index, sub) in self.subs.iter().enumerate() {
-            if let Some(subscription) = effective.subscriptions.get(index)
+        // Источники собираются по имени подписки: позиция в `self.subs` здесь ещё старая.
+        let mut sources: Vec<(String, Arc<Source>)> = Vec::new();
+        for sub in &self.subs {
+            let name = sub.source.name();
+            if let Some(subscription) = effective
+                .subscriptions
+                .iter()
+                .find(|subscription| subscription.name == name)
                 && sub.source.config() != subscription
             {
                 let source = Source::new(&effective, subscription, &self.machine_id)
                     .map_err(|error| Refusal::Invalid(format!("{error:#}")))?;
-                sources.push((index, Arc::new(source)));
+                sources.push((name.to_owned(), Arc::new(source)));
             }
         }
         // Новые правила встают до того, как старые сняты: иначе трафик на время идёт мимо
-        // kill switch. Если замена не удалась, старые правила и конфиг остаются как были.
+        // kill switch. Если замена не удалась, старые правила, конфиг и порядок подписок
+        // остаются как были.
         if rules != self.gateway {
+            #[cfg(test)]
+            {
+                if self.refuse_rules {
+                    return Err(Refusal::Unavailable(
+                        "правила перехвата не заменены (тест)".to_owned(),
+                    ));
+                }
+            }
             let changed = match (&self.gateway, &rules) {
                 (Some(old), Some(new)) => gateway::replace(old, new),
                 (None, Some(new)) => gateway::install(new),
@@ -364,9 +377,13 @@ impl Daemon {
             changed.map_err(|error| Refusal::Unavailable(format!("{error:#}")))?;
             self.gateway = rules;
         }
-        for (index, source) in sources {
-            self.subs[index].source = source;
+        for (name, source) in sources {
+            if let Some(sub) = self.subs.iter_mut().find(|sub| sub.source.name() == name) {
+                sub.source = source;
+            }
         }
+        // Порядок — только после успешной замены правил, вместе с конфигом.
+        follow_order(&mut self.subs, &effective);
         if effective.log.level != self.config.log.level {
             log::init(effective.log.level.into());
         }

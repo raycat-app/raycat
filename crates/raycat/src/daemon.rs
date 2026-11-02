@@ -49,7 +49,9 @@ const STARTUP_WAIT: Duration = Duration::from_secs(20);
 /// Изменения узлов в пределах этого срока дают один перезапуск xray.
 const RESTART_DEBOUNCE: Duration = Duration::from_secs(3);
 
-type Finished = (usize, Refresh);
+/// Результат обновления подписки: имя подписки, а не позиция. Подписки можно переставить,
+/// пока обновление идёт, и тогда позиция уже не говорит, какой подписке он принадлежит.
+type Finished = (String, Refresh);
 
 /// Блокирует поток до сигнала остановки. `socket` — путь сокета API.
 pub(crate) fn run(config: Config, file: ConfigFile, store: Store, socket: PathBuf) -> Result<()> {
@@ -172,7 +174,7 @@ async fn serve(config: Config, file: ConfigFile, store: Store, socket: PathBuf) 
                 info!("получен SIGHUP, обновляю подписки");
                 daemon.refresh_all();
             }
-            Some((index, refresh)) = rx.recv() => daemon.finished(index, refresh),
+            Some((name, refresh)) = rx.recv() => daemon.finished(&name, refresh),
             Some(command) = commands.recv() => daemon.command(command),
             exit = daemon.process.exited() => daemon.crashed(&exit),
             () = wait_until(wake) => {}
@@ -228,7 +230,8 @@ struct Sub {
 
 /// Запрос `POST /v1/update`, ждущий результата обновления подписок.
 struct PendingUpdate {
-    waiting: Vec<usize>,
+    /// Имена подписок, по которым ответ ещё не пришёл.
+    waiting: Vec<String>,
     results: Vec<UpdateResult>,
     reply: oneshot::Sender<Result<Updates, Refusal>>,
 }
@@ -263,6 +266,9 @@ struct Daemon {
     gather_until: Option<Instant>,
     /// Правила перехвата в режиме шлюза и время следующей проверки, что они на месте.
     gateway: Option<Rules>,
+    /// Тест: замена правил перехвата отказывает, как если бы netfilter не ответил.
+    #[cfg(test)]
+    refuse_rules: bool,
     next_guard: Instant,
     shared: Arc<Shared>,
     selector: Selector,
@@ -350,6 +356,8 @@ impl Daemon {
             backoff: RESTART_FIRST,
             gather_until: None,
             gateway,
+            #[cfg(test)]
+            refuse_rules: false,
             next_guard: now + gateway::GUARD_INTERVAL,
             shared,
             selector,
@@ -506,15 +514,14 @@ impl Daemon {
             self.select_step().await;
         }
         self.check_api_hang();
-        let due: Vec<usize> = self
+        let due: Vec<String> = self
             .subs
             .iter()
-            .enumerate()
-            .filter(|(_, sub)| !sub.in_flight && sub.due.is_some_and(|at| at <= now))
-            .map(|(index, _)| index)
+            .filter(|sub| !sub.in_flight && sub.due.is_some_and(|at| at <= now))
+            .map(|sub| sub.source.name().to_owned())
             .collect();
-        for index in due {
-            self.spawn_refresh(index, tx);
+        for name in due {
+            self.spawn_refresh(&name, tx);
         }
         self.publish();
     }
@@ -603,8 +610,8 @@ impl Daemon {
         }
     }
 
-    fn spawn_refresh(&mut self, index: usize, tx: &UnboundedSender<Finished>) {
-        let Some(sub) = self.subs.get_mut(index) else {
+    fn spawn_refresh(&mut self, name: &str, tx: &UnboundedSender<Finished>) {
+        let Some(sub) = self.subs.iter_mut().find(|sub| sub.source.name() == name) else {
             return;
         };
         sub.in_flight = true;
@@ -613,13 +620,23 @@ impl Daemon {
         let failures = sub.failures;
         let store = self.store.clone();
         let tx = tx.clone();
+        let name = name.to_owned();
         drop(tokio::task::spawn_blocking(move || {
             let refresh = updater::refresh(&source, &store, failures, now_unix());
-            let _ = tx.send((index, refresh));
+            let _ = tx.send((name, refresh));
         }));
     }
 
-    fn finished(&mut self, index: usize, refresh: Refresh) {
+    /// Результат обновления по имени подписки. Если такой подписки уже нет, результат
+    /// отбрасывается: подписку удалили из настроек, пока она обновлялась.
+    fn finished(&mut self, name: &str, refresh: Refresh) {
+        let Some(index) = self
+            .subs
+            .iter()
+            .position(|sub| sub.source.name() == name)
+        else {
+            return;
+        };
         let Some(sub) = self.subs.get_mut(index) else {
             return;
         };
@@ -706,7 +723,7 @@ impl Daemon {
                 log::write(level, format_args!("{line}"));
             }
         }
-        self.complete_updates(index, &result);
+        self.complete_updates(&name, &result);
         if self.gather_until.is_some() && self.subs.iter().all(|sub| sub.first_done) {
             self.finish_gathering();
         }
@@ -811,12 +828,12 @@ mod tests {
         let temp = TempDir::new("rejected");
         let mut daemon = daemon(&["a"], &temp);
         daemon.load_caches();
-        daemon.finished(0, applied(ONE));
-        daemon.finished(0, failed());
-        daemon.finished(0, failed());
+        daemon.finished("a",applied(ONE));
+        daemon.finished("a",failed());
+        daemon.finished("a",failed());
         assert_eq!(daemon.subs[0].failures, 2);
 
-        daemon.finished(0, rejected("все узлы — заглушки"));
+        daemon.finished("a",rejected("все узлы — заглушки"));
         assert_eq!(daemon.subs[0].failures, 0);
         assert_eq!(daemon.subs[0].nodes.len(), 1);
         assert!(daemon.subs[0].due.unwrap() > Instant::now() + Duration::from_secs(43_000));
@@ -831,12 +848,12 @@ mod tests {
         let temp = TempDir::new("latch");
         let mut daemon = daemon(&["a"], &temp);
         daemon.load_caches();
-        daemon.finished(0, rejected("заглушка"));
-        daemon.finished(0, rejected("заглушка"));
+        daemon.finished("a",rejected("заглушка"));
+        daemon.finished("a",rejected("заглушка"));
         assert_eq!(daemon.subs[0].problem.level("заглушка"), Level::Debug);
         assert_eq!(daemon.subs[0].problem.level("другая заглушка"), Level::Warn);
 
-        daemon.finished(0, applied(ONE));
+        daemon.finished("a",applied(ONE));
         assert!(!daemon.subs[0].problem.clear());
         assert_eq!(daemon.subs[0].problem.level("заглушка"), Level::Warn);
     }
@@ -846,10 +863,10 @@ mod tests {
         let temp = TempDir::new("latch-failed");
         let mut daemon = daemon(&["a"], &temp);
         daemon.load_caches();
-        daemon.finished(0, failed());
-        daemon.finished(0, failed());
+        daemon.finished("a",failed());
+        daemon.finished("a",failed());
         assert_eq!(daemon.subs[0].problem.level("нет связи"), Level::Debug);
-        daemon.finished(0, rejected("заглушка"));
+        daemon.finished("a",rejected("заглушка"));
         assert_eq!(daemon.subs[0].problem.level("заглушка"), Level::Debug);
         assert_eq!(daemon.subs[0].problem.level("нет связи"), Level::Warn);
     }
@@ -862,12 +879,12 @@ mod tests {
         let with_stub = format!(
             "vless://00000000-0000-0000-0000-000000000000@0.0.0.0:1?security=none#Separator\n{ONE}"
         );
-        daemon.finished(0, applied(&with_stub));
+        daemon.finished("a",applied(&with_stub));
         assert_eq!(daemon.subs[0].warned.len(), 1);
         assert!(daemon.subs[0].warned[0].contains("Separator"));
-        daemon.finished(0, applied(&with_stub));
+        daemon.finished("a",applied(&with_stub));
         assert_eq!(daemon.subs[0].warned.len(), 1);
-        daemon.finished(0, applied(ONE));
+        daemon.finished("a",applied(ONE));
         assert_eq!(daemon.subs[0].warned, Vec::<String>::new());
     }
 
@@ -878,12 +895,12 @@ mod tests {
         daemon.load_caches();
         assert!(daemon.gather_until.is_some());
 
-        daemon.finished(0, applied(ONE));
+        daemon.finished("a",applied(ONE));
         assert!(daemon.gather_until.is_some());
         assert!(daemon.applied.is_none());
         assert_eq!(daemon.restart, Restart::Idle);
 
-        daemon.finished(1, applied(TWO));
+        daemon.finished("b",applied(TWO));
         assert!(daemon.gather_until.is_none());
         assert_eq!(daemon.applied_nodes, 2);
         assert_eq!(daemon.restart, Restart::Now);
@@ -894,9 +911,9 @@ mod tests {
         let temp = TempDir::new("gather-failed");
         let mut daemon = daemon(&["a", "b"], &temp);
         daemon.load_caches();
-        daemon.finished(1, failed());
+        daemon.finished("b",failed());
         assert!(daemon.gather_until.is_some());
-        daemon.finished(0, applied(ONE));
+        daemon.finished("a",applied(ONE));
         assert!(daemon.gather_until.is_none());
         assert_eq!(daemon.applied_nodes, 1);
         assert_eq!(daemon.restart, Restart::Now);
@@ -907,12 +924,12 @@ mod tests {
         let temp = TempDir::new("gather-none");
         let mut daemon = daemon(&["a"], &temp);
         daemon.load_caches();
-        daemon.finished(0, failed());
+        daemon.finished("a",failed());
         assert!(daemon.gather_until.is_none());
         assert!(daemon.applied.is_none());
         assert_eq!(daemon.restart, Restart::Idle);
 
-        daemon.finished(0, applied(ONE));
+        daemon.finished("a",applied(ONE));
         assert_eq!(daemon.restart, Restart::Now);
     }
 
@@ -921,17 +938,17 @@ mod tests {
         let temp = TempDir::new("debounce");
         let mut daemon = daemon(&["a", "b"], &temp);
         daemon.load_caches();
-        daemon.finished(0, applied(ONE));
-        daemon.finished(1, applied(TWO));
+        daemon.finished("a",applied(ONE));
+        daemon.finished("b",applied(TWO));
         daemon.restart = Restart::Idle;
 
-        daemon.finished(0, applied(BOTH));
+        daemon.finished("a",applied(BOTH));
         let Restart::At(first) = daemon.restart else {
             panic!("ожидался отложенный перезапуск");
         };
         assert!(first > Instant::now());
 
-        daemon.finished(1, applied(BOTH));
+        daemon.finished("b",applied(BOTH));
         assert!(matches!(daemon.restart, Restart::At(_)));
     }
 
@@ -940,9 +957,9 @@ mod tests {
         let temp = TempDir::new("unchanged");
         let mut daemon = daemon(&["a"], &temp);
         daemon.load_caches();
-        daemon.finished(0, applied(ONE));
+        daemon.finished("a",applied(ONE));
         daemon.restart = Restart::Idle;
-        daemon.finished(0, applied(ONE));
+        daemon.finished("a",applied(ONE));
         assert_eq!(daemon.restart, Restart::Idle);
     }
 
@@ -951,9 +968,9 @@ mod tests {
         let temp = TempDir::new("pending-now");
         let mut daemon = daemon(&["a"], &temp);
         daemon.load_caches();
-        daemon.finished(0, applied(ONE));
+        daemon.finished("a",applied(ONE));
         assert_eq!(daemon.restart, Restart::Now);
-        daemon.finished(0, applied(BOTH));
+        daemon.finished("a",applied(BOTH));
         assert_eq!(daemon.restart, Restart::Now);
     }
 
@@ -966,7 +983,7 @@ mod tests {
         let temp = TempDir::new("pin-set");
         let mut daemon = daemon(&["a"], &temp);
         daemon.load_caches();
-        daemon.finished(0, applied(BOTH));
+        daemon.finished("a",applied(BOTH));
         // Без данных о здоровье движок берёт лучший по рангу узел: маска `Two` стоит первой.
         assert_eq!(choice(&mut daemon).as_deref(), Some("a/Two"));
 
@@ -993,7 +1010,7 @@ mod tests {
         let temp = TempDir::new("ranks");
         let mut daemon = daemon(&["a"], &temp);
         daemon.load_caches();
-        daemon.finished(0, applied(BOTH));
+        daemon.finished("a",applied(BOTH));
         let alive = |tag: &str| Health {
             tag: tag.to_owned(),
             alive: true,
@@ -1012,12 +1029,12 @@ mod tests {
         {
             let mut first = daemon(&["a"], &temp);
             first.load_caches();
-            first.finished(0, applied(BOTH));
+            first.finished("a",applied(BOTH));
             first.set_pin(Some("a/One")).unwrap();
         }
         let mut second = daemon_with(&["a"], "[selection]\npin = \"a/Two\"\n", &temp);
         second.load_caches();
-        second.finished(0, applied(BOTH));
+        second.finished("a",applied(BOTH));
         assert_eq!(choice(&mut second).as_deref(), Some("a/One"));
     }
 
@@ -1027,7 +1044,7 @@ mod tests {
         let config = "[selection]\npin = \"a/One\"\n";
         let mut first = daemon_with(&["a"], config, &temp);
         first.load_caches();
-        first.finished(0, applied(BOTH));
+        first.finished("a",applied(BOTH));
         assert_eq!(choice(&mut first).as_deref(), Some("a/One"));
 
         assert_eq!(first.set_pin(None).unwrap().node, None);
@@ -1037,7 +1054,7 @@ mod tests {
 
         let mut second = daemon_with(&["a"], config, &temp);
         second.load_caches();
-        second.finished(0, applied(BOTH));
+        second.finished("a",applied(BOTH));
         assert_eq!(choice(&mut second).as_deref(), Some("a/Two"));
     }
 
@@ -1046,7 +1063,7 @@ mod tests {
         let temp = TempDir::new("pin-from-config");
         let mut daemon = daemon_with(&["a"], "[selection]\npin = \"a/One\"\n", &temp);
         daemon.load_caches();
-        daemon.finished(0, applied(BOTH));
+        daemon.finished("a",applied(BOTH));
         assert_eq!(choice(&mut daemon).as_deref(), Some("a/One"));
     }
 
@@ -1059,9 +1076,9 @@ mod tests {
         daemon.start_update(None, reply);
         assert!(answer.try_recv().is_err());
 
-        daemon.finished(0, applied(ONE));
+        daemon.finished("a",applied(ONE));
         assert!(answer.try_recv().is_err());
-        daemon.finished(1, failed());
+        daemon.finished("b",failed());
         let updates = answer.try_recv().unwrap().unwrap();
         assert_eq!(updates.results.len(), 2);
         assert!(updates.results[0].ok && updates.results[0].nodes == Some(1));
@@ -1078,7 +1095,7 @@ mod tests {
         daemon.load_caches();
         let (reply, mut answer) = oneshot::channel();
         daemon.start_update(Some("b"), reply);
-        daemon.finished(1, applied(TWO));
+        daemon.finished("b",applied(TWO));
         let updates = answer.try_recv().unwrap().unwrap();
         assert_eq!(updates.results.len(), 1);
         assert_eq!(updates.results[0].subscription, "b");
@@ -1100,7 +1117,7 @@ mod tests {
         let temp = TempDir::new("status");
         let mut daemon = daemon(&["a"], &temp);
         daemon.load_caches();
-        daemon.finished(0, applied(ONE));
+        daemon.finished("a",applied(ONE));
         assert!(daemon.status().node.is_none());
         choice(&mut daemon);
 
@@ -1117,7 +1134,7 @@ mod tests {
         assert!(sub.last_error.is_none() && sub.updated_at.is_some() && !sub.updating);
         assert!(sub.next_update.is_some());
 
-        daemon.finished(0, failed());
+        daemon.finished("a",failed());
         let sub = &daemon.status().subscriptions[0];
         assert_eq!(sub.last_error.as_deref(), Some("нет связи"));
         assert_eq!(sub.nodes, 1);
@@ -1128,7 +1145,7 @@ mod tests {
         let temp = TempDir::new("nodes-view");
         let mut daemon = daemon(&["a"], &temp);
         daemon.load_caches();
-        daemon.finished(0, applied(BOTH));
+        daemon.finished("a",applied(BOTH));
         choice(&mut daemon);
         let view = daemon.nodes_view();
         assert_eq!(view.selected.as_deref(), Some("a/Two"));
@@ -1144,8 +1161,8 @@ mod tests {
         let mut daemon = daemon(&["a"], &temp);
         let mut events = daemon.shared.subscribe();
         daemon.load_caches();
-        daemon.finished(0, applied(ONE));
-        daemon.finished(0, failed());
+        daemon.finished("a",applied(ONE));
+        daemon.finished("a",failed());
         assert_eq!(
             events.try_recv().unwrap(),
             Event::SubscriptionUpdated {
@@ -1202,7 +1219,7 @@ mod tests {
         let temp = TempDir::new("reload-selection");
         let mut daemon = daemon(&["a"], &temp);
         daemon.load_caches();
-        daemon.finished(0, applied(BOTH));
+        daemon.finished("a",applied(BOTH));
         daemon.restart = Restart::Idle;
         let before = daemon.applied.clone();
         let reloaded = daemon
@@ -1221,7 +1238,7 @@ mod tests {
         let temp = TempDir::new("reload-deny");
         let mut daemon = daemon(&["a"], &temp);
         daemon.load_caches();
-        daemon.finished(0, applied(BOTH));
+        daemon.finished("a",applied(BOTH));
         assert_eq!(daemon.applied_nodes, 2);
         daemon.restart = Restart::Idle;
         let reloaded = daemon
@@ -1394,7 +1411,7 @@ mod tests {
         let text = config_text("", "[selection]\nfailures = 3\n");
         let (mut daemon, path) = file_daemon(&temp, &text);
         daemon.load_caches();
-        daemon.finished(0, applied(BOTH));
+        daemon.finished("a",applied(BOTH));
         let failures = table_change("selection", "failures", SettingValue::Number(9));
         let reloaded = daemon.patch(patch(vec![failures], true)).unwrap();
         assert!(reloaded.changed);
@@ -1409,7 +1426,7 @@ mod tests {
         let text = config_text("", "");
         let (mut daemon, path) = file_daemon(&temp, &text);
         daemon.load_caches();
-        daemon.finished(0, applied(BOTH));
+        daemon.finished("a",applied(BOTH));
         assert_eq!(daemon.applied_nodes, 2);
         daemon.restart = Restart::Idle;
         let deny = SettingChange {
@@ -1506,6 +1523,74 @@ mod tests {
         assert_eq!(daemon.config.subscriptions[0].name, "b");
         let names: Vec<&str> = daemon.subs.iter().map(|sub| sub.source.name()).collect();
         assert_eq!(names, ["b", "a"]);
+    }
+
+    fn mark_in_flight(daemon: &mut Daemon, name: &str) {
+        if let Some(sub) = daemon.subs.iter_mut().find(|sub| sub.source.name() == name) {
+            sub.in_flight = true;
+        }
+    }
+
+    fn sub_named<'a>(daemon: &'a Daemon, name: &str) -> &'a Sub {
+        daemon
+            .subs
+            .iter()
+            .find(|sub| sub.source.name() == name)
+            .unwrap()
+    }
+
+    #[test]
+    fn an_update_that_ends_after_a_reorder_lands_in_its_own_subscription() {
+        let temp = TempDir::new("finished-reorder");
+        let mut daemon = daemon_with(&["a", "b"], "", &temp);
+        daemon.load_caches();
+        let (reply, mut answer) = oneshot::channel();
+        daemon.start_update(Some("a"), reply);
+        mark_in_flight(&mut daemon, "a");
+        let reversed = Config::from_toml_str(&subs_text(&["b", "a"]), &Env::new()).unwrap();
+        daemon.apply_config(&reversed).unwrap();
+        assert_eq!(daemon.subs[0].source.name(), "b");
+        daemon.finished("a", applied(ONE));
+        assert_eq!(sub_named(&daemon, "a").nodes.len(), 1);
+        let b = sub_named(&daemon, "b");
+        assert!(b.nodes.is_empty());
+        assert!(!b.in_flight);
+        assert_eq!(b.failures, 0);
+        let Ok(Ok(updates)) = answer.try_recv() else {
+            panic!("ответ на обновление «a» не пришёл");
+        };
+        assert_eq!(updates.results.len(), 1);
+        assert_eq!(updates.results[0].subscription, "a");
+    }
+
+    #[test]
+    fn a_result_for_a_removed_subscription_is_dropped_quietly() {
+        let temp = TempDir::new("finished-removed");
+        let mut daemon = daemon_with(&["a", "b"], "", &temp);
+        daemon.load_caches();
+        daemon.finished("zzz", applied(ONE));
+        assert!(sub_named(&daemon, "a").nodes.is_empty());
+        assert!(sub_named(&daemon, "b").nodes.is_empty());
+    }
+
+    #[test]
+    fn a_reorder_with_refused_firewall_rules_changes_neither_order_nor_config() {
+        let temp = TempDir::new("reorder-refused");
+        let mut daemon = daemon_with(&["a", "b"], "", &temp);
+        daemon.refuse_rules = true;
+        let before = daemon.config.clone();
+        let text = format!(
+            "{}[mode]\ntype = \"gateway\"\nkill_switch = false\n",
+            subs_text(&["b", "a"])
+        );
+        let changed = Config::from_toml_str(&text, &Env::new()).unwrap();
+        assert!(matches!(
+            daemon.apply_config(&changed),
+            Err(Refusal::Unavailable(_))
+        ));
+        let names: Vec<&str> = daemon.subs.iter().map(|sub| sub.source.name()).collect();
+        assert_eq!(names, ["a", "b"]);
+        assert_eq!(daemon.config, before);
     }
 
     #[test]
