@@ -247,9 +247,14 @@ fn is_provider_choice(item: &SettingChange) -> bool {
         && item.value == SettingValue::Text(XHTTP_PROVIDER.to_owned())
 }
 
+/// Пустой список масок тоже убирает ключ: `deny = []` в файле ничего не значит.
+fn is_empty_list(item: &SettingChange) -> bool {
+    matches!(&item.value, SettingValue::Texts(texts) if texts.is_empty())
+}
+
 /// Изменение из запроса: только ключи из списков выше, иначе отказ до записи.
 fn change(item: &SettingChange) -> Result<Change, Refusal> {
-    let value = if is_provider_choice(item) {
+    let value = if is_provider_choice(item) || is_empty_list(item) {
         None
     } else {
         Some(toml_value(&item.value))

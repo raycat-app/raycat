@@ -1801,4 +1801,26 @@ mod tests {
             .unwrap();
         assert_eq!(item.source, "по умолчанию");
     }
+
+    #[test]
+    fn a_cleared_mask_takes_its_key_out_of_the_file() {
+        let temp = TempDir::new("patch-cleared-mask");
+        let text = config_text("deny = [\"Two\"]\n", "");
+        let (mut daemon, path) = file_daemon(&temp, &text);
+        daemon.load_caches();
+        daemon.finished("a", applied(BOTH));
+        let cleared = SettingChange {
+            table: None,
+            subscription: Some("a".to_owned()),
+            key: "deny".to_owned(),
+            value: SettingValue::Texts(Vec::new()),
+        };
+        daemon.patch(patch(vec![cleared], false)).unwrap();
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(!written.contains("deny = []"), "{written}");
+        assert!(written.contains("# deny = [\"Two\"]"), "{written}");
+        assert!(written.contains("priority = [\"Two\"]"), "{written}");
+        assert!(daemon.config.subscriptions[0].deny.is_empty());
+        assert_eq!(daemon.applied_nodes, 2);
+    }
 }

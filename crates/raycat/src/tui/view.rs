@@ -10,11 +10,12 @@ use super::canvas::{Canvas, GAP, Palette, Seg, fit, highlight, wrap};
 use super::pages;
 use crate::render;
 use crate::term::{Tone, display_width, pad};
-use crate::util::{format_bytes, local_zone};
+use crate::util::{format_bytes, format_date, local_zone};
 
 const MIN_WIDTH: usize = 44;
 const MIN_HEIGHT: usize = 12;
-const BOTTOM: usize = 2;
+/// Сколько строк может занять сообщение в строке состояния.
+const STATUS_LINES: usize = 3;
 const BANNER_LINES: usize = 3;
 const BANNER_HINT_LINES: usize = 2;
 const BAR_CELLS: usize = 10;
@@ -97,13 +98,16 @@ fn compose(canvas: &mut Canvas<'_>, app: &mut App, zone: &TimeZone) {
         return;
     }
     tabs(canvas, app);
-    let room = canvas.height.saturating_sub(BOTTOM + BODY_MIN);
+    let status = status_rows(app, canvas.width);
+    // Строки состояния и строка подсказок внизу; тело вкладки занимает всё выше них.
+    let bottom_rows = status.len().max(1) + 1;
+    let room = canvas.height.saturating_sub(bottom_rows + BODY_MIN);
     let mut y = 1;
     y += banner(canvas, app, y, room.saturating_sub(y));
     canvas.set_dim(matches!(app.link, Link::Down { .. }));
     y += header(canvas, app, y, room.saturating_sub(y));
 
-    let end = canvas.height.saturating_sub(BOTTOM);
+    let end = canvas.height.saturating_sub(bottom_rows);
     if y < end {
         match app.tab {
             Tab::Overview => pages::overview(canvas, app, y, end, zone),
@@ -114,7 +118,7 @@ fn compose(canvas: &mut Canvas<'_>, app: &mut App, zone: &TimeZone) {
         }
     }
     canvas.set_dim(false);
-    bottom(canvas, app);
+    bottom(canvas, app, status);
 }
 
 /// Вкладки в первой строке; каждая — область нажатия.
@@ -288,8 +292,14 @@ pub(super) fn traffic_seg(used: u64, total: Option<u64>) -> Seg {
     Seg::new(text, tone, 1)
 }
 
-/// Состояние подписки одним словом; ошибка уходит в отдельную вкладку.
-pub(super) fn sub_phrase(sub: &SubscriptionStatus, now: u64) -> (String, Tone) {
+/// Срок подписки прошёл. Бессрочная подписка (срок 0) не истекает.
+pub(super) fn is_expired(sub: &SubscriptionStatus, now: u64) -> bool {
+    sub.expire.is_some_and(|expire| expire != 0 && expire <= now)
+}
+
+/// Состояние подписки одним словом; ошибка уходит в отдельную вкладку. Для истёкшей
+/// подписки дата идёт здесь, поэтому отдельный кусок «срок» на обзоре её не повторяет.
+pub(super) fn sub_phrase(sub: &SubscriptionStatus, now: u64, zone: &TimeZone) -> (String, Tone) {
     // Заглушка провайдера называет причину: «истекла 25.10.2026», «лимит устройств».
     if let Some(note) = &sub.note {
         return (note.clone(), Tone::Red);
@@ -297,11 +307,11 @@ pub(super) fn sub_phrase(sub: &SubscriptionStatus, now: u64) -> (String, Tone) {
     if sub.last_error.is_some() {
         return ("ошибка".to_owned(), Tone::Red);
     }
-    if sub
-        .expire
-        .is_some_and(|expire| expire != 0 && expire <= now)
-    {
-        return ("истекла".to_owned(), Tone::Red);
+    if is_expired(sub, now) {
+        let date = sub
+            .expire
+            .map_or_else(String::new, |expire| format_date(expire, zone));
+        return (format!("истекла {date}"), Tone::Red);
     }
     if let (Some(used), Some(total)) = (sub.used_bytes, sub.total_bytes)
         && total > 0
@@ -418,15 +428,9 @@ fn masks_hint(app: &App) -> Vec<Seg> {
     ]
 }
 
-/// Диалог исключения занимает строку состояния и строку подсказок.
-fn exclude_lines(
-    canvas: &mut Canvas<'_>,
-    app: &App,
-    dialog: &ExcludeDialog,
-    status_y: usize,
-    hints_y: usize,
-) {
-    let summary = if dialog.remove {
+/// Итог диалога исключения в строке состояния.
+fn exclude_summary(app: &App, dialog: &ExcludeDialog) -> String {
+    if dialog.remove {
         let mask = dialog.choices.first().map_or("", String::as_str);
         format!(
             "Снять маску «{mask}»: вернётся узлов: {}",
@@ -442,8 +446,11 @@ fn exclude_lines(
             dialog.node,
             app.affected(&dialog.subscription, choice)
         )
-    };
-    canvas.line(status_y, 0, vec![Seg::new(summary, Tone::Bold, 0)]);
+    }
+}
+
+/// Варианты маски и клавиши диалога исключения в строке подсказок.
+fn exclude_hint(dialog: &ExcludeDialog) -> String {
     let options: Vec<String> = dialog
         .choices
         .iter()
@@ -453,11 +460,10 @@ fn exclude_lines(
             format!("{mark}{} «{mask}»", index + 1)
         })
         .collect();
-    let hint = format!(
+    format!(
         "{} · Enter — проверить и сохранить · Esc — отмена",
         options.join("   ")
-    );
-    canvas.line(hints_y, 0, vec![Seg::new(hint, Tone::Dim, 0)]);
+    )
 }
 
 /// Подсказка поля правки на вкладке «Настройки».
@@ -469,11 +475,80 @@ fn field_hint() -> Vec<Seg> {
     )]
 }
 
-fn bottom(canvas: &mut Canvas<'_>, app: &mut App) {
-    let status_y = canvas.height.saturating_sub(BOTTOM);
+/// Строки состояния над подсказками. Сообщение переносится по словам, но не больше
+/// `STATUS_LINES` строк; пустая строка состояния не даёт ни одной строки.
+fn status_rows(app: &App, width: usize) -> Vec<Seg> {
+    status_text(app).map_or_else(Vec::new, |(text, tone)| {
+        wrap(&text, width, STATUS_LINES)
+            .into_iter()
+            .map(|line| Seg::new(line, tone, 0))
+            .collect()
+    })
+}
+
+/// Текст строки состояния и его тон; `None`, когда показывать нечего.
+fn status_text(app: &App) -> Option<(String, Tone)> {
+    if let Some(confirm) = &app.confirm {
+        return Some((confirm.question.clone(), Tone::Yellow));
+    }
+    if let Some(dialog) = &app.exclude {
+        return Some((exclude_summary(app, dialog), Tone::Bold));
+    }
+    if let Some(edit) = &app.sub_edit {
+        let affected = app.sub_affected(&edit.subscription, edit.kind, &edit.text);
+        let text = format!(
+            "Маски {}: {}█ · затронет узлов: {affected}",
+            edit.kind.title(),
+            edit.text
+        );
+        return Some((text, Tone::Bold));
+    }
+    if app.saving.is_some() {
+        return Some(("⟳ Сохраняю настройки…".to_owned(), Tone::Green));
+    }
+    if let Some(run) = &app.update {
+        let target = run.target.as_deref().map_or_else(
+            || "всех подписок".to_owned(),
+            |name| format!("подписки «{name}»"),
+        );
+        let text = format!(
+            "⟳ Обновление {target}… {} с",
+            app.now.saturating_sub(run.since)
+        );
+        return Some((text, Tone::Green));
+    }
+    if let Some(run) = &app.speed {
+        let progress = match &run.progress {
+            Some(progress) if progress.run == 0 => "узел применяется".to_owned(),
+            Some(progress) => format!(
+                "замер {} из {}, {}%",
+                progress.run, progress.runs, progress.percent
+            ),
+            None => format!("{} с", app.now.saturating_sub(run.since)),
+        };
+        let text = format!(
+            "⟳ Тест скорости через «{}»: {progress} · Esc — отменить",
+            run.target
+        );
+        return Some((text, Tone::Green));
+    }
+    if let Some(notice) = &app.notice {
+        return Some((notice.text.clone(), notice.tone));
+    }
+    if matches!(app.link, Link::Up) {
+        return Some(("готов".to_owned(), Tone::Dim));
+    }
+    None
+}
+
+/// Строки состояния и строка подсказок внизу экрана.
+fn bottom(canvas: &mut Canvas<'_>, app: &mut App, status: Vec<Seg>) {
     let hints_y = canvas.height.saturating_sub(1);
-    if let Some(question) = app.confirm.as_ref().map(|confirm| confirm.question.clone()) {
-        canvas.line(status_y, 0, vec![Seg::new(question, Tone::Yellow, 0)]);
+    let top = hints_y.saturating_sub(status.len().max(1));
+    for (row, seg) in status.into_iter().enumerate() {
+        canvas.line(top + row, 0, vec![seg]);
+    }
+    if app.confirm.is_some() {
         let buttons = vec![
             (
                 "[Enter] Подтвердить".to_owned(),
@@ -487,58 +562,12 @@ fn bottom(canvas: &mut Canvas<'_>, app: &mut App) {
             ),
         ];
         pages::chips(canvas, app, hints_y, buttons);
-        return;
-    }
-    if let Some(dialog) = &app.exclude {
-        exclude_lines(canvas, app, dialog, status_y, hints_y);
-        return;
-    }
-    if let Some(edit) = &app.sub_edit {
-        let affected = app.sub_affected(&edit.subscription, edit.kind, &edit.text);
-        let text = format!(
-            "Маски {}: {}█ · затронет узлов: {affected}",
-            edit.kind.title(),
-            edit.text
-        );
-        canvas.line(status_y, 0, vec![Seg::new(text, Tone::Bold, 0)]);
+    } else if let Some(dialog) = &app.exclude {
+        canvas.line(hints_y, 0, vec![Seg::new(exclude_hint(dialog), Tone::Dim, 0)]);
+    } else if app.sub_edit.is_some() {
         let hint = "Tab — другой список · Enter — проверить и сохранить · Esc — отмена";
         canvas.line(hints_y, 0, vec![Seg::new(hint, Tone::Dim, 0)]);
-        return;
-    }
-    if app.saving.is_some() {
-        let text = "⟳ Сохраняю настройки…".to_owned();
-        canvas.line(status_y, 0, vec![Seg::new(text, Tone::Green, 0)]);
-    } else if let Some(run) = &app.update {
-        let target = run.target.as_deref().map_or_else(
-            || "всех подписок".to_owned(),
-            |name| format!("подписки «{name}»"),
-        );
-        let text = format!(
-            "⟳ Обновление {target}… {} с",
-            app.now.saturating_sub(run.since)
-        );
-        canvas.line(status_y, 0, vec![Seg::new(text, Tone::Green, 0)]);
-    } else if let Some(run) = &app.speed {
-        let progress = match &run.progress {
-            Some(progress) if progress.run == 0 => "узел применяется".to_owned(),
-            Some(progress) => format!(
-                "замер {} из {}, {}%",
-                progress.run, progress.runs, progress.percent
-            ),
-            None => format!("{} с", app.now.saturating_sub(run.since)),
-        };
-        let text = format!(
-            "⟳ Тест скорости через «{}»: {progress} · Esc — отменить",
-            run.target
-        );
-        canvas.line(status_y, 0, vec![Seg::new(text, Tone::Green, 0)]);
-    } else if let Some(notice) = &app.notice {
-        let segs = vec![Seg::new(notice.text.clone(), notice.tone, 0)];
-        canvas.line(status_y, 0, segs);
-    } else if matches!(app.link, Link::Up) {
-        canvas.line(status_y, 0, vec![Seg::new("готов", Tone::Dim, 0)]);
-    }
-    if app.input == InputMode::Filter {
+    } else if app.input == InputMode::Filter {
         canvas.line(hints_y, 0, filter_hint(app));
     } else if app.input == InputMode::Masks {
         canvas.line(hints_y, 0, masks_hint(app));
@@ -1334,5 +1363,67 @@ mod tests {
                 }
             }
         }
+    }
+
+    const WRAPPED: &str = "демон не ответил вовремя: файл настроек смонтирован отдельным файлом, его нельзя заменить: смонтируйте каталог или правьте файл на хосте и выполните raycat reload";
+
+    #[test]
+    fn a_long_status_message_wraps_above_the_hints_at_100_columns() {
+        let mut app = sample_app();
+        app.apply(Msg::Updated(Err(WRAPPED.to_owned())));
+        let lines = screen(&mut app, 100, 24);
+        let start = lines
+            .iter()
+            .position(|line| line.starts_with("Не удалось обновить"))
+            .unwrap();
+        let shown: Vec<&str> = lines[start..23]
+            .iter()
+            .map(|line| line.trim_end())
+            .collect();
+        assert_eq!(
+            shown.join(" "),
+            format!("Не удалось обновить подписки: {WRAPPED}")
+        );
+        assert!(lines[23].contains("? справка"), "{lines:?}");
+    }
+
+    #[test]
+    fn a_status_message_is_cut_only_after_three_lines_at_44_columns() {
+        let mut app = sample_app();
+        app.apply(Msg::Updated(Err(WRAPPED.to_owned())));
+        let lines = screen(&mut app, 44, 20);
+        let start = lines
+            .iter()
+            .position(|line| line.starts_with("Не удалось обновить"))
+            .unwrap();
+        assert_eq!(start, 16, "{lines:?}");
+        assert!(lines[18].ends_with('…'), "{lines:?}");
+        assert!(
+            lines[19].contains("? справка") && lines[19].contains("q выход"),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn an_expired_subscription_gives_its_date_once() {
+        let mut status = sample_status();
+        let expire = NOW - DAY;
+        let date = format_date(expire, &TimeZone::UTC);
+        status.subscriptions[0].expire = Some(expire);
+        status.subscriptions[0].note = Some(format!("истекла {date}"));
+        let mut app = app_with(status, sample_nodes());
+        let overview = screen(&mut app, 100, 30);
+        assert!(has_line(&overview, &format!("истекла {date}")), "{overview:?}");
+        assert!(!has_line(&overview, "истёк"), "{overview:?}");
+        assert_eq!(
+            overview.join("\n").matches(date.as_str()).count(),
+            1,
+            "{overview:?}"
+        );
+        press(&mut app, KeyCode::Char('3'));
+        let subs = screen(&mut app, 100, 30);
+        let row = subs.iter().find(|line| line.contains("узлов 2/3")).unwrap();
+        assert!(row.contains(&format!("истекла {date}")), "{row}");
+        assert_eq!(row.matches(date.as_str()).count(), 1, "{row}");
     }
 }
