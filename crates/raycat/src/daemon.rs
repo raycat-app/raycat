@@ -266,9 +266,9 @@ struct Daemon {
     gather_until: Option<Instant>,
     /// Правила перехвата в режиме шлюза и время следующей проверки, что они на месте.
     gateway: Option<Rules>,
-    /// Тест: замена правил перехвата отказывает, как если бы netfilter не ответил.
+    /// Тест: замена правил перехвата отказывает с этим текстом, как если бы netfilter молчал.
     #[cfg(test)]
-    refuse_rules: bool,
+    rules_refusal: Option<&'static str>,
     next_guard: Instant,
     shared: Arc<Shared>,
     selector: Selector,
@@ -357,7 +357,7 @@ impl Daemon {
             gather_until: None,
             gateway,
             #[cfg(test)]
-            refuse_rules: false,
+            rules_refusal: None,
             next_guard: now + gateway::GUARD_INTERVAL,
             shared,
             selector,
@@ -1549,7 +1549,7 @@ mod tests {
         daemon.finished("a", applied(ONE));
         assert_eq!(sub_named(&daemon, "a").nodes.len(), 1);
         let b = sub_named(&daemon, "b");
-        assert!(b.nodes.is_empty());
+        assert_eq!(b.nodes.len(), 0);
         assert!(!b.in_flight);
         assert_eq!(b.failures, 0);
         let Ok(Ok(updates)) = answer.try_recv() else {
@@ -1565,15 +1565,15 @@ mod tests {
         let mut daemon = daemon_with(&["a", "b"], "", &temp);
         daemon.load_caches();
         daemon.finished("zzz", applied(ONE));
-        assert!(sub_named(&daemon, "a").nodes.is_empty());
-        assert!(sub_named(&daemon, "b").nodes.is_empty());
+        assert_eq!(sub_named(&daemon, "a").nodes.len(), 0);
+        assert_eq!(sub_named(&daemon, "b").nodes.len(), 0);
     }
 
     #[test]
     fn a_reorder_with_refused_firewall_rules_changes_neither_order_nor_config() {
         let temp = TempDir::new("reorder-refused");
         let mut daemon = daemon_with(&["a", "b"], "[mode]\ntype = \"gateway\"\n", &temp);
-        daemon.refuse_rules = true;
+        daemon.rules_refusal = Some("правила перехвата не заменены (тест)");
         let before = daemon.config.clone();
         let text = format!(
             "{}[mode]\ntype = \"gateway\"\nkill_switch = false\n",

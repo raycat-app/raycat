@@ -359,10 +359,8 @@ impl Daemon {
         if rules != self.gateway {
             #[cfg(test)]
             {
-                if self.refuse_rules {
-                    return Err(Refusal::Unavailable(
-                        "правила перехвата не заменены (тест)".to_owned(),
-                    ));
+                if let Some(text) = self.rules_refusal {
+                    return Err(Refusal::Unavailable(text.to_owned()));
                 }
             }
             let changed = match (&self.gateway, &rules) {
