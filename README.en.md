@@ -238,7 +238,10 @@ and `Settings`. Switch tabs with a click, the keys `1`–`5`, `Tab`, `Shift+Tab`
 - **Overview**: the connection state, the current node, subscriptions briefly, the latest events.
 - **Nodes**: a table with the `▶` marker (selected) and `★` (pinned by hand), country, status and
   the failure reason in Russian. Filters: `d` hides dead nodes, `s` filters by subscription, `/`
-  searches. `Enter` opens node details, `p` or a double click pins the node.
+  searches. `Enter` opens node details, `p` or a double click pins the node. The details show
+  the protocol, the transport, the security (`reality`, `tls` or "none") and the last eight
+  checks (time, result, latency), kept in the daemon's memory. The server address, port and keys
+  are not shown; in the error text they are replaced with "…".
 - **Subscriptions**: a list and a panel for the selected subscription: provider, traffic bar,
   expiry, update interval, last and next update, live nodes out of all, how many nodes the masks
   cut, the emulated app and platform, and the link masked. A short line for an error; `Enter`
