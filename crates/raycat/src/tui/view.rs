@@ -294,7 +294,8 @@ pub(super) fn traffic_seg(used: u64, total: Option<u64>) -> Seg {
 
 /// Срок подписки прошёл. Бессрочная подписка (срок 0) не истекает.
 pub(super) fn is_expired(sub: &SubscriptionStatus, now: u64) -> bool {
-    sub.expire.is_some_and(|expire| expire != 0 && expire <= now)
+    sub.expire
+        .is_some_and(|expire| expire != 0 && expire <= now)
 }
 
 /// Состояние подписки одним словом; ошибка уходит в отдельную вкладку. Для истёкшей
@@ -563,7 +564,11 @@ fn bottom(canvas: &mut Canvas<'_>, app: &mut App, status: Vec<Seg>) {
         ];
         pages::chips(canvas, app, hints_y, buttons);
     } else if let Some(dialog) = &app.exclude {
-        canvas.line(hints_y, 0, vec![Seg::new(exclude_hint(dialog), Tone::Dim, 0)]);
+        canvas.line(
+            hints_y,
+            0,
+            vec![Seg::new(exclude_hint(dialog), Tone::Dim, 0)],
+        );
     } else if app.sub_edit.is_some() {
         let hint = "Tab — другой список · Enter — проверить и сохранить · Esc — отмена";
         canvas.line(hints_y, 0, vec![Seg::new(hint, Tone::Dim, 0)]);
@@ -1413,7 +1418,10 @@ mod tests {
         status.subscriptions[0].note = Some(format!("истекла {date}"));
         let mut app = app_with(status, sample_nodes());
         let overview = screen(&mut app, 100, 30);
-        assert!(has_line(&overview, &format!("истекла {date}")), "{overview:?}");
+        assert!(
+            has_line(&overview, &format!("истекла {date}")),
+            "{overview:?}"
+        );
         assert!(!has_line(&overview, "истёк"), "{overview:?}");
         assert_eq!(
             overview.join("\n").matches(date.as_str()).count(),
