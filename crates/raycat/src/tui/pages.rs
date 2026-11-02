@@ -421,7 +421,8 @@ fn node_details(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
     lines.extend(check_lines(node, app.now, width));
     lines.push(vec![Seg::new("Ошибка полностью:", Tone::Dim, 1)]);
     let error = node.last_error.as_deref().unwrap_or("—");
-    for line in wrap(error, width, 4) {
+    // Текст ошибки целиком: панель прокручивается, обрезать его нельзя.
+    for line in wrap(error, width, usize::MAX) {
         lines.push(vec![Seg::new(line, Tone::Dim, 0)]);
     }
     let pin_width = display_width("[p] закрепить");
@@ -470,7 +471,7 @@ fn check_lines(node: &Node, now: u64, width: usize) -> Vec<Vec<Seg>> {
             .collect::<Vec<_>>()
             .join(" · ")
     };
-    wrap(&text, width, 3)
+    wrap(&text, width, usize::MAX)
         .into_iter()
         .map(|line| vec![Seg::new(line, Tone::Dim, 0)])
         .collect()

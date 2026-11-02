@@ -126,7 +126,10 @@ mod tests {
             ("dial tcp: connection refused", "порт закрыт"),
             ("lookup example.com: no such host", "DNS"),
             ("read tcp: connection reset by peer", "разрыв"),
-            ("tls: first record does not look like a TLS handshake", "рукопожатие"),
+            (
+                "tls: first record does not look like a TLS handshake",
+                "рукопожатие",
+            ),
             ("context deadline exceeded", "нет ответа"),
             ("что-то новое", "ошибка"),
         ];
