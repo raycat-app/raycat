@@ -195,7 +195,10 @@ pub(super) fn tunnel_seg(app: &App) -> Seg {
 
 /// Пояснение к состоянию туннеля, когда живых узлов нет.
 pub(super) fn tunnel_hint(app: &App) -> Option<&'static str> {
-    let status = app.status.as_ref().filter(|_| matches!(app.link, Link::Up))?;
+    let status = app
+        .status
+        .as_ref()
+        .filter(|_| matches!(app.link, Link::Up))?;
     render::tunnel_text(status.tunnel, status.mode, status.kill_switch).hint
 }
 

@@ -566,15 +566,39 @@ mod tests {
     fn the_tunnel_state_follows_xray_and_the_selected_node() {
         use SelectStatus::{Alive, Dead, Unknown};
         let cases = [
-            (tunnel_state(false, false, Some(Alive), &[Alive]), Tunnel::XrayDown),
-            (tunnel_state(true, true, Some(Alive), &[Alive]), Tunnel::XrayStuck),
-            (tunnel_state(true, false, Some(Alive), &[Alive, Dead]), Tunnel::Working),
-            (tunnel_state(true, false, Some(Dead), &[Dead, Dead]), Tunnel::NoLiveNodes),
-            (tunnel_state(true, false, Some(Dead), &[Dead, Alive]), Tunnel::Checking),
-            (tunnel_state(true, false, Some(Unknown), &[Unknown]), Tunnel::Checking),
+            (
+                tunnel_state(false, false, Some(Alive), &[Alive]),
+                Tunnel::XrayDown,
+            ),
+            (
+                tunnel_state(true, true, Some(Alive), &[Alive]),
+                Tunnel::XrayStuck,
+            ),
+            (
+                tunnel_state(true, false, Some(Alive), &[Alive, Dead]),
+                Tunnel::Working,
+            ),
+            (
+                tunnel_state(true, false, Some(Dead), &[Dead, Dead]),
+                Tunnel::NoLiveNodes,
+            ),
+            (
+                tunnel_state(true, false, Some(Dead), &[Dead, Alive]),
+                Tunnel::Checking,
+            ),
+            (
+                tunnel_state(true, false, Some(Unknown), &[Unknown]),
+                Tunnel::Checking,
+            ),
             (tunnel_state(true, false, None, &[]), Tunnel::NoLiveNodes),
-            (tunnel_state(true, false, None, &[Unknown, Unknown]), Tunnel::Checking),
-            (tunnel_state(true, false, None, &[Dead]), Tunnel::NoLiveNodes),
+            (
+                tunnel_state(true, false, None, &[Unknown, Unknown]),
+                Tunnel::Checking,
+            ),
+            (
+                tunnel_state(true, false, None, &[Dead]),
+                Tunnel::NoLiveNodes,
+            ),
         ];
         for (actual, expected) in cases {
             assert_eq!(actual, expected);

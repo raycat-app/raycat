@@ -172,9 +172,9 @@ pub(crate) fn tunnel_text(tunnel: Tunnel, mode: Mode, kill_switch: Option<bool>)
         (Tunnel::NoLiveNodes, Mode::Gateway, Some(true)) => Some(
             "трафик заблокирован, мимо VPN он не уйдёт; адреса «напрямую» и локальной сети идут как обычно",
         ),
-        (Tunnel::NoLiveNodes, Mode::Gateway, _) => Some(
-            "TCP и UDP через узлы не пройдут; ICMP и прочий трафик вне TCP/UDP идёт напрямую",
-        ),
+        (Tunnel::NoLiveNodes, Mode::Gateway, _) => {
+            Some("TCP и UDP через узлы не пройдут; ICMP и прочий трафик вне TCP/UDP идёт напрямую")
+        }
         (Tunnel::NoLiveNodes, Mode::Proxy, _) => {
             Some("трафик через узлы не пройдёт; адреса «напрямую» идут как обычно")
         }
@@ -925,6 +925,7 @@ mod tests {
         let mut data = sample_status();
         data.xray.api_stuck = true;
         data.xray.api_silent_secs = Some(120);
+        data.tunnel = Tunnel::XrayStuck;
         let text = status(plain(), &data, NOW, &TimeZone::UTC);
         assert!(text.contains("не отвечает (120 с) (pid 4127)"));
         assert!(!text.contains("работает"));

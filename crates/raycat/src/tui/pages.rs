@@ -8,8 +8,8 @@ use raycat_proto::{Node, NodeCheck, NodeStatus, SubscriptionStatus};
 use super::app::{App, Hit, InputMode, LEVELS, Setting, SortBy, Target};
 use super::canvas::{Canvas, GAP, Seg, highlight, wrap};
 use super::view::{
-    delay_tone, speed_label, sub_phrase, subscription_title, traffic_seg, tunnel_hint,
-    tunnel_seg, xray_segs,
+    delay_tone, speed_label, sub_phrase, subscription_title, traffic_seg, tunnel_hint, tunnel_seg,
+    xray_segs,
 };
 use crate::names::{NameStyle, country_code, display_name, node_reason, node_reason_short};
 use crate::render;

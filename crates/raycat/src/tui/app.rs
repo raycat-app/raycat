@@ -3227,7 +3227,7 @@ mod tests {
     #[test]
     fn e_hides_the_excluded_nodes() {
         let mut app = nodes_app(sample());
-        app.deny = vec![("main".to_owned(), vec!["DE*".to_owned()])];
+        app.nodes[1].excluded = true;
         app.refilter();
         assert!(app.is_excluded(&app.nodes[1]));
         press(&mut app, KeyCode::Char('e'));
