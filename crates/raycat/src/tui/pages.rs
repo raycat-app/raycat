@@ -10,7 +10,7 @@ use super::canvas::{Canvas, GAP, Seg, highlight, wrap};
 use super::view::{
     delay_tone, speed_label, sub_phrase, subscription_title, traffic_seg, xray_segs,
 };
-use crate::names::{NameStyle, country_code, display_name, node_reason};
+use crate::names::{NameStyle, country_code, display_name, node_reason, node_reason_short};
 use crate::render;
 use crate::term::{Tone, display_width, pad, truncate};
 use crate::util::{format_moment, is_utc};
@@ -23,6 +23,8 @@ const CARD_ROWS: usize = 4;
 const RECENT: usize = 5;
 const STATUS_WIDTH: usize = 13;
 const REASON_MAX: usize = 40;
+/// Строки шапки подробностей узла: имя и кнопки. Остальное прокручивается.
+const NODE_HEADER_ROWS: usize = 2;
 /// Сколько символов масок видно на панели фильтров.
 const HIDDEN_WIDTH: usize = 24;
 
@@ -414,11 +416,13 @@ fn node_details(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
             Tone::Dim,
             2,
         )],
-        vec![Seg::new("Ошибка полностью:", Tone::Dim, 1)],
     ];
+    lines.push(vec![Seg::new("Последние проверки:", Tone::Dim, 1)]);
     lines.extend(check_lines(node, app.now, width));
+    lines.push(vec![Seg::new("Ошибка полностью:", Tone::Dim, 1)]);
     let error = node.last_error.as_deref().unwrap_or("—");
-    for line in wrap(error, width, 4) {
+    // Текст ошибки целиком: панель прокручивается, обрезать его нельзя.
+    for line in wrap(error, width, usize::MAX) {
         lines.push(vec![Seg::new(line, Tone::Dim, 0)]);
     }
     let pin_width = display_width("[p] закрепить");
@@ -427,9 +431,7 @@ fn node_details(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
         room,
         vec![Seg::new("Узел · подробности", Tone::Bold, 0)],
     );
-    for (row, segs) in lines.into_iter().enumerate() {
-        inner.line(row, 0, segs);
-    }
+    scroll_rows(&mut inner, lines, &mut app.details_offset);
     app.hits.push(Hit::new(2, y0 + 2, pin_width, Target::Pin));
     let speed_width = display_width("[t] тест скорости");
     app.hits.push(Hit::new(
@@ -438,6 +440,21 @@ fn node_details(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
         speed_width,
         Target::SpeedNode,
     ));
+}
+
+/// Выводит строки панели. Первые `NODE_HEADER_ROWS` неподвижны (имя и кнопки), остальные
+/// идут от `offset`; смещение ограничивается концом тела, чтобы прокрутка не уходила дальше.
+fn scroll_rows(inner: &mut Canvas<'_>, mut lines: Vec<Vec<Seg>>, offset: &mut usize) {
+    let rows = inner.height;
+    let body = lines.split_off(NODE_HEADER_ROWS.min(lines.len()));
+    let visible = rows.saturating_sub(NODE_HEADER_ROWS);
+    *offset = (*offset).min(body.len().saturating_sub(visible));
+    let shown = lines
+        .into_iter()
+        .chain(body.into_iter().skip(*offset).take(visible));
+    for (row, segs) in shown.take(rows).enumerate() {
+        inner.line(row, 0, segs);
+    }
 }
 
 /// Безопасность для показа: без шифрования в настройках xray пишут `none`, в строке — «нет».
@@ -459,7 +476,7 @@ fn check_lines(node: &Node, now: u64, width: usize) -> Vec<Vec<Seg>> {
             .collect::<Vec<_>>()
             .join(" · ")
     };
-    wrap(&text, width, 3)
+    wrap(&text, width, usize::MAX)
         .into_iter()
         .map(|line| vec![Seg::new(line, Tone::Dim, 0)])
         .collect()
@@ -512,12 +529,18 @@ fn specs(nodes: &[&Node], speed: &str, style: NameStyle) -> Vec<Spec> {
         reason = reason.max(
             node.last_error
                 .as_deref()
-                .and_then(node_reason)
+                .and_then(node_reason_short)
                 .map_or(0, display_width),
         );
     }
     let name = name.clamp(4, 48);
     let reason = reason.min(REASON_MAX);
+    // Без кода страны ни у одного узла колонка из прочерков: её нет вовсе.
+    let country = if nodes.iter().any(|node| country_code(&node.name).is_some()) {
+        6
+    } else {
+        0
+    };
     let speed_width = if speed.is_empty() {
         0
     } else {
@@ -535,7 +558,7 @@ fn specs(nodes: &[&Node], speed: &str, style: NameStyle) -> Vec<Spec> {
         spec(Kind::Name, "Узел", name.min(12), name, false),
         spec(Kind::Status, "Статус", STATUS_WIDTH, STATUS_WIDTH, false),
         spec(Kind::Latency, "Задержка", 10, 10, true),
-        spec(Kind::Country, "Страна", 6, 6, false),
+        spec(Kind::Country, "Страна", country, country, false),
         spec(Kind::Sub, "Подписка", 10, sub.clamp(10, 20), false),
         spec(Kind::Failures, "Сбои", 5, 5, true),
         spec(Kind::Reason, "Причина", reason.min(12), reason, false),
@@ -620,7 +643,7 @@ fn cell(kind: Kind, node: &Node, speed: &str, style: NameStyle, excluded: bool) 
         Kind::Reason => (
             node.last_error
                 .as_deref()
-                .and_then(node_reason)
+                .and_then(node_reason_short)
                 .unwrap_or("")
                 .to_owned(),
             Tone::Red,

@@ -67,21 +67,51 @@ fn parse_failed(error: &clap::Error) -> ExitCode {
     }
 }
 
+/// Куда попадает команда верхнего уровня. Тест перебирает все команды clap и требует маршрут у каждой.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Route {
+    /// Разговор с запущенным демоном через `ctl::run`.
+    Ctl,
+    Health,
+    Tui,
+    Init,
+    Config,
+    Completions,
+    Man,
+    Help,
+    /// Нужны загруженный файл настроек и стор.
+    Settings,
+}
+
+fn route(name: &str) -> Option<Route> {
+    Some(match name {
+        "status" | "nodes" | "use" | "update" | "reload" | "speedtest" | "events" => Route::Ctl,
+        "health" => Route::Health,
+        "tui" => Route::Tui,
+        "init" => Route::Init,
+        "config" => Route::Config,
+        "completions" => Route::Completions,
+        "man" => Route::Man,
+        "help" => Route::Help,
+        "daemon" | "check" | "fetch" | "identity" => Route::Settings,
+        _ => return None,
+    })
+}
+
 fn run(matches: &ArgMatches) -> Result<()> {
     let (name, sub) = matches.subcommand().context("не указана команда")?;
     let env = paths::environment();
-    match name {
-        "status" | "nodes" | "use" | "update" | "speedtest" | "events" => {
-            return ctl::run(name, sub, &env);
-        }
-        "health" => return ctl::health(&env),
-        "tui" => return tui::run(&env),
-        "init" => return init::run(sub, &env),
-        "config" => return commands::show_config(sub, &env),
-        "completions" => return manual::completions(sub),
-        "man" => return manual::man(),
-        "help" => return cli::show_help(sub),
-        _ => {}
+    let kind = route(name).with_context(|| format!("неизвестная команда {name}"))?;
+    match kind {
+        Route::Ctl => return ctl::run(name, sub, &env),
+        Route::Health => return ctl::health(&env),
+        Route::Tui => return tui::run(&env),
+        Route::Init => return init::run(sub, &env),
+        Route::Config => return commands::show_config(sub, &env),
+        Route::Completions => return manual::completions(sub),
+        Route::Man => return manual::man(),
+        Route::Help => return cli::show_help(sub),
+        Route::Settings => {}
     }
     let file = paths::config_file(
         cli::config_path(sub).map(std::path::PathBuf::as_path),
@@ -110,5 +140,23 @@ fn run(matches: &ArgMatches) -> Result<()> {
         }
         "identity" => commands::identity(&config, &store),
         other => bail!("неизвестная команда {other}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_command_has_a_route() {
+        for sub in cli::command().get_subcommands() {
+            let name = sub.get_name();
+            assert!(route(name).is_some(), "{name}");
+        }
+    }
+
+    #[test]
+    fn reload_goes_to_the_daemon() {
+        assert_eq!(route("reload"), Some(Route::Ctl));
     }
 }

@@ -23,6 +23,7 @@ pub use model::{
 };
 pub use pattern::{Pattern, escape_literal};
 pub use show::effective;
+pub use units::format_duration;
 
 #[cfg(feature = "schema")]
 #[doc(hidden)]

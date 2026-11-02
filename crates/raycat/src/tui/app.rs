@@ -682,6 +682,8 @@ pub(super) struct App {
     pub(super) tab: Tab,
     /// Открыта панель подробностей узла или подписки.
     pub(super) details: bool,
+    /// Сколько строк прокручено вниз в подробностях узла (после шапки с кнопками).
+    pub(super) details_offset: usize,
     /// Позиция курсора среди видимых узлов.
     pub(super) cursor: usize,
     /// Первая показанная строка таблицы узлов.
@@ -758,6 +760,7 @@ impl App {
             input: InputMode::Normal,
             tab: Tab::Overview,
             details: false,
+            details_offset: 0,
             cursor: 0,
             offset: 0,
             sub_cursor: 0,
@@ -1446,6 +1449,7 @@ impl App {
             Tab::Nodes => {
                 if self.current().is_some() {
                     self.details = !self.details;
+                    self.details_offset = 0;
                 } else {
                     self.notify(Tone::Yellow, "Нет узла для подробностей", NOTICE_SECS);
                 }
@@ -1483,6 +1487,9 @@ impl App {
 
     fn scroll_up(&mut self, by: usize) {
         match self.tab {
+            Tab::Nodes if self.details => {
+                self.details_offset = self.details_offset.saturating_sub(by);
+            }
             Tab::Nodes => self.move_up(by),
             Tab::Subscriptions => self.sub_cursor = self.sub_cursor.saturating_sub(by),
             Tab::Journal => self.journal_back = self.journal_back.saturating_add(by),
@@ -1493,6 +1500,9 @@ impl App {
 
     fn scroll_down(&mut self, by: usize) {
         match self.tab {
+            Tab::Nodes if self.details => {
+                self.details_offset = self.details_offset.saturating_add(by);
+            }
             Tab::Nodes => self.move_down(by),
             Tab::Subscriptions => {
                 self.sub_cursor = self.sub_cursor.saturating_add(by).min(self.last_sub());
@@ -1506,6 +1516,9 @@ impl App {
     /// Home и End: в начало или в конец списка текущей вкладки.
     fn jump(&mut self, end: bool) {
         match self.tab {
+            Tab::Nodes if self.details => {
+                self.details_offset = if end { usize::MAX } else { 0 };
+            }
             Tab::Nodes => self.move_to(if end { usize::MAX } else { 0 }),
             Tab::Subscriptions => self.sub_cursor = if end { self.last_sub() } else { 0 },
             Tab::Journal => self.journal_back = if end { 0 } else { usize::MAX },

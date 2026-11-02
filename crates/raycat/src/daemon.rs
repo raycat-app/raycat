@@ -282,7 +282,9 @@ struct Daemon {
     xray_started: Option<Instant>,
     /// Последний успешный ответ API xray на текущем процессе.
     last_api_ok: Option<Instant>,
-    xray_starts: u32,
+    /// Неожиданные падения xray и перезапуски зависшего: счётчик «перезапускался» в шапке.
+    /// Плановые перезапуски после смены настроек и узлов сюда не входят.
+    xray_crashes: u32,
     /// Алгоритм TCP для соединений к узлам, выбранный при старте процесса.
     tcp_congestion: Option<String>,
     /// Предупреждение о буферах UDP уже проверено: оно один раз за запуск.
@@ -370,7 +372,7 @@ impl Daemon {
             xray_current: false,
             xray_started: None,
             last_api_ok: None,
-            xray_starts: 0,
+            xray_crashes: 0,
             tcp_congestion: None,
             udp_buffers_checked: false,
             next_select: now,
@@ -561,7 +563,6 @@ impl Daemon {
         self.xray_current = true;
         self.xray_started = Some(Instant::now());
         self.last_api_ok = None;
-        self.xray_starts = self.xray_starts.saturating_add(1);
         self.next_select = Instant::now() + FIRST_SELECT_DELAY;
         self.shared.emit(Event::Xray {
             state: XrayState::Started,
@@ -578,6 +579,7 @@ impl Daemon {
         if exit.uptime >= HEALTHY_UPTIME {
             self.backoff = RESTART_FIRST;
         }
+        self.xray_crashes = self.xray_crashes.saturating_add(1);
         self.drop_api();
         self.shared.emit(Event::Xray {
             state: XrayState::Exited,
@@ -1144,6 +1146,18 @@ mod tests {
         let sub = &daemon.status().subscriptions[0];
         assert_eq!(sub.last_error.as_deref(), Some("нет связи"));
         assert_eq!(sub.nodes, 1);
+    }
+
+    #[test]
+    fn a_crash_counts_as_an_xray_restart() {
+        let temp = TempDir::new("crash-count");
+        let mut daemon = daemon(&["a"], &temp);
+        assert_eq!(daemon.status().xray.restarts, 0);
+        daemon.crashed(&Exit {
+            status: "exit status: 1".to_owned(),
+            uptime: Duration::from_secs(1),
+        });
+        assert_eq!(daemon.status().xray.restarts, 1);
     }
 
     #[test]

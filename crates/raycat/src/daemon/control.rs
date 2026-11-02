@@ -283,6 +283,7 @@ impl Daemon {
             return;
         }
         warn!("xray не отвечает {} с — перезапускаю", silence.as_secs());
+        self.xray_crashes = self.xray_crashes.saturating_add(1);
         self.restart = Restart::Now;
     }
 
@@ -376,7 +377,7 @@ impl Daemon {
             xray: XrayStatus {
                 running: pid.is_some(),
                 pid,
-                restarts: self.xray_starts.saturating_sub(1),
+                restarts: self.xray_crashes,
                 api_silent_secs: silence.map(|silence| silence.as_secs()),
                 api_stuck: silence.is_some_and(|silence| silence > limit),
             },

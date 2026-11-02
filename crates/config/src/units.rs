@@ -49,20 +49,29 @@ fn split_number(text: &str) -> Option<(u64, &str)> {
     Some((number, text.get(digits..)?))
 }
 
-pub(crate) fn format_duration(duration: Duration) -> String {
-    let millis = duration.as_millis();
+/// Запись, которую читает `parse_duration`: `150ms`, `1s500ms`, `30s`, `5m`, `1h30m`, `1d`.
+/// Меньше секунды — только миллисекунды; дальше единицы идут от крупных к мелким без нулевых.
+pub fn format_duration(duration: Duration) -> String {
+    use std::fmt::Write as _;
+    let mut millis = duration.as_millis();
+    if millis < 1_000 {
+        return format!("{millis}ms");
+    }
+    let mut out = String::new();
     for (suffix, unit) in [
         ("d", 86_400_000),
         ("h", 3_600_000),
         ("m", 60_000),
         ("s", 1_000),
+        ("ms", 1),
     ] {
         let count = millis / unit;
-        if count > 0 && count * unit == millis {
-            return format!("{count}{suffix}");
+        if count > 0 {
+            let _ = write!(out, "{count}{suffix}");
+            millis -= count * unit;
         }
     }
-    format!("{millis}ms")
+    out
 }
 
 pub(crate) fn format_size(bytes: u64) -> String {
@@ -120,12 +129,32 @@ mod tests {
     #[test]
     fn formatting() {
         assert_eq!(format_duration(Duration::from_millis(150)), "150ms");
-        assert_eq!(format_duration(Duration::from_secs(90)), "90s");
+        assert_eq!(format_duration(Duration::from_millis(1_500)), "1s500ms");
+        assert_eq!(format_duration(Duration::from_secs(30)), "30s");
+        assert_eq!(format_duration(Duration::from_secs(90)), "1m30s");
+        assert_eq!(format_duration(Duration::from_secs(300)), "5m");
+        assert_eq!(format_duration(Duration::from_secs(5_400)), "1h30m");
         assert_eq!(format_duration(Duration::from_secs(600)), "10m");
         assert_eq!(format_duration(Duration::from_secs(30 * 86_400)), "30d");
+        assert_eq!(format_duration(Duration::from_secs(90_000)), "1d1h");
         assert_eq!(format_duration(Duration::ZERO), "0ms");
         assert_eq!(format_size(48 << 20), "48MiB");
         assert_eq!(format_size(16 << 30), "16GiB");
         assert_eq!(format_size(1_500), "1500B");
+    }
+
+    #[test]
+    fn formatted_durations_read_back_to_the_same_value() {
+        for value in [
+            Duration::from_millis(150),
+            Duration::from_millis(1_500),
+            Duration::from_secs(30),
+            Duration::from_secs(300),
+            Duration::from_secs(5_400),
+            Duration::from_secs(86_400),
+        ] {
+            let text = format_duration(value);
+            assert_eq!(parse_duration(&text), Some(value), "{text}");
+        }
     }
 }

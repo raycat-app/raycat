@@ -216,6 +216,19 @@ if [ "$mode" = guard ]; then
   exit 0
 fi
 
+echo "== raycat reload: правка ключа журнала применяется на лету, xray не перезапускается"
+sed -i 's/^level = "debug"$/level = "info"/' "$here/gateway/config.toml"
+reload_out=$(gateway_run raycat reload --json) || fail "raycat reload не отработал: $reload_out"
+grep -q '"changed": true' <<<"$reload_out" || fail "raycat reload не заметил правку файла: $reload_out"
+grep -q '"xray_restart": false' <<<"$reload_out" || fail "правка журнала перезапустила xray: $reload_out"
+grep -q '"restart_required": \[\]' <<<"$reload_out" || fail "правка журнала требует перезапуска: $reload_out"
+again_out=$(gateway_run raycat reload --json) || fail "повторный raycat reload не отработал: $again_out"
+grep -q '"changed": false' <<<"$again_out" || fail "повторный reload без правок показал изменения: $again_out"
+sed -i 's/^level = "info"$/level = "debug"/' "$here/gateway/config.toml"
+gateway_run raycat reload >/dev/null || fail "не удалось вернуть журнал на debug"
+expect_via_node "$site" "${nodes_inet[@]}"
+echo "  правка log.level применена без перезапуска"
+
 echo "== kill switch: xray убит, демон заморожен"
 docker kill --signal STOP "$gateway" >/dev/null
 gateway_run sh -c 'kill -9 $(pidof xray)'
