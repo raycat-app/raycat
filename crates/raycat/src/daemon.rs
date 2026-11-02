@@ -1820,7 +1820,7 @@ mod tests {
         assert!(!written.contains("deny = []"), "{written}");
         assert!(written.contains("# deny = [\"Two\"]"), "{written}");
         assert!(written.contains("priority = [\"Two\"]"), "{written}");
-        assert!(daemon.config.subscriptions[0].deny.is_empty());
+        assert!(daemon.config.subscriptions[0].deny.first().is_none());
         assert_eq!(daemon.applied_nodes, 2);
     }
 }
