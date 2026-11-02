@@ -137,6 +137,8 @@ jobs:
           path: |
             target/tui.svg
             target/tui-nodes.svg
+            target/tui-settings.svg
+            target/tui-subscriptions.svg
           retention-days: 7
 
   # Единственная задача, которая пишет кэш dev: остальные задачи с профилем dev его только читают.

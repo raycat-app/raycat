@@ -13,7 +13,8 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Color, Modifier};
 use raycat_proto::{
-    CurrentNode, Event, Mode, Node, NodeStatus, Nodes, Status, SubscriptionStatus, XrayStatus,
+    CurrentNode, Event, Mode, Node, NodeStatus, Nodes, SettingItem, SettingValue, SettingsView,
+    Status, SubscriptionStatus, XrayStatus,
 };
 
 use super::app::{App, Msg, Snapshot};
@@ -36,6 +37,18 @@ const COMMITTED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/tui.s
 const COMMITTED_NODES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/tui-nodes.svg");
 const WRITTEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/tui.svg");
 const WRITTEN_NODES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/tui-nodes.svg");
+const COMMITTED_SETTINGS: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/tui-settings.svg");
+const WRITTEN_SETTINGS: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/tui-settings.svg");
+const COMMITTED_SUBSCRIPTIONS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/tui-subscriptions.svg"
+);
+const WRITTEN_SUBSCRIPTIONS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../target/tui-subscriptions.svg"
+);
 
 // Всё в десятых долях пикселя: так SVG записывается целыми числами.
 const CELL_W: usize = 84;
@@ -364,6 +377,10 @@ fn demo_status() -> Status {
                 next_update: Some(NOW + 42 * 60),
                 last_error: None,
                 updating: false,
+                app: "happ".to_owned(),
+                platform: "windows".to_owned(),
+                update_interval_secs: Some(6 * HOUR),
+                cut: 1,
             },
             SubscriptionStatus {
                 name: "backup".to_owned(),
@@ -377,6 +394,10 @@ fn demo_status() -> Status {
                 next_update: Some(NOW + 2 * HOUR),
                 last_error: None,
                 updating: false,
+                app: "happ".to_owned(),
+                platform: "windows".to_owned(),
+                update_interval_secs: Some(6 * HOUR),
+                cut: 1,
             },
         ],
     }
@@ -474,4 +495,55 @@ fn tui_screenshot_nodes_matches_assets() {
     let mut app = demo_app();
     app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
     check(&mut app, COMMITTED_NODES, WRITTEN_NODES);
+}
+
+fn demo_setting(table: &str, key: &str, value: SettingValue, source: &str) -> SettingItem {
+    SettingItem {
+        table: Some(table.to_owned()),
+        subscription: None,
+        key: key.to_owned(),
+        value,
+        source: source.to_owned(),
+    }
+}
+
+fn demo_settings() -> SettingsView {
+    let text = |value: &str| SettingValue::Text(value.to_owned());
+    SettingsView {
+        items: vec![
+            demo_setting("routing", "ru_direct", SettingValue::Bool(true), "из файла"),
+            demo_setting(
+                "mode",
+                "kill_switch",
+                SettingValue::Bool(true),
+                "по умолчанию",
+            ),
+            demo_setting("selection", "check_interval", text("30s"), "по умолчанию"),
+            demo_setting("selection", "failures", SettingValue::Number(3), "из файла"),
+            demo_setting("selection", "switch_gain", text("150ms"), "по умолчанию"),
+            demo_setting("selection", "return_delay", text("5m"), "по умолчанию"),
+            demo_setting(
+                "xray",
+                "xhttp_connections",
+                text(raycat_proto::XHTTP_PROVIDER),
+                "по умолчанию",
+            ),
+            demo_setting("log", "level", text("warn"), "из файла"),
+        ],
+    }
+}
+
+#[test]
+fn tui_screenshot_settings_matches_assets() {
+    let mut app = demo_app();
+    app.apply(Msg::Settings(Ok(demo_settings())));
+    app.handle_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE));
+    check(&mut app, COMMITTED_SETTINGS, WRITTEN_SETTINGS);
+}
+
+#[test]
+fn tui_screenshot_subscriptions_matches_assets() {
+    let mut app = demo_app();
+    app.handle_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
+    check(&mut app, COMMITTED_SUBSCRIPTIONS, WRITTEN_SUBSCRIPTIONS);
 }

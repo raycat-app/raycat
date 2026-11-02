@@ -719,6 +719,10 @@ mod tests {
             next_update: Some(NOW + 3 * 3_600),
             last_error: None,
             updating: false,
+            app: "happ".to_owned(),
+            platform: "windows".to_owned(),
+            update_interval_secs: None,
+            cut: 0,
         }
     }
 

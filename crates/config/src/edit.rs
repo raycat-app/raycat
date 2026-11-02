@@ -252,6 +252,88 @@ fn comment_out(text: &str, table: &str, key: &str) -> String {
     join(text, &lines)
 }
 
+/// Переставляет блок `[[subscription]]` с именем `name` на место `to` (с нуля). Блоки идут
+/// подряд; комментарии сразу над заголовком едут вместе с блоком, пустые строки между
+/// блоками остаются на своих местах.
+pub fn move_subscription(text: &str, name: &str, to: usize) -> Result<String, Error> {
+    let doc: DocumentMut = text
+        .parse()
+        .map_err(|error: toml_edit::TomlError| Error::Parse(error.to_string()))?;
+    let tables = doc
+        .get("subscription")
+        .and_then(Item::as_array_of_tables)
+        .ok_or_else(|| Error::NoSubscription(name.to_owned()))?;
+    let names: Vec<String> = tables
+        .iter()
+        .enumerate()
+        .map(|(index, table)| subscription_name(index, table))
+        .collect();
+    let from = names
+        .iter()
+        .position(|candidate| candidate == name)
+        .ok_or_else(|| Error::NoSubscription(name.to_owned()))?;
+    let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    let headers: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.trim().starts_with("[[subscription]]"))
+        .map(|(index, _)| index)
+        .collect();
+    if headers.len() != names.len() {
+        return Err(Error::Parse(
+            "заголовки [[subscription]] записаны нестандартно, подписки не переставлены".to_owned(),
+        ));
+    }
+    let last = headers[headers.len() - 1];
+    let next_table = lines[last + 1..]
+        .iter()
+        .position(|line| line.trim_start().starts_with('['))
+        .map_or(lines.len(), |offset| last + 1 + offset);
+    let mut tail = next_table;
+    while tail > last + 1 && lines[tail - 1].trim_start().starts_with('#') {
+        tail -= 1;
+    }
+    let mut starts = Vec::with_capacity(headers.len());
+    for (index, header) in headers.iter().enumerate() {
+        let floor = if index == 0 {
+            0
+        } else {
+            headers[index - 1] + 1
+        };
+        let mut start = *header;
+        while start > floor && lines[start - 1].trim_start().starts_with('#') {
+            start -= 1;
+        }
+        starts.push(start);
+    }
+    // Каждый блок: (начало, конец содержимого, конец вместе с пустыми строками).
+    let mut blocks = Vec::with_capacity(headers.len());
+    for (index, header) in headers.iter().enumerate() {
+        let end = starts.get(index + 1).copied().unwrap_or(tail);
+        let mut content_end = end;
+        while content_end > header + 1 && lines[content_end - 1].trim().is_empty() {
+            content_end -= 1;
+        }
+        blocks.push((starts[index], content_end, end));
+    }
+    let mut order: Vec<usize> = (0..blocks.len()).collect();
+    let moved = order.remove(from);
+    order.insert(to.min(order.len()), moved);
+    let mut out: Vec<String> = lines[..blocks[0].0].to_vec();
+    for (slot, source) in order.iter().enumerate() {
+        let (start, content_end, _) = blocks[*source];
+        out.extend_from_slice(&lines[start..content_end]);
+        let (_, slot_content_end, slot_end) = blocks[slot];
+        out.extend_from_slice(&lines[slot_content_end..slot_end]);
+    }
+    out.extend_from_slice(&lines[tail..]);
+    let result = join(text, &out);
+    result
+        .parse::<DocumentMut>()
+        .map_err(|error| Error::Parse(error.to_string()))?;
+    Ok(result)
+}
+
 fn join(text: &str, lines: &[String]) -> String {
     let mut out = lines.join("\n");
     if text.ends_with('\n') {
@@ -554,6 +636,25 @@ mod tests {
         assert!(matches!(writable(&path), Err(Error::ReadOnly(_))));
         assert_eq!(fs::read_to_string(&path).unwrap(), "old = 1\n");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_subscription_moves_with_its_comments_and_the_rest_stays() {
+        let text = "[routing]\nru_direct = false\n\n# основная\n[[subscription]]\nname = \"main\"\nurl = \"https://a.example.com/x\"\n\n# резервная\n[[subscription]]\nname = \"backup\"\nurl = \"https://b.example.com/x\"\n\n[xray]\npath = \"/x\"\n";
+        let out = move_subscription(text, "backup", 0).unwrap();
+        let expected = "[routing]\nru_direct = false\n\n# резервная\n[[subscription]]\nname = \"backup\"\nurl = \"https://b.example.com/x\"\n\n# основная\n[[subscription]]\nname = \"main\"\nurl = \"https://a.example.com/x\"\n\n[xray]\npath = \"/x\"\n";
+        assert_eq!(out, expected);
+        let back = move_subscription(&out, "main", 0).unwrap();
+        assert_eq!(back, text);
+    }
+
+    #[test]
+    fn moving_an_unknown_subscription_is_refused() {
+        let text = "[[subscription]]\nname = \"main\"\nurl = \"https://a.example.com/x\"\n";
+        assert!(matches!(
+            move_subscription(text, "nope", 0),
+            Err(Error::NoSubscription(_))
+        ));
     }
 
     #[test]

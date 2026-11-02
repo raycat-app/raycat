@@ -667,11 +667,16 @@ pub(super) fn subscriptions(
     end: usize,
     zone: &TimeZone,
 ) {
-    let buttons = vec![(
-        "[u] Обновить подписку".to_owned(),
-        Tone::Bold,
-        Some(Target::UpdateSub),
-    )];
+    let buttons = vec![
+        (
+            "[u] Обновить".to_owned(),
+            Tone::Bold,
+            Some(Target::UpdateSub),
+        ),
+        ("[m] Маски".to_owned(), Tone::Bold, Some(Target::SubMasks)),
+        ("[ выше".to_owned(), Tone::Plain, Some(Target::SubUp)),
+        ("ниже ]".to_owned(), Tone::Plain, Some(Target::SubDown)),
+    ];
     chips(canvas, app, top, buttons);
     let y0 = top + 1;
     if y0 >= end {
@@ -687,8 +692,9 @@ pub(super) fn subscriptions(
     let list_rows = (count.max(1) + FRAME).min(room);
     let found = sub_list(canvas, app, y0, list_rows, selected, zone);
     app.hits.extend(found);
-    if app.details {
-        sub_details(canvas, app, y0 + list_rows, selected, zone);
+    let panel_top = y0 + list_rows;
+    if end > panel_top + FRAME {
+        sub_details(canvas, app, panel_top, end - panel_top, selected, zone);
     }
 }
 
@@ -746,8 +752,16 @@ fn sub_list(
     found
 }
 
-/// Подробности выбранной подписки: провайдер, трафик, сроки, полная ошибка.
-fn sub_details(canvas: &mut Canvas<'_>, app: &App, top: usize, selected: usize, zone: &TimeZone) {
+/// Панель выбранной подписки в рамке: провайдер, трафик, сроки, обновления, узлы, маски и
+/// состояние. Ошибка короткой фразой; полный текст — когда открыт (Enter).
+fn sub_details(
+    canvas: &mut Canvas<'_>,
+    app: &App,
+    top: usize,
+    height: usize,
+    selected: usize,
+    zone: &TimeZone,
+) {
     let Some(sub) = app
         .status
         .as_ref()
@@ -757,18 +771,27 @@ fn sub_details(canvas: &mut Canvas<'_>, app: &App, top: usize, selected: usize, 
     };
     let width = canvas.width.saturating_sub(4);
     let now = app.now;
+    let alive = app
+        .nodes
+        .iter()
+        .filter(|node| node.subscription == sub.name && node.status == NodeStatus::Alive)
+        .count();
     let provider = sub
         .title
         .as_deref()
         .filter(|title| !title.is_empty())
         .unwrap_or("не указан");
-    let traffic = sub.used_bytes.map_or_else(
-        || "—".to_owned(),
-        |used| render::traffic_text(used, sub.total_bytes).0,
+    let traffic = match sub.used_bytes {
+        Some(used) => traffic_seg(used, sub.total_bytes),
+        None => Seg::new("—", Tone::Dim, 0),
+    };
+    let (expiry, expiry_tone) = sub.expire.map_or_else(
+        || ("—".to_owned(), Tone::Dim),
+        |expire| render::expiry_text(expire, now, zone),
     );
-    let expiry = sub.expire.map_or_else(
-        || "—".to_owned(),
-        |expire| render::expiry_text(expire, now, zone).0,
+    let interval = sub.update_interval_secs.map_or_else(
+        || "по ответу провайдера".to_owned(),
+        |secs| format!("каждые {}", render::span(secs)),
     );
     let updated = match sub.updated_at {
         Some(then) => format!(
@@ -781,23 +804,59 @@ fn sub_details(canvas: &mut Canvas<'_>, app: &App, top: usize, selected: usize, 
         ),
         None => "ещё не получена".to_owned(),
     };
+    let (phrase, phrase_tone) = sub_phrase(sub, now);
     let mut lines: Vec<Vec<Seg>> = vec![
-        vec![Seg::new(format!("Провайдер: {provider}"), Tone::Plain, 0)],
-        vec![Seg::new(format!("Трафик: {traffic}"), Tone::Plain, 0)],
-        vec![Seg::new(format!("Срок: {expiry}"), Tone::Plain, 0)],
+        vec![
+            Seg::new(format!("Провайдер: {provider}"), Tone::Plain, 0),
+            Seg::new(
+                format!("эмуляция: {} · {}", sub.app, sub.platform),
+                Tone::Dim,
+                2,
+            ),
+        ],
+        vec![Seg::new("Трафик:", Tone::Plain, 0), traffic],
+        vec![
+            Seg::new("Срок:", Tone::Plain, 0),
+            Seg::new(expiry, expiry_tone, 0),
+        ],
+        vec![Seg::new(format!("Обновление: {interval}"), Tone::Plain, 0)],
         vec![Seg::new(format!("Обновлена: {updated}"), Tone::Plain, 0)],
+        vec![
+            Seg::new(
+                format!("Узлов живых: {alive} из {}", sub.nodes),
+                Tone::Plain,
+                0,
+            ),
+            Seg::new(format!("отсечено масками: {}", sub.cut), Tone::Plain, 1),
+        ],
+        vec![Seg::new(format!("Ссылка: {}", sub.url), Tone::Dim, 1)],
+        vec![
+            Seg::new("Состояние:", Tone::Plain, 0),
+            Seg::new(phrase, phrase_tone, 0),
+        ],
     ];
     match &sub.last_error {
-        Some(error) => {
+        Some(error) if app.details => {
             lines.push(vec![Seg::new("Ошибка полностью:", Tone::Red, 0)]);
             for line in wrap(error, width, 4) {
                 lines.push(vec![Seg::new(line, Tone::Red, 0)]);
             }
         }
+        Some(_) => lines.push(vec![Seg::new(
+            "Ошибка при обновлении: Enter покажет текст полностью",
+            Tone::Red,
+            0,
+        )]),
         None => lines.push(vec![Seg::new("Ошибок нет", Tone::Dim, 0)]),
     }
-    for (row, segs) in lines.into_iter().enumerate() {
-        canvas.line(top + row, 2, segs);
+    let mut inner = canvas.framed(
+        top,
+        height,
+        vec![Seg::new(format!("Подписка «{}»", sub.name), Tone::Bold, 0)],
+    );
+    let rows = inner.height;
+    for (row, segs) in lines.into_iter().take(rows).enumerate() {
+        inner.line(row, 0, segs);
     }
 }
 
@@ -895,6 +954,10 @@ fn journal_lines(
 /// Ширина названия строки и значения; источник идёт сразу за значением.
 const SETTING_TITLE: usize = 23;
 const SETTING_VALUE: usize = 26;
+/// Ниже этой ширины между названием и значением один пробел.
+const NARROW: usize = 60;
+/// Четыре уровня журнала в строке: `error  [warn]  info  debug`.
+const LEVEL_CHOICES: usize = 26;
 
 /// Вкладка «Настройки»: строки демона и вида TUI. Каждая строка — две строки экрана:
 /// название, значение и источник, под ними пояснение или ошибка. Внизу — файл настроек.
@@ -934,8 +997,10 @@ fn setting_row(canvas: &mut Canvas<'_>, app: &mut App, index: usize, setting: Se
     let title_style = if shown.enabled { bold } else { dim };
     canvas.put_style(0, y, if selected { "▶ " } else { "  " }, 2, plain);
     canvas.put_style(2, y, setting.title(), SETTING_TITLE, title_style);
-    let value_x = 2 + SETTING_TITLE + GAP;
-    if setting == Setting::LogLevel && shown.enabled {
+    let gap = if canvas.width < NARROW { 1 } else { GAP };
+    let value_x = 2 + SETTING_TITLE + gap;
+    let value_room = canvas.width.saturating_sub(value_x);
+    if setting == Setting::LogLevel && shown.enabled && value_room >= LEVEL_CHOICES {
         level_choices(canvas, app, &shown.value, y, value_x, selected);
     } else {
         let text = if editing {
@@ -945,25 +1010,32 @@ fn setting_row(canvas: &mut Canvas<'_>, app: &mut App, index: usize, setting: Se
         } else {
             shown.value.clone()
         };
-        let width = display_width(&text).min(SETTING_VALUE);
+        let width = display_width(&text).min(value_room);
         let style = if shown.enabled { bold } else { dim };
-        canvas.put_style(value_x, y, &text, SETTING_VALUE, style);
+        canvas.put_style(value_x, y, &text, value_room, style);
         if shown.enabled {
             app.hits
                 .push(Hit::new(value_x, y, width, Target::SettingCell(index)));
         }
     }
+    // Источник скрывается первым, когда на строке не хватает места.
     let source_x = value_x + SETTING_VALUE + GAP;
-    let room = canvas.width.saturating_sub(source_x);
-    canvas.put_style(source_x, y, &shown.source, room, dim);
+    let source_room = canvas.width.saturating_sub(source_x);
+    if display_width(&shown.source) <= source_room {
+        canvas.put_style(source_x, y, &shown.source, source_room, dim);
+    }
     let error = app
         .setting_error
         .as_ref()
         .filter(|(row, _)| *row == index)
         .map(|(_, text)| text.clone());
+    // Пояснение скрывается, когда не помещается: ошибка показывается всегда.
     let (text, tone) = match error {
         Some(text) => (text, Tone::Red),
-        None => (setting.hint().to_owned(), Tone::Dim),
+        None if display_width(setting.hint()) + 2 <= canvas.width => {
+            (setting.hint().to_owned(), Tone::Dim)
+        }
+        None => (String::new(), Tone::Dim),
     };
     let style = if selected {
         highlight()
