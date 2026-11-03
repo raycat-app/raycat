@@ -1094,10 +1094,10 @@ mod tests {
         assert_eq!(latency_tone(Some(LATENCY_SLOW_MS)), Tone::Red);
         let mut data = sample_nodes();
         data.nodes[0].latency_ms = Some(99);
-        data.nodes[1].latency_ms = Some(400);
+        data.nodes[1].latency_ms = Some(1000);
         let text = nodes(Term::new(true, None), &data, false);
         assert!(text.contains("\x1b[92m99 мс\x1b[0m"), "{text}");
-        assert!(text.contains("\x1b[91m400 мс\x1b[0m"), "{text}");
+        assert!(text.contains("\x1b[91m1000 мс\x1b[0m"), "{text}");
         assert!(!nodes(plain(), &data, false).contains('\x1b'));
     }
 
