@@ -75,6 +75,14 @@ impl Selector {
         self.reset_streaks();
     }
 
+    /// Забывает проверки всех узлов: после перезапуска xray прежние результаты относятся к
+    /// другому процессу. Текущий выбор остаётся, пока новые проверки не покажут его состояние.
+    pub fn forget_health(&mut self) {
+        for node in &mut self.nodes {
+            node.state = NodeState::default();
+        }
+    }
+
     /// Один шаг: учитывает новые проверки и решает, какой узел закрепить.
     pub fn step(&mut self, now: Duration, health: &[Health]) -> Decision {
         self.observe(health);

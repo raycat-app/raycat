@@ -23,7 +23,7 @@ pub(crate) const LATENCY_SLOW_MS: u64 = 400;
 const ERROR_WIDTH: usize = 40;
 const COLUMN_GAP: usize = 2;
 const COLUMNS_WITHOUT_ERROR: usize = 7;
-const NODE_LEGEND: &str = "▶ выбран  ★ закреплён  ● жив  ○ не проверен  ✗ не отвечает";
+const NODE_LEGEND: &str = "► выбран  * закреплён  ● жив  ○ не проверен  × не отвечает";
 
 fn field(term: Term, indent: usize, label: &str, value: &str) -> String {
     format!(
@@ -252,7 +252,12 @@ fn node_lines(term: Term, node: Option<&CurrentNode>) -> Vec<String> {
     };
     lines.push(field(term, 2, "выбор:", &choice));
     if let Some(reason) = &node.reason {
-        lines.push(field(term, 2, "причина:", &sanitize(reason)));
+        lines.push(field(
+            term,
+            2,
+            "причина:",
+            &display_name(reason, NameStyle::Country),
+        ));
     }
     lines
 }
@@ -396,12 +401,12 @@ fn node_columns() -> Vec<Column> {
     ]
 }
 
-/// Маркер строки узла: текущий — `▶`, закреплённый — `★`, оба — `▶★`.
+/// Маркер строки узла: текущий — `►`, закреплённый — `*`, оба — `►*`.
 pub(crate) fn node_marker(node: &Node) -> (&'static str, Tone) {
     match (node.selected, node.pinned) {
-        (true, true) => ("▶★", Tone::Green),
-        (true, false) => ("▶", Tone::Green),
-        (false, true) => ("★", Tone::Yellow),
+        (true, true) => ("►*", Tone::Green),
+        (true, false) => ("►", Tone::Green),
+        (false, true) => ("*", Tone::Yellow),
         (false, false) => ("", Tone::Plain),
     }
 }
@@ -421,7 +426,7 @@ pub(crate) fn node_traffic(node: &Node) -> String {
 pub(crate) fn node_status_mark(status: NodeStatus) -> (&'static str, Tone) {
     match status {
         NodeStatus::Alive => ("● жив", Tone::Green),
-        NodeStatus::Dead => ("✗ не отвечает", Tone::Red),
+        NodeStatus::Dead => ("× не отвечает", Tone::Red),
         NodeStatus::Unknown => ("○ не проверен", Tone::Dim),
     }
 }
@@ -450,7 +455,7 @@ fn node_row(node: &Node) -> Vec<Cell> {
         Tone::Plain
     };
     let (status_text, status_tone) = if node.excluded {
-        ("⊘ исключён", Tone::Dim)
+        ("ø исключён", Tone::Dim)
     } else {
         node_status_mark(node.status)
     };
@@ -562,9 +567,9 @@ pub(crate) fn updates(term: Term, updates: &Updates) -> String {
         .iter()
         .map(|result| {
             let (mark, tone) = if result.ok {
-                ("✓", Tone::Green)
+                ("√", Tone::Green)
             } else {
-                ("✗", Tone::Red)
+                ("×", Tone::Red)
             };
             format!(
                 "{} {}: {}",
@@ -874,6 +879,20 @@ mod tests {
     }
 
     #[test]
+    fn the_reason_shows_flags_as_country_codes_like_the_events() {
+        let mut data = sample_status();
+        if let Some(node) = &mut data.node {
+            node.reason = Some("переключился с «🇪🇺 Тест» на «🇩🇪 Тест»".to_owned());
+        }
+        let text = status(plain(), &data, NOW, &TimeZone::UTC);
+        assert!(
+            text.contains("причина:      переключился с «EU Тест» на «DE Тест»"),
+            "{text}"
+        );
+        assert!(!text.contains('🇪'), "{text}");
+    }
+
+    #[test]
     fn status_without_a_node_or_kill_switch() {
         let mut data = sample_status();
         data.mode = Mode::Proxy;
@@ -1001,7 +1020,7 @@ mod tests {
         );
         assert_eq!(
             lines[1],
-            "▶★  main      NL-1  ● жив      31 мс     0  ↑10.0 КиБ ↓200.0 КиБ"
+            "►*  main      NL-1  ● жив      31 мс     0  ↑10.0 КиБ ↓200.0 КиБ"
         );
         assert_eq!(
             lines[2],
@@ -1009,7 +1028,7 @@ mod tests {
         );
         assert_eq!(
             lines[3],
-            "▶ выбран  ★ закреплён  ● жив  ○ не проверен  ✗ не отвечает"
+            "► выбран  * закреплён  ● жив  ○ не проверен  × не отвечает"
         );
         assert_eq!(
             lines[4],
@@ -1022,11 +1041,11 @@ mod tests {
     #[test]
     fn all_shows_dead_and_unchecked_nodes_too() {
         let text = nodes(plain(), &sample_nodes(), true);
-        assert!(text.contains("US-3  ✗ не отвечает"), "{text}");
+        assert!(text.contains("US-3  × не отвечает"), "{text}");
         assert!(text.contains("FI-4  ○ не проверен"));
         assert!(!text.contains("Скрыто"));
         let selected = text.lines().nth(1).unwrap();
-        assert!(selected.starts_with("▶  main"), "{selected:?}");
+        assert!(selected.starts_with("►  main"), "{selected:?}");
     }
 
     #[test]
@@ -1035,7 +1054,7 @@ mod tests {
         data.nodes[2].last_error = Some("тайм-аут".to_owned());
         let text = nodes(Term::new(false, Some(200)), &data, true);
         assert!(text.lines().next().unwrap().ends_with("Ошибка"), "{text}");
-        assert!(text.contains("US-3  ✗ не отвечает"));
+        assert!(text.contains("US-3  × не отвечает"));
         assert!(text.contains("тайм-аут"));
         assert!(nodes(plain(), &data, true).contains("тайм-аут"));
     }
@@ -1165,7 +1184,7 @@ mod tests {
         };
         assert_eq!(
             updates(plain(), &data),
-            "✓ main: узлов: 12\n✗ backup: панель ответила 403"
+            "√ main: узлов: 12\n× backup: панель ответила 403"
         );
         assert_eq!(failed(&data), 1);
         assert_eq!(
@@ -1295,12 +1314,12 @@ mod tests {
     #[test]
     fn the_marker_shows_the_current_and_the_pinned_node() {
         let mut current = node("NL-1", NodeStatus::Alive, true);
-        assert_eq!(node_marker(&current).0, "▶");
+        assert_eq!(node_marker(&current).0, "►");
         current.pinned = true;
-        assert_eq!(node_marker(&current).0, "▶★");
+        assert_eq!(node_marker(&current).0, "►*");
         let mut pinned = node("DE-2", NodeStatus::Alive, false);
         pinned.pinned = true;
-        assert_eq!(node_marker(&pinned).0, "★");
+        assert_eq!(node_marker(&pinned).0, "*");
         assert_eq!(node_marker(&node("FI-5", NodeStatus::Alive, false)).0, "");
     }
 }

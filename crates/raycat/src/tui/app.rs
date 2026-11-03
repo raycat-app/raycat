@@ -2718,7 +2718,7 @@ mod tests {
         assert_eq!(notice.tone, Tone::Red);
         assert_eq!(
             notice.text,
-            "Обновление завершено: ✓ main: узлов: 12; ✗ backup: панель ответила 403"
+            "Обновление завершено: √ main: узлов: 12; × backup: панель ответила 403"
         );
     }
 

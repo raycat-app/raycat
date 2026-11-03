@@ -567,6 +567,8 @@ impl Daemon {
             self.schedule_restart();
             return;
         }
+        // Проверки прошлого процесса к новому не относятся: выбранный узел снова «проверяется».
+        self.selector.forget_health();
         self.xray_current = true;
         self.xray_started = Some(Instant::now());
         self.last_api_ok = None;
