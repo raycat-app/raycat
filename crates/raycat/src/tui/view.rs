@@ -804,26 +804,16 @@ mod tests {
     }
 
     #[test]
-    fn the_nodes_tab_shows_country_reason_and_the_safe_names() {
+    fn the_nodes_tab_shows_the_reason_and_the_safe_names() {
         let mut nodes = sample_nodes();
         nodes[0].name = "🇩🇪 Германия".to_owned();
         let mut app = app_with(sample_status(), nodes);
         on_nodes(&mut app);
         let lines = screen(&mut app, 100, 30);
         assert!(has_line(&lines, "DE Германия"), "{lines:?}");
-        assert!(has_line(&lines, "Страна"), "{lines:?}");
         assert!(has_line(&lines, "Причина"), "{lines:?}");
         assert!(has_line(&lines, "нет ответа"), "{lines:?}");
         assert!(app.hits.iter().any(|hit| hit.target == Target::NodeRow(0)));
-    }
-
-    #[test]
-    fn the_country_column_is_dropped_when_no_node_has_a_code() {
-        let mut app = app_with(sample_status(), sample_nodes());
-        on_nodes(&mut app);
-        let lines = screen(&mut app, 100, 30);
-        assert!(!has_line(&lines, "Страна"), "{lines:?}");
-        assert!(has_line(&lines, "Причина"), "{lines:?}");
     }
 
     #[test]

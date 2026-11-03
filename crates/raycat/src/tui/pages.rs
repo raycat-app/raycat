@@ -503,7 +503,6 @@ enum Kind {
     Marker,
     Sub,
     Name,
-    Country,
     Status,
     Latency,
     Failures,
@@ -540,12 +539,6 @@ fn specs(nodes: &[&Node], speed: &str, style: NameStyle) -> Vec<Spec> {
     }
     let name = name.clamp(4, 48);
     let reason = reason.min(REASON_MAX);
-    // Без кода страны ни у одного узла колонка из прочерков: её нет вовсе.
-    let country = if nodes.iter().any(|node| country_code(&node.name).is_some()) {
-        6
-    } else {
-        0
-    };
     let speed_width = if speed.is_empty() {
         0
     } else {
@@ -563,7 +556,6 @@ fn specs(nodes: &[&Node], speed: &str, style: NameStyle) -> Vec<Spec> {
         spec(Kind::Name, "Узел", name.min(12), name, false),
         spec(Kind::Status, "Статус", STATUS_WIDTH, STATUS_WIDTH, false),
         spec(Kind::Latency, "Задержка", 10, 10, true),
-        spec(Kind::Country, "Страна", country, country, false),
         spec(Kind::Sub, "Подписка", 10, sub.clamp(10, 20), false),
         spec(Kind::Failures, "Сбои", 5, 5, true),
         spec(Kind::Reason, "Причина", reason.min(12), reason, false),
@@ -625,10 +617,6 @@ fn cell(kind: Kind, node: &Node, speed: &str, style: NameStyle, excluded: bool) 
             };
             (display_name(&node.name, style), tone)
         }
-        Kind::Country => (
-            country_code(&node.name).unwrap_or_else(|| "—".to_owned()),
-            Tone::Plain,
-        ),
         Kind::Status if excluded => ("исключён".to_owned(), Tone::Dim),
         Kind::Status => {
             let (text, tone) = render::node_status_mark(node.status);
