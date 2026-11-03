@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Спасибо, что сообщаете! **Никогда не публикуйте ссылку подписки**: это ваш пароль.
-        Уязвимости присылайте не сюда, а приватно (см. SECURITY.md).
+        Уязвимости присылайте не сюда, а приватно: https://github.com/raycat-app/raycat/security/advisories/new
   - type: input
     id: version
     attributes:
