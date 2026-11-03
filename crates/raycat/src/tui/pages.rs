@@ -18,10 +18,6 @@ use crate::util::{format_moment, is_utc};
 
 /// Рамка занимает две строки (верх и низ) и два столбца сбоку — по одной ячейке отступа.
 const FRAME: usize = 2;
-/// Карточка подключения: рамка, состояние, узел и пояснение без живых узлов.
-const CARD_ROWS: usize = 5;
-/// Сколько последних событий показывает обзор.
-const RECENT: usize = 5;
 const STATUS_WIDTH: usize = 13;
 const REASON_MAX: usize = 40;
 /// Строки шапки подробностей узла: имя и кнопки. Остальное прокручивается.
@@ -52,9 +48,10 @@ pub(super) fn overview(
     zone: &TimeZone,
 ) {
     let mut y = top;
-    if y + CARD_ROWS <= end {
-        card(canvas, app, y);
-        y += CARD_ROWS;
+    let height = card_height(app);
+    if y + height <= end {
+        card(canvas, app, y, height);
+        y += height;
     }
     let count = app
         .status
@@ -103,8 +100,15 @@ fn overview_buttons(app: &App) -> Vec<Chip> {
     items
 }
 
-fn card(canvas: &mut Canvas<'_>, app: &App, y: usize) {
-    let mut inner = canvas.framed(y, CARD_ROWS, vec![Seg::new("Подключение", Tone::Bold, 0)]);
+/// Карточка подключения: рамка, состояние и узел. Строка пояснения есть, только когда без
+/// живых узлов есть что пояснить; пустой строки под узлом не остаётся.
+fn card_height(app: &App) -> usize {
+    let lines = if tunnel_hint(app).is_some() { 3 } else { 2 };
+    FRAME + lines
+}
+
+fn card(canvas: &mut Canvas<'_>, app: &App, y: usize, height: usize) {
+    let mut inner = canvas.framed(y, height, vec![Seg::new("Подключение", Tone::Bold, 0)]);
     inner.line(0, 0, state_segs(app));
     inner.line(1, 0, node_segs(app));
     if let Some(hint) = tunnel_hint(app) {
@@ -129,7 +133,7 @@ fn node_segs(app: &App) -> Vec<Seg> {
         return vec![Seg::new("узел не выбран", Tone::Yellow, 0)];
     };
     let mut segs = vec![Seg::new(
-        format!("▶ {}", display_name(&node.name, app.names)),
+        format!("► {}", display_name(&node.name, app.names)),
         Tone::Bold,
         0,
     )];
@@ -186,9 +190,8 @@ fn subscription_brief(canvas: &mut Canvas<'_>, app: &App, y: usize, rows: usize,
     }
 }
 
-/// Последние события в рамке: строк столько, сколько есть места, но не больше `RECENT`.
-fn events(canvas: &mut Canvas<'_>, app: &App, y: usize, room: usize, zone: &TimeZone) {
-    let height = room.min(FRAME + RECENT);
+/// Последние события в рамке на всё оставшееся место: сколько строк помещается, столько и видно.
+fn events(canvas: &mut Canvas<'_>, app: &App, y: usize, height: usize, zone: &TimeZone) {
     let mut inner = canvas.framed(
         y,
         height,
@@ -224,7 +227,7 @@ pub(super) fn nodes(canvas: &mut Canvas<'_>, app: &mut App, top: usize, end: usi
 }
 
 fn filter_panel(app: &App) -> Vec<Chip> {
-    let dead = if app.filter.hide_dead { "✓" } else { "✗" };
+    let dead = if app.filter.hide_dead { "√" } else { "×" };
     let subscription = app.filter.subscription.as_deref().unwrap_or("все");
     let search = match app.filter.text.trim() {
         "" => "—",
@@ -241,7 +244,7 @@ fn filter_panel(app: &App) -> Vec<Chip> {
             Some(Target::DeadToggle),
         ),
         (
-            format!("[s] Подписка: {subscription} ▾"),
+            format!("[s] Подписка: {subscription} ▼"),
             Tone::Plain,
             Some(Target::SubFilter),
         ),
@@ -608,7 +611,7 @@ fn columns(nodes: &[&Node], speed: &str, width: usize, style: NameStyle) -> Vec<
 
 fn cell(kind: Kind, node: &Node, speed: &str, style: NameStyle, excluded: bool) -> (String, Tone) {
     match kind {
-        Kind::Marker if excluded => ("⊘".to_owned(), Tone::Red),
+        Kind::Marker if excluded => ("ø".to_owned(), Tone::Red),
         Kind::Marker => {
             let (mark, tone) = render::node_marker(node);
             (mark.to_owned(), tone)
@@ -790,7 +793,7 @@ fn sub_list(
     }
     let mut found = Vec::new();
     for (index, sub) in subs.iter().enumerate().take(rows.saturating_sub(FRAME)) {
-        let mark = if index == selected { "▶ " } else { "  " };
+        let mark = if index == selected { "► " } else { "  " };
         let alive = app
             .nodes
             .iter()
@@ -1081,7 +1084,7 @@ fn setting_row(canvas: &mut Canvas<'_>, app: &mut App, index: usize, setting: Se
         canvas.style(Tone::Dim)
     };
     let title_style = if shown.enabled { bold } else { dim };
-    canvas.put_style(0, y, if selected { "▶ " } else { "  " }, 2, plain);
+    canvas.put_style(0, y, if selected { "► " } else { "  " }, 2, plain);
     canvas.put_style(2, y, setting.title(), SETTING_TITLE, title_style);
     let gap = if canvas.width < NARROW { 1 } else { GAP };
     let value_x = 2 + SETTING_TITLE + gap;

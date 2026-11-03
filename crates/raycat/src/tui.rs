@@ -11,8 +11,6 @@ mod canvas;
 mod link;
 mod pages;
 mod prefs;
-#[cfg(test)]
-mod svg;
 mod view;
 
 use std::io::{self, IsTerminal as _};

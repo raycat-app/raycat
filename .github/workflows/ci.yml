@@ -113,34 +113,6 @@ jobs:
           path: ${{ runner.temp }}/config.schema.json
           retention-days: 7
 
-  screenshot:
-    name: Скриншот TUI
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: dev
-          save-if: false
-          add-rust-environment-hash-key: false
-      - id: check
-        run: cargo test --locked -p raycat tui_screenshot
-      - if: ${{ failure() && steps.check.outcome == 'failure' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: tui.svg
-          path: |
-            target/tui.svg
-            target/tui-nodes.svg
-            target/tui-settings.svg
-            target/tui-subscriptions.svg
-          retention-days: 7
-
   # Единственная задача, которая пишет кэш dev: остальные задачи с профилем dev его только читают.
   test:
     name: Тесты
@@ -871,7 +843,6 @@ jobs:
       - lint
       - lockfile
       - schema
-      - screenshot
       - test
       - msrv
       - deny

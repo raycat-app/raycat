@@ -8,6 +8,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use raycat_config::Env;
+use raycat_config::names::variants;
 use raycat_proto::{Node, NodeStatus, SpeedtestRequest, SpeedtestResult};
 use serde::Serialize;
 
@@ -66,21 +67,57 @@ impl fmt::Display for ResolveError {
 
 impl std::error::Error for ResolveError {}
 
-/// Ищет узел по запросу без учёта регистра: полное «подписка/имя», затем полное
-/// имя, затем часть «подписка/имя». Первая стадия с совпадениями решает; если на
-/// ней больше одного узла — запрос неоднозначен.
+/// Строки узла для поиска в нижнем регистре. Имя берётся в трёх вариантах, как его показывает
+/// `raycat nodes`: исходном, безопасном и без кода страны. Полные строки — с подпиской и без.
+struct Forms {
+    full: Vec<String>,
+    name: Vec<String>,
+}
+
+impl Forms {
+    fn of(node: &Node) -> Self {
+        let names = variants(&node.name);
+        let mut full: Vec<String> = names
+            .iter()
+            .map(|name| format!("{}/{name}", node.subscription))
+            .collect();
+        full.push(node.id.clone());
+        Self {
+            full: full.iter().map(|form| form.to_lowercase()).collect(),
+            name: names.iter().map(|name| name.to_lowercase()).collect(),
+        }
+    }
+}
+
+fn full_is(forms: &Forms, needle: &str) -> bool {
+    forms.full.iter().any(|form| form == needle)
+}
+
+fn name_is(forms: &Forms, needle: &str) -> bool {
+    forms.name.iter().any(|name| name == needle)
+}
+
+fn full_contains(forms: &Forms, needle: &str) -> bool {
+    forms.full.iter().any(|form| form.contains(needle))
+}
+
+/// Ищет узел по запросу без учёта регистра: полное «подписка/имя», затем имя, затем часть
+/// «подписка/имя». Первая стадия с совпадениями решает; если на ней больше одного узла —
+/// запрос неоднозначен.
 fn resolve<'a>(nodes: &'a [Node], query: &str) -> Result<&'a Node, ResolveError> {
     let needle = query.trim().to_lowercase();
     if needle.is_empty() {
         return Err(ResolveError::NotFound(query.to_owned()));
     }
-    let stages: [&dyn Fn(&Node) -> bool; 3] = [
-        &|node| node.id.to_lowercase() == needle,
-        &|node| node.name.to_lowercase() == needle,
-        &|node| node.id.to_lowercase().contains(&needle),
-    ];
+    let forms: Vec<Forms> = nodes.iter().map(Forms::of).collect();
+    let stages: [fn(&Forms, &str) -> bool; 3] = [full_is, name_is, full_contains];
     for stage in stages {
-        let found: Vec<&Node> = nodes.iter().filter(|node| stage(node)).collect();
+        let found: Vec<&Node> = nodes
+            .iter()
+            .zip(&forms)
+            .filter(|(_, forms)| stage(forms, &needle))
+            .map(|(node, _)| node)
+            .collect();
         match found.as_slice() {
             [] => {}
             [node] => return Ok(*node),
@@ -519,6 +556,35 @@ mod tests {
             resolve(&[], "x").unwrap_err(),
             ResolveError::NotFound(_)
         ));
+    }
+
+    #[test]
+    fn the_name_that_nodes_shows_works_with_flags_and_emoji() {
+        let mut nodes = vec![node("n1", "🇷🇺 Тест | Без рекламы")];
+        nodes.push(node("n1", "⚡️ Быстрый"));
+        let flagged = "🇷🇺 Тест | Без рекламы";
+        for query in [
+            "n1/RU Тест | Без рекламы",
+            "n1/🇷🇺 Тест | Без рекламы",
+            "RU Тест | Без рекламы",
+            "Тест | Без рекламы",
+        ] {
+            assert_eq!(resolve(&nodes, query).unwrap().name, flagged, "{query}");
+        }
+        assert_eq!(resolve(&nodes, "быстрый").unwrap().name, "⚡️ Быстрый");
+    }
+
+    #[test]
+    fn a_flagged_name_shared_by_two_subscriptions_is_still_ambiguous() {
+        let mut nodes = vec![node("main", "🇩🇪 Обход 1")];
+        nodes.push(node("backup", "🇩🇪 Обход 1"));
+        let error = resolve(&nodes, "Обход 1").unwrap_err();
+        assert!(
+            matches!(error, ResolveError::Ambiguous { ref ids, .. } if ids.len() == 2),
+            "{error}"
+        );
+        let found = resolve(&nodes, "main/DE Обход 1").unwrap();
+        assert_eq!(found.id, "main/🇩🇪 Обход 1");
     }
 
     #[test]

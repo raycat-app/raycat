@@ -266,7 +266,7 @@ fn speed_part(bits: u64) -> String {
 /// Полоска из десяти ячеек: заполненная часть отвечает проценту.
 fn bar(percent: u128) -> String {
     let filled = usize::try_from(percent / 10).map_or(BAR_CELLS, |cells| cells.min(BAR_CELLS));
-    format!("{}{}", "▰".repeat(filled), "▱".repeat(BAR_CELLS - filled))
+    format!("{}{}", "█".repeat(filled), "░".repeat(BAR_CELLS - filled))
 }
 
 /// Трафик подписки: полоска, процент и объёмы. Без лимита остаётся только объём.
@@ -457,7 +457,7 @@ fn exclude_hint(dialog: &ExcludeDialog) -> String {
         .iter()
         .enumerate()
         .map(|(index, mask)| {
-            let mark = if index == dialog.selected { "▶" } else { " " };
+            let mark = if index == dialog.selected { "►" } else { " " };
             format!("{mark}{} «{mask}»", index + 1)
         })
         .collect();
@@ -505,7 +505,7 @@ fn status_text(app: &App) -> Option<(String, Tone)> {
         return Some((text, Tone::Bold));
     }
     if app.saving.is_some() {
-        return Some(("⟳ Сохраняю настройки…".to_owned(), Tone::Green));
+        return Some(("* Сохраняю настройки…".to_owned(), Tone::Green));
     }
     if let Some(run) = &app.update {
         let target = run.target.as_deref().map_or_else(
@@ -513,7 +513,7 @@ fn status_text(app: &App) -> Option<(String, Tone)> {
             |name| format!("подписки «{name}»"),
         );
         let text = format!(
-            "⟳ Обновление {target}… {} с",
+            "* Обновление {target}… {} с",
             app.now.saturating_sub(run.since)
         );
         return Some((text, Tone::Green));
@@ -528,7 +528,7 @@ fn status_text(app: &App) -> Option<(String, Tone)> {
             None => format!("{} с", app.now.saturating_sub(run.since)),
         };
         let text = format!(
-            "⟳ Тест скорости через «{}»: {progress} · Esc — отменить",
+            "* Тест скорости через «{}»: {progress} · Esc — отменить",
             run.target
         );
         return Some((text, Tone::Green));
@@ -593,7 +593,7 @@ fn help(canvas: &mut Canvas<'_>) {
         ];
         canvas.line(2 + row, 0, segs);
     }
-    let legend = vec![Seg::new("▶ выбран   ★ закреплён вручную", Tone::Dim, 0)];
+    let legend = vec![Seg::new("► выбран   * закреплён вручную", Tone::Dim, 0)];
     canvas.line(3 + HELP.len(), 0, legend);
     let close = vec![Seg::new("Любая клавиша закрывает справку", Tone::Dim, 0)];
     canvas.line(5 + HELP.len(), 0, close);
@@ -948,7 +948,7 @@ mod tests {
         for word in ["Enter", "PgUp", "Shift+Tab", "Esc", "Ctrl+C", "закрепить"] {
             assert!(text.contains(word), "{word}: {text}");
         }
-        assert!(text.contains("▶ выбран   ★ закреплён вручную"));
+        assert!(text.contains("► выбран   * закреплён вручную"));
         let narrow = screen(&mut app, 44, 12);
         for line in &narrow {
             assert!(display_width(line) <= 44, "{line:?}");
@@ -961,7 +961,7 @@ mod tests {
         press(&mut app, KeyCode::Char('u'));
         app.set_now(NOW + 5);
         let lines = screen(&mut app, 80, 20);
-        assert_eq!(lines[18], "⟳ Обновление всех подписок… 5 с");
+        assert_eq!(lines[18], "* Обновление всех подписок… 5 с");
         app.apply(Msg::Updated(Err("демон не ответил вовремя".to_owned())));
         let lines = screen(&mut app, 80, 20);
         assert_eq!(
@@ -1433,5 +1433,66 @@ mod tests {
         let row = subs.iter().find(|line| line.contains("узлов 2/3")).unwrap();
         assert!(row.contains(&format!("истекла {date}")), "{row}");
         assert_eq!(row.matches(date.as_str()).count(), 1, "{row}");
+    }
+
+    /// Символы, которые есть в шрифте консоли Windows: ASCII, кириллица, Latin-1, рамки и
+    /// символы того же набора, которыми пользуется TUI.
+    fn in_console_font(c: char) -> bool {
+        c.is_ascii()
+            || ('\u{0400}'..='\u{04FF}').contains(&c)
+            || ('\u{00A0}'..='\u{00FF}').contains(&c)
+            || ('\u{2500}'..='\u{257F}').contains(&c)
+            || "–—…●○▲▼↑↓←→►█░√".contains(c)
+    }
+
+    #[test]
+    fn every_screen_uses_only_symbols_the_console_font_has() {
+        let mut app = sample_app();
+        app.apply(Msg::Settings(Ok(settings_view())));
+        let mut screens = Vec::new();
+        for key in ['1', '2', '3', '4', '5'] {
+            press(&mut app, KeyCode::Char(key));
+            screens.push(screen(&mut app, 100, 30));
+        }
+        press(&mut app, KeyCode::Char('?'));
+        screens.push(screen(&mut app, 80, 24));
+        press(&mut app, KeyCode::Char('?'));
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Enter);
+        screens.push(screen(&mut app, 100, 30));
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('u'));
+        screens.push(screen(&mut app, 100, 30));
+        for line in screens.iter().flatten() {
+            if let Some(symbol) = line.chars().find(|c| !in_console_font(*c)) {
+                panic!("символ {symbol:?} нет в шрифте консоли: {line:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_connection_card_has_no_blank_row_without_a_hint() {
+        let mut app = sample_app();
+        let lines = screen(&mut app, 80, 20);
+        let node = lines
+            .iter()
+            .position(|line| line.contains("► NL-1"))
+            .unwrap();
+        assert!(lines[node + 1].starts_with('╰'), "{lines:?}");
+    }
+
+    #[test]
+    fn the_events_card_takes_the_rest_of_the_screen() {
+        let mut app = sample_app();
+        for index in 0..10 {
+            app.apply(Msg::Event(Event::Warning {
+                level: "warn".to_owned(),
+                message: format!("событие {index}"),
+            }));
+        }
+        let lines = screen(&mut app, 80, 30);
+        let shown = lines.iter().filter(|line| line.contains("событие")).count();
+        assert!(shown > 5, "{lines:?}");
+        assert!(lines[27].starts_with('╰'), "{lines:?}");
     }
 }

@@ -3,10 +3,10 @@
 //! вход xray. Здесь то, что от демона не зависит.
 
 use std::fmt::Write as _;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use raycat_http::{Client, Request, Scheme, Url};
@@ -23,10 +23,15 @@ const MAX_STREAMS: u8 = 8;
 /// Без `--streams` два замера: один поток и четыре.
 const DEFAULT_STREAMS: [u8; 2] = [1, 4];
 const DEFAULT_URL: &str = "https://speed.cloudflare.com/__down";
+/// Запасные адреса по порядку: при 429, 403, 404, 5xx или ошибке соединения берётся следующий.
+const FALLBACK_URLS: [&str; 2] = [
+    "https://cachefly.cachefly.net/100mb.test",
+    "https://proof.ovh.net/files/100Mb.dat",
+];
 /// Во сколько раз четыре потока должны быть быстрее одного, чтобы дать подсказку.
 const SPLIT_RATIO: f64 = 1.5;
-/// Срок одного потока: замер не длиннее него, потому что потоки идут параллельно.
-pub(crate) const STREAM_TIMEOUT: Duration = Duration::from_secs(60);
+/// Меньше этого объёма замер не даёт скорости: такой результат считается сбоем.
+pub(crate) const MIN_BYTES: u64 = 64 * 1024;
 pub(crate) const PROGRESS_STEP: Duration = Duration::from_millis(250);
 
 /// Размер вида `25MB`, `25MiB`, `512KiB`, `1000B`: число и обязательная единица.
@@ -143,12 +148,46 @@ pub(crate) fn proxy_authorization(credentials: &Credentials) -> String {
     format!("Basic {}", STANDARD.encode(pair))
 }
 
-/// Адрес одного потока. У тестового сервера размер задаётся параметром `bytes`; свой адрес
-/// качается как есть, до `share` байт или до конца ответа.
-pub(crate) fn stream_url(custom: Option<&str>, share: u64) -> Result<Url> {
+/// Адрес замера. Встроенные адреса при сбое уступают место следующему и отбрасывают короткий
+/// ответ; свой адрес из `--url` используется как есть, без запасных.
+#[derive(Debug, Clone)]
+pub(crate) struct Address {
+    pub(crate) url: String,
+    /// Параметр `bytes=` с объёмом замера: его понимает только основной адрес.
+    pub(crate) sized: bool,
+    pub(crate) builtin: bool,
+}
+
+impl Address {
+    /// Адрес запроса для замера объёмом `share` байт.
+    pub(crate) fn request_url(&self, share: u64) -> String {
+        if self.sized {
+            format!("{}?bytes={share}", self.url)
+        } else {
+            self.url.clone()
+        }
+    }
+}
+
+/// Адреса замера по порядку: основной и запасные либо один свой адрес из `--url`.
+pub(crate) fn addresses(custom: Option<&str>) -> Vec<Address> {
     match custom {
-        Some(text) => Url::parse(text),
-        None => Url::parse(&format!("{DEFAULT_URL}?bytes={share}")),
+        Some(url) => vec![Address {
+            url: url.to_owned(),
+            sized: false,
+            builtin: false,
+        }],
+        None => std::iter::once(Address {
+            url: DEFAULT_URL.to_owned(),
+            sized: true,
+            builtin: true,
+        })
+        .chain(FALLBACK_URLS.iter().map(|&url| Address {
+            url: url.to_owned(),
+            sized: false,
+            builtin: true,
+        }))
+        .collect(),
     }
 }
 
@@ -182,15 +221,40 @@ pub(crate) fn hint(runs: &[SpeedtestRun]) -> Option<String> {
 /// Что принёс один поток: объём и моменты первого и последнего байта тела.
 #[derive(Debug)]
 pub(crate) struct Sample {
-    bytes: u64,
+    pub(crate) bytes: u64,
     started: Instant,
     first: Instant,
     last: Instant,
+    /// Ответ кончился раньше `share` без остановки: файл короче замера.
+    pub(crate) short: bool,
 }
 
-/// Один поток: один запрос, не больше `share` байт. `done` растёт по мере получения,
-/// по нему считается прогресс замера.
-pub(crate) fn fetch(client: &Client, url: &Url, share: u64, done: &AtomicU64) -> Result<Sample> {
+/// Что помешало потоку дать замер. `Retry` значит, что стоит попробовать другой адрес.
+#[derive(Debug)]
+pub(crate) enum Failure {
+    Retry(String),
+    Fatal(String),
+}
+
+/// Отказ, ограничение или сбой сервера — повод перейти на запасной адрес; прочие коды — нет.
+fn status_failure(status: u16, reason: &str) -> Failure {
+    let text = format!("сервер ответил {status} {reason}");
+    if matches!(status, 403 | 404 | 429) || status >= 500 {
+        Failure::Retry(text)
+    } else {
+        Failure::Fatal(text)
+    }
+}
+
+/// Один поток: один запрос, не больше `share` байт. `done` растёт по мере получения, по нему
+/// считается прогресс замера. Когда `stop` взведён, поток отдаёт то, что успел получить.
+pub(crate) fn fetch(
+    client: &Client,
+    url: &Url,
+    share: u64,
+    done: &AtomicU64,
+    stop: &AtomicBool,
+) -> Result<Sample, Failure> {
     let headers = request_headers(url);
     let request = Request {
         method: "GET",
@@ -202,7 +266,7 @@ pub(crate) fn fetch(client: &Client, url: &Url, share: u64, done: &AtomicU64) ->
     let mut first = None;
     let mut last = started;
     let mut bytes = 0;
-    let response = client.stream(url, &request, &mut |piece| {
+    let outcome = client.stream(url, &request, &mut |piece| {
         let now = Instant::now();
         first.get_or_insert(now);
         last = now;
@@ -210,19 +274,30 @@ pub(crate) fn fetch(client: &Client, url: &Url, share: u64, done: &AtomicU64) ->
         let take = u64::try_from(piece.len()).unwrap_or(u64::MAX).min(room);
         bytes += take;
         done.fetch_add(take, Ordering::Relaxed);
-        bytes < share
-    })?;
-    if !(200..300).contains(&response.status) {
-        bail!("сервер ответил {} {}", response.status, response.reason);
+        bytes < share && !stop.load(Ordering::Relaxed)
+    });
+    let response = match outcome {
+        Ok(response) => Some(response),
+        // Обрыв или истёкший срок: объём, который уже пришёл, остаётся в замере.
+        Err(error) if bytes == 0 => {
+            return Err(Failure::Retry(format!("соединение не вышло: {error:#}")));
+        }
+        Err(_) => None,
+    };
+    if let Some(response) = &response
+        && !(200..300).contains(&response.status)
+    {
+        return Err(status_failure(response.status, &response.reason));
     }
     let Some(first) = first else {
-        bail!("сервер не прислал тела ответа");
+        return Err(Failure::Retry("сервер не прислал тела ответа".to_owned()));
     };
     Ok(Sample {
         bytes,
         started,
         first,
         last,
+        short: response.is_some() && bytes < share && !stop.load(Ordering::Relaxed),
     })
 }
 
@@ -420,9 +495,48 @@ mod tests {
         let port = serve_once("0123456789");
         let url = Url::parse(&format!("http://127.0.0.1:{port}/file")).unwrap();
         let done = AtomicU64::new(0);
-        let sample = fetch(&Client::default(), &url, 4, &done).unwrap();
+        let stop = AtomicBool::new(false);
+        let sample = fetch(&Client::default(), &url, 4, &done, &stop).unwrap();
         assert_eq!(sample.bytes, 4);
         assert_eq!(done.load(Ordering::Relaxed), 4);
+        assert!(!sample.short);
+    }
+
+    #[test]
+    fn a_short_answer_is_marked_so_a_fallback_can_be_skipped() {
+        let port = serve_once("0123456789");
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/file")).unwrap();
+        let done = AtomicU64::new(0);
+        let stop = AtomicBool::new(false);
+        let sample = fetch(&Client::default(), &url, 100, &done, &stop).unwrap();
+        assert_eq!(sample.bytes, 10);
+        assert!(sample.short);
+    }
+
+    #[test]
+    fn limits_and_server_errors_move_on_but_client_errors_stop_the_test() {
+        for status in [403, 404, 429, 500, 503] {
+            assert!(
+                matches!(status_failure(status, "x"), Failure::Retry(_)),
+                "{status}"
+            );
+        }
+        assert!(matches!(status_failure(400, "x"), Failure::Fatal(_)));
+    }
+
+    #[test]
+    fn the_test_addresses_come_in_order_and_an_own_one_stands_alone() {
+        let list = addresses(None);
+        assert_eq!(list.len(), 3);
+        assert!(list.iter().all(|address| address.builtin));
+        assert_eq!(list[1].url, FALLBACK_URLS[0]);
+        assert_eq!(list[2].url, FALLBACK_URLS[1]);
+        let first = list[0].request_url(25_000_000);
+        assert_eq!(first, format!("{DEFAULT_URL}?bytes=25000000"));
+        let own = addresses(Some("https://speed.example.com/file.bin"));
+        assert_eq!(own.len(), 1);
+        assert!(!own[0].builtin);
+        assert_eq!(own[0].request_url(1), "https://speed.example.com/file.bin");
     }
 
     #[test]

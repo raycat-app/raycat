@@ -838,6 +838,24 @@ fn decision_and_snapshot_survive_a_serde_round_trip() {
 }
 
 #[test]
+fn a_restart_forgets_the_checks_and_the_selected_node_is_checked_again() {
+    let mut selector = selector();
+    step(&mut selector, 100, healthy());
+    let before = selector.snapshot(secs(100));
+    assert_eq!(node(&before, "a1").status, Status::Alive);
+
+    selector.forget_health();
+    let after = selector.snapshot(secs(101));
+    let chosen = node(&after, "a1");
+    assert!(chosen.selected);
+    assert_eq!(chosen.status, Status::Unknown);
+
+    let decision = step(&mut selector, 110, healthy());
+    assert_eq!(decision.selected.as_deref(), Some("a1"));
+    assert_eq!(node(&selector.snapshot(secs(110)), "a1").status, Status::Alive);
+}
+
+#[test]
 fn reason_serializes_with_a_kind_tag() {
     let reason = Reason::CurrentDead {
         from: "NL-1".into(),

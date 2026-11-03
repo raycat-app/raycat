@@ -3,7 +3,7 @@
 //! замеры не удались. После перезапуска демона тест не остаётся: на диск он не пишется.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -27,7 +27,7 @@ const APPLY_POLL: Duration = Duration::from_millis(100);
 
 type Reply = oneshot::Sender<Result<SpeedtestResult, Refusal>>;
 
-/// Предел одного замера: дольше — замер неудачный.
+/// Предел одного замера: дольше — замер останавливается, а пришедшее идёт в результат.
 const MEASURE_LIMIT: Duration = Duration::from_secs(15);
 
 /// Узел, через который идёт тест: `id` для ответа и тег в xray.
@@ -41,11 +41,14 @@ struct Job {
     shared: Arc<Shared>,
     inbound: SpeedtestInbound,
     request: SpeedtestRequest,
+    /// Адреса замера по порядку: основной и запасные.
+    addresses: Vec<speedtest::Address>,
     target: NodeTarget,
     /// Закрепление, которое было до теста; вернётся в конце, при любом исходе.
     previous: Option<PinTarget>,
     reply: Reply,
     apply_timeout: Duration,
+    measure_limit: Duration,
     /// `DELETE /v1/speedtest` будит эту задачу, и замер прерывается.
     cancel: Arc<Notify>,
 }
@@ -68,10 +71,12 @@ impl Daemon {
         self.selector.set_pin(Some(pin));
         self.next_select = Instant::now();
         self.speedtest_active = true;
+        let addresses = speedtest::addresses(request.url.as_deref());
         let job = Job {
             shared: Arc::clone(&self.shared),
             inbound: self.speedtest.clone(),
             request,
+            addresses,
             target: NodeTarget {
                 id: node.id,
                 tag: node.tag,
@@ -79,6 +84,7 @@ impl Daemon {
             previous,
             reply,
             apply_timeout: APPLY_TIMEOUT,
+            measure_limit: MEASURE_LIMIT,
             cancel: self.shared.speedtest_cancel_handle().unwrap_or_default(),
         };
         tokio::spawn(run(job));
@@ -114,14 +120,16 @@ async fn run(job: Job) {
         shared,
         inbound,
         request,
+        addresses,
         target,
         previous,
         reply,
         apply_timeout,
+        measure_limit,
         cancel,
     } = job;
     let outcome = tokio::select! {
-        outcome = measure(&shared, &inbound, &request, &target, apply_timeout) => outcome,
+        outcome = measure(&shared, &inbound, &request, &target, &addresses, apply_timeout, measure_limit) => outcome,
         () = cancel.notified() => Err(anyhow::anyhow!("тест отменён")),
     };
     restore(&shared, previous).await;
@@ -149,30 +157,32 @@ async fn measure(
     inbound: &SpeedtestInbound,
     request: &SpeedtestRequest,
     target: &NodeTarget,
+    addresses: &[speedtest::Address],
     apply_timeout: Duration,
+    limit: Duration,
 ) -> Result<SpeedtestResult> {
     wait_applied(shared, &target.tag, apply_timeout).await?;
     let proxy = Url::parse(&format!("http://127.0.0.1:{}", inbound.port))
         .context("адрес служебного входа xray")?;
-    let client = Arc::new(Client {
+    let base = Client {
         proxy: Some(proxy),
         proxy_authorization: Some(speedtest::proxy_authorization(&inbound.credentials)),
-        total_timeout: speedtest::STREAM_TIMEOUT,
         ..Client::default()
-    });
-    let custom = request.url.as_deref();
+    };
+    let mut pool = addresses;
     let mut runs = Vec::new();
+    let mut used = None;
     for (index, streams) in speedtest::runs(request.streams).into_iter().enumerate() {
         let share = speedtest::share(request.size, streams);
-        let run = tokio::time::timeout(
-            MEASURE_LIMIT,
-            measure_run(shared, &client, custom, index + 1, streams, share),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("замер дольше {} с", MEASURE_LIMIT.as_secs()))??;
+        let (run, position) =
+            measure_run(shared, &base, pool, index + 1, streams, share, limit).await?;
+        // Следующий замер сначала пробует тот адрес, с которого пошёл этот.
+        pool = &pool[position..];
+        used = pool.first().cloned();
         runs.push(run);
     }
-    let url = redact(&speedtest::stream_url(custom, request.size)?);
+    let address = used.context("нет адреса для замера")?;
+    let url = redact(&Url::parse(&address.request_url(request.size))?);
     let hint = speedtest::hint(&runs);
     Ok(SpeedtestResult {
         node: target.id.clone(),
@@ -182,31 +192,83 @@ async fn measure(
     })
 }
 
-/// Один замер: все потоки параллельно. Прогресс — доля скачанного от объёма замера.
+/// Итог одной попытки: замер или сбой адреса, после которого можно взять запасной.
+enum Attempt {
+    Done(SpeedtestRun),
+    Retry(String),
+}
+
+/// Один замер: все потоки параллельно. Если адрес подвёл, замер повторяется с запасным, но
+/// не дольше `limit`. Возвращает замер и место адреса, с которого он пошёл, в `addresses`.
 async fn measure_run(
     shared: &Shared,
-    client: &Arc<Client>,
-    custom: Option<&str>,
+    base: &Client,
+    addresses: &[speedtest::Address],
     index: usize,
     streams: u8,
     share: u64,
-) -> Result<SpeedtestRun> {
+    limit: Duration,
+) -> Result<(SpeedtestRun, usize)> {
     shared.speedtest_step(index, 0);
+    let deadline = Instant::now() + limit;
+    let mut reason = "нет адресов для замера".to_owned();
+    for (position, address) in addresses.iter().enumerate() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let client = Arc::new(Client {
+            total_timeout: remaining,
+            ..base.clone()
+        });
+        match attempt(shared, &client, address, index, streams, share).await? {
+            Attempt::Done(run) => {
+                // Остановленный пределом времени замер годен, пока к нему что-то пришло.
+                if Instant::now() >= deadline && run.bytes < speedtest::MIN_BYTES {
+                    bail!("замер дольше {} с, пришло меньше 64 КиБ", limit.as_secs());
+                }
+                return Ok((run, position));
+            }
+            Attempt::Retry(text) => reason = text,
+        }
+    }
+    bail!("{reason}")
+}
+
+/// Все потоки на одном адресе. Сбой любого потока останавливает остальные.
+async fn attempt(
+    shared: &Shared,
+    client: &Arc<Client>,
+    address: &speedtest::Address,
+    index: usize,
+    streams: u8,
+    share: u64,
+) -> Result<Attempt> {
     let total = share * u64::from(streams);
     let done = Arc::new(AtomicU64::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
     let mut set = JoinSet::new();
     for _ in 0..streams {
-        let url = speedtest::stream_url(custom, share)?;
+        let url = Url::parse(&address.request_url(share))?;
         let client = Arc::clone(client);
         let done = Arc::clone(&done);
-        let _ = set.spawn_blocking(move || speedtest::fetch(&client, &url, share, &done));
+        let stop = Arc::clone(&stop);
+        let _ = set.spawn_blocking(move || speedtest::fetch(&client, &url, share, &done, &stop));
     }
     let mut samples = Vec::new();
+    let mut failure = None;
     let mut tick = tokio::time::interval(speedtest::PROGRESS_STEP);
     loop {
         tokio::select! {
             joined = set.join_next() => match joined {
-                Some(joined) => samples.push(joined.context("поток замера прервался")??),
+                Some(joined) => match joined.context("поток замера прервался")? {
+                    Ok(sample) => samples.push(sample),
+                    Err(speedtest::Failure::Retry(text)) => {
+                        stop.store(true, Ordering::Relaxed);
+                        failure.get_or_insert(text);
+                    }
+                    Err(speedtest::Failure::Fatal(text)) => bail!("{text}"),
+                },
                 None => break,
             },
             _ = tick.tick() => {
@@ -214,7 +276,13 @@ async fn measure_run(
             }
         }
     }
-    Ok(speedtest::summarize(streams, &samples))
+    if let Some(text) = failure {
+        return Ok(Attempt::Retry(text));
+    }
+    if address.builtin && samples.iter().any(|sample| sample.short) {
+        return Ok(Attempt::Retry("файл короче замера".to_owned()));
+    }
+    Ok(Attempt::Done(speedtest::summarize(streams, &samples)))
 }
 
 /// Ждёт, пока xray применит узел: иначе замер пошёл бы через прежний узел.
@@ -308,7 +376,35 @@ mod tests {
         }
     }
 
-    fn read_head(sock: &mut TcpStream) {
+    fn custom(url: &str) -> speedtest::Address {
+        speedtest::Address {
+            url: url.to_owned(),
+            sized: false,
+            builtin: false,
+        }
+    }
+
+    fn fallback(url: &str) -> speedtest::Address {
+        speedtest::Address {
+            url: url.to_owned(),
+            sized: false,
+            builtin: true,
+        }
+    }
+
+    /// Что отдать на запрос по пути внутри туннеля.
+    #[derive(Clone, Copy)]
+    enum Served {
+        /// Ответ 200 с телом.
+        Body(&'static str),
+        /// Ответ с указанной строкой статуса и пустым телом.
+        Status(&'static str),
+        /// Ответ 200 обещает большое тело, отдаёт столько байт и молчит.
+        Stall(usize),
+    }
+
+    /// Читает заголовки запроса и возвращает их текст.
+    fn read_head(sock: &mut TcpStream) -> String {
         let mut raw = Vec::new();
         let mut byte = [0u8; 1];
         while !raw.ends_with(b"\r\n\r\n") {
@@ -317,20 +413,40 @@ mod tests {
             }
             raw.push(byte[0]);
         }
+        String::from_utf8_lossy(&raw).into_owned()
     }
 
-    /// Прокси с туннелем CONNECT: внутри туннеля отдаёт `body` на любой запрос.
-    fn fake_proxy(body: &'static str) -> u16 {
+    /// Прокси с туннелем CONNECT: внутри туннеля ответ выбирается по концу пути запроса.
+    fn fake_proxy(routes: &'static [(&'static str, Served)]) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         thread::spawn(move || {
             while let Ok((mut sock, _)) = listener.accept() {
                 read_head(&mut sock);
                 let _ = sock.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n");
-                read_head(&mut sock);
-                let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
-                let _ = sock.write_all(head.as_bytes());
-                let _ = sock.write_all(body.as_bytes());
+                let head = read_head(&mut sock);
+                let path = head.split_whitespace().nth(1).unwrap_or_default();
+                let served = routes
+                    .iter()
+                    .find(|(route, _)| path.ends_with(*route))
+                    .map_or(Served::Status("404 Not Found"), |(_, served)| *served);
+                match served {
+                    Served::Body(body) => {
+                        let head =
+                            format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
+                        let _ = sock.write_all(head.as_bytes());
+                        let _ = sock.write_all(body.as_bytes());
+                    }
+                    Served::Status(status) => {
+                        let head = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\n\r\n");
+                        let _ = sock.write_all(head.as_bytes());
+                    }
+                    Served::Stall(sent) => {
+                        let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n");
+                        let _ = sock.write_all(&vec![b'x'; sent]);
+                        thread::sleep(Duration::from_secs(3));
+                    }
+                }
             }
         });
         port
@@ -352,10 +468,12 @@ mod tests {
                 ..speedtest::test_inbound()
             },
             request: request(Some(1), None),
+            addresses: speedtest::addresses(None),
             target: target(),
             previous: previous.clone(),
             reply,
             apply_timeout: Duration::from_millis(50),
+            measure_limit: MEASURE_LIMIT,
             cancel: Arc::new(Notify::new()),
         }));
         let Some(Command::SpeedtestRestore { pin, ack }) = commands.recv().await else {
@@ -380,14 +498,16 @@ mod tests {
         tokio::spawn(run(Job {
             shared: Arc::clone(&shared),
             inbound: SpeedtestInbound {
-                port: fake_proxy("0123456789"),
+                port: fake_proxy(&[("/file", Served::Body("0123456789"))]),
                 ..speedtest::test_inbound()
             },
             request: request(Some(1), Some("http://203.0.113.7:8080/file")),
+            addresses: speedtest::addresses(Some("http://203.0.113.7:8080/file")),
             target: target(),
             previous: None,
             reply,
             apply_timeout: Duration::from_secs(5),
+            measure_limit: MEASURE_LIMIT,
             cancel: Arc::new(Notify::new()),
         }));
         let Some(Command::SpeedtestRestore { pin, ack }) = commands.recv().await else {
@@ -404,6 +524,115 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_limited_address_moves_the_test_to_the_next_one() {
+        let (shared, mut commands) = Shared::new(status());
+        shared.set_xray_pin(Some("node-001-main".to_owned()));
+        assert!(shared.begin_speedtest(1));
+        let port = fake_proxy(&[
+            ("/busy", Served::Status("429 Too Many Requests")),
+            ("/free", Served::Body("0123456789")),
+        ]);
+        let (reply, answer) = oneshot::channel();
+        tokio::spawn(run(Job {
+            shared: Arc::clone(&shared),
+            inbound: SpeedtestInbound {
+                port,
+                ..speedtest::test_inbound()
+            },
+            request: request(Some(1), None),
+            addresses: vec![
+                fallback("http://203.0.113.7:8080/busy"),
+                fallback("http://203.0.113.7:8080/free"),
+            ],
+            target: target(),
+            previous: None,
+            reply,
+            apply_timeout: Duration::from_secs(5),
+            measure_limit: MEASURE_LIMIT,
+            cancel: Arc::new(Notify::new()),
+        }));
+        let Some(Command::SpeedtestRestore { ack, .. }) = commands.recv().await else {
+            panic!("закрепление не возвращено");
+        };
+        let _ = ack.send(());
+        let result = answer.await.unwrap().unwrap();
+        assert_eq!(result.runs[0].bytes, 4);
+        assert!(result.url.ends_with("…free"), "{}", result.url);
+    }
+
+    #[tokio::test]
+    async fn a_slow_server_gives_the_bytes_it_sent_instead_of_an_error() {
+        let (shared, mut commands) = Shared::new(status());
+        shared.set_xray_pin(Some("node-001-main".to_owned()));
+        assert!(shared.begin_speedtest(1));
+        let port = fake_proxy(&[("/slow", Served::Stall(128 * 1024))]);
+        let (reply, answer) = oneshot::channel();
+        tokio::spawn(run(Job {
+            shared: Arc::clone(&shared),
+            inbound: SpeedtestInbound {
+                port,
+                ..speedtest::test_inbound()
+            },
+            request: SpeedtestRequest {
+                node: None,
+                size: 1_000_000,
+                streams: Some(1),
+                url: None,
+            },
+            addresses: vec![custom("http://203.0.113.7:8080/slow")],
+            target: target(),
+            previous: None,
+            reply,
+            apply_timeout: Duration::from_secs(5),
+            measure_limit: Duration::from_secs(1),
+            cancel: Arc::new(Notify::new()),
+        }));
+        let Some(Command::SpeedtestRestore { ack, .. }) = commands.recv().await else {
+            panic!("закрепление не возвращено");
+        };
+        let _ = ack.send(());
+        let result = answer.await.unwrap().unwrap();
+        let bytes = result.runs[0].bytes;
+        assert!((64 * 1024..1_000_000).contains(&bytes), "{bytes}");
+        assert!(result.runs[0].seconds > 0.0);
+    }
+
+    #[tokio::test]
+    async fn a_slow_test_with_almost_no_data_is_an_error() {
+        let (shared, mut commands) = Shared::new(status());
+        shared.set_xray_pin(Some("node-001-main".to_owned()));
+        assert!(shared.begin_speedtest(1));
+        let port = fake_proxy(&[("/silent", Served::Stall(1000))]);
+        let (reply, answer) = oneshot::channel();
+        tokio::spawn(run(Job {
+            shared: Arc::clone(&shared),
+            inbound: SpeedtestInbound {
+                port,
+                ..speedtest::test_inbound()
+            },
+            request: SpeedtestRequest {
+                node: None,
+                size: 1_000_000,
+                streams: Some(1),
+                url: None,
+            },
+            addresses: vec![custom("http://203.0.113.7:8080/silent")],
+            target: target(),
+            previous: None,
+            reply,
+            apply_timeout: Duration::from_secs(5),
+            measure_limit: Duration::from_millis(300),
+            cancel: Arc::new(Notify::new()),
+        }));
+        let Some(Command::SpeedtestRestore { ack, .. }) = commands.recv().await else {
+            panic!("закрепление не возвращено");
+        };
+        let _ = ack.send(());
+        let refusal = answer.await.unwrap().unwrap_err();
+        assert!(matches!(refusal, Refusal::Unavailable(_)), "{refusal:?}");
+    }
+
+    #[tokio::test]
     async fn cancelling_a_test_gives_the_pin_back_at_once() {
         let (shared, mut commands) = Shared::new(status());
         assert!(shared.begin_speedtest(1));
@@ -416,10 +645,12 @@ mod tests {
             shared: Arc::clone(&shared),
             inbound: speedtest::test_inbound(),
             request: request(Some(1), None),
+            addresses: speedtest::addresses(None),
             target: target(),
             previous: previous.clone(),
             reply,
             apply_timeout: Duration::from_secs(60),
+            measure_limit: MEASURE_LIMIT,
             cancel: shared.speedtest_cancel_handle().unwrap_or_default(),
         }));
         assert!(shared.cancel_speedtest());
