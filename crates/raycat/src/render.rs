@@ -18,8 +18,8 @@ const LABEL_WIDTH: usize = 14;
 const DAY: u64 = 86_400;
 const WARN_BEFORE_EXPIRY: u64 = 3 * DAY;
 /// Задержка (мс) ниже `LATENCY_FAST_MS` зелёная, ниже `LATENCY_SLOW_MS` жёлтая, дальше красная.
-pub(crate) const LATENCY_FAST_MS: u64 = 150;
-pub(crate) const LATENCY_SLOW_MS: u64 = 400;
+pub(crate) const LATENCY_FAST_MS: u64 = 500;
+pub(crate) const LATENCY_SLOW_MS: u64 = 1000;
 const ERROR_WIDTH: usize = 40;
 const COLUMN_GAP: usize = 2;
 const COLUMNS_WITHOUT_ERROR: usize = 7;
@@ -1094,10 +1094,10 @@ mod tests {
         assert_eq!(latency_tone(Some(LATENCY_SLOW_MS)), Tone::Red);
         let mut data = sample_nodes();
         data.nodes[0].latency_ms = Some(99);
-        data.nodes[1].latency_ms = Some(400);
+        data.nodes[1].latency_ms = Some(1000);
         let text = nodes(Term::new(true, None), &data, false);
         assert!(text.contains("\x1b[92m99 мс\x1b[0m"), "{text}");
-        assert!(text.contains("\x1b[91m400 мс\x1b[0m"), "{text}");
+        assert!(text.contains("\x1b[91m1000 мс\x1b[0m"), "{text}");
         assert!(!nodes(plain(), &data, false).contains('\x1b'));
     }
 
