@@ -852,7 +852,10 @@ fn a_restart_forgets_the_checks_and_the_selected_node_is_checked_again() {
 
     let decision = step(&mut selector, 110, healthy());
     assert_eq!(decision.selected.as_deref(), Some("a1"));
-    assert_eq!(node(&selector.snapshot(secs(110)), "a1").status, Status::Alive);
+    assert_eq!(
+        node(&selector.snapshot(secs(110)), "a1").status,
+        Status::Alive
+    );
 }
 
 #[test]

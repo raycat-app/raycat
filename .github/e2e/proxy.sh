@@ -248,7 +248,7 @@ shows '«E2E»' status
 shows 'причина:' status
 if "$raycat" status | grep -q 'e2etoken'; then fail "status показал токен подписки"; fi
 shows 'E2E' nodes
-shows '▶' nodes
+shows '►' nodes
 if "$raycat" status | grep -q "$(printf '\033')"; then fail "вывод без терминала содержит цвета"; fi
 
 echo "  закрепление"
@@ -261,7 +261,7 @@ use_code=0
 grep -q 'закреплён' "$work/use.log" || fail "use не сообщил о закреплении: $(cat "$work/use.log")"
 wait_for "узел закреплён" status_is '.node.pinned == true'
 nodes_are '.nodes[0].pinned == true' || fail "nodes: узел не помечен закреплённым"
-shows '★' nodes
+shows '\*' nodes
 shows 'закреплён вручную' status
 "$raycat" use e2e/E2E --json | jq -e '.node == "e2e/E2E"' >/dev/null || fail "use --json: ответ"
 expect_site http
@@ -302,7 +302,7 @@ jq -e '.results[0].subscription == "e2e" and .results[0].ok == true and .results
 wait_for "событие обновления подписки" grep -q 'event: subscription_updated' "$work/events.txt"
 wait_for "raycat events показал обновление" grep -q 'подписка «e2e» обновлена' "$work/cli-events.txt"
 "$raycat" update e2e >"$work/update.log" || fail "update по имени не выполнен"
-grep -q '✓ e2e: узлов: 1' "$work/update.log" || fail "update: нет итога по подписке: $(cat "$work/update.log")"
+grep -q '√ e2e: узлов: 1' "$work/update.log" || fail "update: нет итога по подписке: $(cat "$work/update.log")"
 refuses 'nope' update nope
 "$raycat" use e2e/E2E >/dev/null || fail "use не принят"
 wait_for "событие закрепления" grep -q 'event: pin' "$work/events.txt"

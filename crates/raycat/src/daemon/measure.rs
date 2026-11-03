@@ -442,7 +442,8 @@ mod tests {
                         let _ = sock.write_all(head.as_bytes());
                     }
                     Served::Stall(sent) => {
-                        let _ = sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n");
+                        let _ =
+                            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n");
                         let _ = sock.write_all(&vec![b'x'; sent]);
                         thread::sleep(Duration::from_secs(3));
                     }

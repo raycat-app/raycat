@@ -444,12 +444,14 @@ mod tests {
                 started: start,
                 first: at(10),
                 last: at(1010),
+                short: false,
             },
             Sample {
                 bytes: 1_000_000,
                 started: start,
                 first: at(20),
                 last: at(1010),
+                short: false,
             },
         ];
         let summary = summarize(2, &samples);
