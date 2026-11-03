@@ -990,10 +990,10 @@ mod tests {
     #[test]
     fn latency_is_colored_by_its_thresholds() {
         assert_eq!(delay_tone(Some(31)), Tone::Green);
-        assert_eq!(delay_tone(Some(149)), Tone::Green);
-        assert_eq!(delay_tone(Some(150)), Tone::Yellow);
-        assert_eq!(delay_tone(Some(399)), Tone::Yellow);
-        assert_eq!(delay_tone(Some(400)), Tone::Red);
+        assert_eq!(delay_tone(Some(499)), Tone::Green);
+        assert_eq!(delay_tone(Some(500)), Tone::Yellow);
+        assert_eq!(delay_tone(Some(999)), Tone::Yellow);
+        assert_eq!(delay_tone(Some(1000)), Tone::Red);
         assert_eq!(delay_tone(None), Tone::Dim);
     }
 
