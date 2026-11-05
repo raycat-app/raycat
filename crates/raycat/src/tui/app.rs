@@ -27,6 +27,8 @@ use super::prefs::{Prefs, split_masks};
 pub(super) const LOG_CAP: usize = 200;
 /// Сколько последних замеров скорости хранит график на вкладке «Обзор».
 pub(super) const SPEED_POINTS: usize = 120;
+/// От этой ширины экрана подробности узла стоят справа от таблицы, ниже — окном.
+pub(super) const NODE_SPLIT: usize = 120;
 const TEXT_WIDTH: usize = 400;
 const NOTICE_SECS: u64 = 8;
 const RESULT_SECS: u64 = 20;
@@ -698,8 +700,9 @@ pub(super) struct App {
     pub(super) tab: Tab,
     /// Открыта панель подробностей узла или подписки.
     pub(super) details: bool,
-    /// Подробности узла показаны окном поверх таблицы (узкий экран): клик мимо закрывает.
-    pub(super) details_window: bool,
+    /// Ширина экрана при последней отрисовке вкладки «Узлы»: ниже `NODE_SPLIT` подробности
+    /// показаны окном поверх таблицы, и клик мимо закрывает его.
+    pub(super) screen_width: usize,
     /// Последние замеры скорости выбранного узла для графика; не больше `SPEED_POINTS`.
     pub(super) speeds: VecDeque<Speed>,
     /// Сколько строк прокручено вниз в подробностях узла (после шапки с кнопками).
@@ -780,7 +783,7 @@ impl App {
             input: InputMode::Normal,
             tab: Tab::Overview,
             details: false,
-            details_window: false,
+            screen_width: 0,
             speeds: VecDeque::new(),
             details_offset: 0,
             cursor: 0,
@@ -952,7 +955,7 @@ impl App {
             self.input = InputMode::Normal;
         } else if self.sub_edit.is_some() {
             self.close_sub_edit();
-        } else if self.details && self.details_window {
+        } else if self.details && self.screen_width < NODE_SPLIT {
             self.details = false;
         }
     }

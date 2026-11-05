@@ -5,7 +5,7 @@
 use jiff::tz::TimeZone;
 use raycat_proto::{Node, NodeCheck, NodeStatus, SubscriptionStatus};
 
-use super::app::{App, Hit, InputMode, LEVELS, Setting, Shown, SortBy, Target};
+use super::app::{App, Hit, InputMode, LEVELS, NODE_SPLIT, Setting, Shown, SortBy, Target};
 use super::canvas::{Canvas, GAP, Seg, wrap};
 use super::view::{
     bar, delay_tone, is_expired, speed_label, speed_part, sub_phrase, subscription_title,
@@ -32,8 +32,6 @@ const SPEED_LABEL: usize = 16;
 const GRAPH_MIN: usize = 3;
 /// Ниже этой ширины панели обзора идут друг под другом.
 const SPLIT_MIN: usize = 90;
-/// Ниже этой ширины подробности узла открываются окном поверх таблицы.
-const NODE_SPLIT: usize = 120;
 /// Ширина окна подробностей узла не больше этого числа ячеек.
 const WINDOW_MAX: usize = 96;
 
@@ -304,7 +302,7 @@ fn events(canvas: &mut Canvas<'_>, app: &App, y: usize, height: usize, zone: &Ti
 
 pub(super) fn nodes(canvas: &mut Canvas<'_>, app: &mut App, top: usize, end: usize) {
     let wide = canvas.width >= NODE_SPLIT;
-    app.details_window = !wide;
+    app.screen_width = canvas.width;
     filter_row(canvas, app, top);
     let y0 = top + 1;
     if y0 >= end {
