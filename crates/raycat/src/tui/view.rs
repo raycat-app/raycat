@@ -8,7 +8,7 @@ use ratatui::style::Style;
 use raycat_proto::{SubscriptionStatus, XrayStatus};
 
 use super::app::{App, ExcludeDialog, Hit, InputMode, Link, Tab, Target};
-use super::canvas::{Canvas, GAP, GAUGE_EMPTY, GAUGE_FULL, Palette, Seg, fit, gauge_cells, wrap};
+use super::canvas::{Canvas, GAP, Palette, Seg, fit, wrap};
 use super::pages;
 use crate::render;
 use crate::term::{Tone, display_width, pad};
@@ -288,16 +288,9 @@ pub(super) fn speed_part(bits: u64) -> String {
     }
 }
 
-/// Полоска из десяти ячеек одной строкой: заполненная часть отвечает проценту. Где можно
-/// раскрасить части по-разному, рисуется `Canvas::gauge`.
-pub(super) fn bar(percent: u128) -> String {
-    let filled = gauge_cells(percent, BAR_CELLS);
-    let full: String = std::iter::repeat_n(GAUGE_FULL, filled).collect();
-    let empty: String = std::iter::repeat_n(GAUGE_EMPTY, BAR_CELLS - filled).collect();
-    format!("{full}{empty}")
-}
-
-/// Трафик подписки: полоска, процент и объёмы. Без лимита остаётся только объём.
+/// Трафик подписки: процент и объёмы. Без лимита остаётся только объём. Полоски здесь нет:
+/// одним цветом тонкая линия выглядит заполненной при любом проценте, а двумя цветами
+/// её рисует `Canvas::gauge` там, где для неё есть колонка.
 pub(super) fn traffic_seg(used: u64, total: Option<u64>) -> Seg {
     let Some(total) = total.filter(|total| *total > 0) else {
         let (text, tone) = render::traffic_text(used, total);
@@ -311,12 +304,8 @@ pub(super) fn traffic_seg(used: u64, total: Option<u64>) -> Seg {
     } else {
         Tone::Green
     };
-    let text = format!(
-        "{} {percent}% {}/{}",
-        bar(percent),
-        format_bytes(used),
-        format_bytes(total)
-    );
+    let (used, total) = (format_bytes(used), format_bytes(total));
+    let text = format!("{percent}% · {used} из {total}");
     Seg::new(text, tone, 1)
 }
 

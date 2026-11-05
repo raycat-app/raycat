@@ -111,6 +111,17 @@ impl Palette {
         )
     }
 
+    /// График скорости: приём акцентом, отдача серым. Никогда не жирный: в жирном
+    /// начертании шрифта консоли Windows нет столбиков `▁…▇`, вместо них видны квадраты.
+    fn graph(self, main: bool) -> Style {
+        match (self.color, main) {
+            (true, true) => Style::new().fg(Color::Indexed(ACCENT)),
+            (true, false) => Style::new().fg(Color::Indexed(SECONDARY)),
+            (false, true) => Style::new(),
+            (false, false) => Style::new().add_modifier(Modifier::DIM),
+        }
+    }
+
     /// Клавиша в подсказке: ярко-белая и жирная. Подпись рядом — серая.
     fn key(self) -> Style {
         self.tint(Style::new().add_modifier(Modifier::BOLD), BRIGHT)
@@ -303,6 +314,16 @@ impl<'a> Canvas<'a> {
     /// Активная вкладка.
     pub(super) fn active_tab(&self) -> Style {
         self.palette.active_tab()
+    }
+
+    /// График скорости: `main` — приём (акцентом), иначе отдача (серым).
+    pub(super) fn graph(&self, main: bool) -> Style {
+        let style = self.palette.graph(main);
+        if self.dim {
+            style.add_modifier(Modifier::DIM)
+        } else {
+            style
+        }
     }
 
     /// Клавиша в подсказках нижней строки и в строке фильтров.
@@ -703,6 +724,18 @@ mod tests {
         assert_eq!(gauge_cells(0, 10), 0);
         assert_eq!(gauge_cells(100, 10), 10);
         assert_eq!(gauge_cells(250, 10), 10);
+    }
+
+    #[test]
+    fn the_speed_graph_is_never_bold() {
+        for color in [true, false] {
+            for main in [true, false] {
+                let style = Palette::new(color).graph(main);
+                assert!(!style.add_modifier.contains(Modifier::BOLD), "{color} {main}");
+            }
+        }
+        assert_eq!(Palette::new(true).graph(true).fg, Some(Color::Indexed(111)));
+        assert_eq!(Palette::new(true).graph(false).fg, Some(Color::Indexed(245)));
     }
 
     #[test]
