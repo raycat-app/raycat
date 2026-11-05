@@ -58,6 +58,10 @@ fn strip(text: &str) -> String {
             chars.next();
             out.push(first);
             out.push(second);
+            // Буква сразу за флагом иначе слилась бы с кодом: `PLTikTok`.
+            if chars.peek().is_some_and(|next| next.is_alphabetic()) {
+                out.push(' ');
+            }
             continue;
         }
         if !decoration(c) {
@@ -107,6 +111,14 @@ mod tests {
         assert_eq!(safe_name("🇩🇪 Германия"), "DE Германия");
         assert_eq!(country_code("🇩🇪 Германия"), Some("DE".to_owned()));
         assert_eq!(safe_name("  🇫🇷  Франция   1 "), "FR Франция 1");
+    }
+
+    #[test]
+    fn a_letter_right_after_a_flag_gets_a_space() {
+        assert_eq!(safe_name("🇵🇱TikTok"), "PL TikTok");
+        assert_eq!(country_code("🇵🇱TikTok"), Some("PL".to_owned()));
+        assert_eq!(without_code(&safe_name("🇵🇱TikTok")), "TikTok");
+        assert_eq!(variants("🇵🇱TikTok")[2].as_str(), "TikTok");
     }
 
     #[test]

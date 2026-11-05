@@ -280,7 +280,7 @@ pub(super) fn speed_label(down: u64, up: u64) -> String {
     format!("↓ {} ↑ {}", speed_part(down), speed_part(up))
 }
 
-fn speed_part(bits: u64) -> String {
+pub(super) fn speed_part(bits: u64) -> String {
     if bits < MIN_SPEED {
         "—".to_owned()
     } else {
@@ -289,7 +289,7 @@ fn speed_part(bits: u64) -> String {
 }
 
 /// Полоска из десяти ячеек: заполненная часть отвечает проценту.
-fn bar(percent: u128) -> String {
+pub(super) fn bar(percent: u128) -> String {
     let filled = usize::try_from(percent / 10).map_or(BAR_CELLS, |cells| cells.min(BAR_CELLS));
     format!("{}{}", "█".repeat(filled), "░".repeat(BAR_CELLS - filled))
 }
@@ -362,15 +362,15 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("s скорость", 2),
             ("a автовыбор", 3),
             ("2 узлы", 2),
-            ("? справка", 0),
-            ("q выход", 0),
+            ("справка", 0),
+            ("выход", 0),
         ],
         Tab::Nodes if app.details => &[
             ("Esc назад", 0),
             ("p закрепить", 1),
             ("t скорость", 1),
-            ("? справка", 0),
-            ("q выход", 0),
+            ("справка", 0),
+            ("выход", 0),
         ],
         Tab::Nodes => &[
             ("↑↓ выбор", 1),
@@ -384,8 +384,8 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("x исключить", 3),
             ("e исключённые", 4),
             ("/ поиск", 3),
-            ("? справка", 0),
-            ("q выход", 0),
+            ("справка", 0),
+            ("выход", 0),
         ],
         Tab::Subscriptions => &[
             ("↑↓ выбор", 1),
@@ -393,22 +393,22 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("m маски", 1),
             ("[ ] приоритет", 2),
             ("Enter ошибка", 2),
-            ("? справка", 0),
-            ("q выход", 0),
+            ("справка", 0),
+            ("выход", 0),
         ],
         Tab::Journal => &[
             ("↑↓ листать", 1),
             ("w предупреждения", 2),
             ("End к концу", 3),
-            ("? справка", 0),
-            ("q выход", 0),
+            ("справка", 0),
+            ("выход", 0),
         ],
         Tab::Settings => &[
             ("↑↓ выбор", 1),
             ("Enter изменить", 1),
             ("Пробел переключить", 2),
-            ("? справка", 0),
-            ("q выход", 0),
+            ("справка", 0),
+            ("выход", 0),
         ],
     };
     items
@@ -419,7 +419,12 @@ fn normal_hints(app: &App) -> Vec<Seg> {
 
 /// Ширина подсказки: плашка клавиши с полями и подпись.
 fn hint_width(key: &str, desc: &str) -> usize {
-    display_width(key) + 2 + display_width(desc)
+    let label = if desc.is_empty() {
+        0
+    } else {
+        1 + display_width(desc)
+    };
+    display_width(key) + 2 + label
 }
 
 /// Какие подсказки помещаются в ширину: обязательные всегда, остальные по приоритету.
@@ -488,9 +493,10 @@ fn keys_line(canvas: &mut Canvas<'_>, app: &mut App, y: usize, hints: &[Seg]) {
         }
         x += chip_width;
         if !desc.is_empty() {
+            let text = format!(" {desc}");
             let room = canvas.width.saturating_sub(x);
-            canvas.put(x, y, desc, room, Tone::Plain);
-            x += display_width(desc);
+            canvas.put(x, y, &text, room, Tone::Plain);
+            x += display_width(&text);
         }
     }
 }
@@ -957,11 +963,63 @@ mod tests {
         let mut app = sample_app();
         let lines = screen(&mut app, 100, 30);
         assert!(has_line(&lines, "● VPN работает"), "{lines:?}");
-        assert!(has_line(&lines, "Подписки · всего 1"), "{lines:?}");
-        assert!(has_line(&lines, "[u] Обновить подписки"), "{lines:?}");
+        assert!(has_line(&lines, "Подписки · 1"), "{lines:?}");
+        assert!(!has_line(&lines, "[u] Обновить подписки"), "{lines:?}");
         assert!(has_line(&lines, "работает"), "{lines:?}");
         assert!(has_line(&lines, "[a] Автовыбор"), "{lines:?}");
-        assert!(app.hits.iter().any(|hit| hit.target == Target::UpdateAll));
+        assert!(app.hits.iter().any(|hit| hit.target == Target::Autoselect));
+    }
+
+    #[test]
+    fn the_tunnel_panel_draws_the_speed_graph_from_the_history() {
+        let mut nodes = sample_nodes();
+        nodes[0].uplink_bytes = Some(0);
+        nodes[0].downlink_bytes = Some(0);
+        let mut app = App::new(NOW);
+        let base = Instant::now();
+        app.apply(snapshot_at(sample_status(), nodes.clone(), base));
+        nodes[0].downlink_bytes = Some(125_000);
+        app.apply(snapshot_at(
+            sample_status(),
+            nodes,
+            base + Duration::from_secs(1),
+        ));
+        assert_eq!(app.speeds.len(), 1);
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "↓ "), "{lines:?}");
+        assert!(has_line(&lines, "Мбит/с"), "{lines:?}");
+        assert!(has_line(&lines, "▇"), "{lines:?}");
+    }
+
+    #[test]
+    fn without_a_speed_the_tunnel_panel_shows_a_dash_and_no_graph() {
+        let mut app = sample_app();
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "↓ —"), "{lines:?}");
+        assert!(!has_line(&lines, "▇"), "{lines:?}");
+    }
+
+    #[test]
+    fn the_node_details_sit_beside_the_table_from_120_columns() {
+        let mut app = sample_app();
+        on_nodes(&mut app);
+        let wide = screen(&mut app, 160, 30);
+        assert!(has_line(&wide, "Узел · подробности"), "{wide:?}");
+        assert!(has_line(&wide, "Протокол:"), "{wide:?}");
+        let narrow = screen(&mut app, 100, 30);
+        assert!(!has_line(&narrow, "Узел · подробности"), "{narrow:?}");
+    }
+
+    #[test]
+    fn enter_opens_the_node_window_on_a_narrow_screen_and_esc_closes_it() {
+        let mut app = sample_app();
+        on_nodes(&mut app);
+        press(&mut app, KeyCode::Enter);
+        let open = screen(&mut app, 100, 30);
+        assert!(has_line(&open, "Узел · подробности"), "{open:?}");
+        press(&mut app, KeyCode::Esc);
+        let closed = screen(&mut app, 100, 30);
+        assert!(!has_line(&closed, "Узел · подробности"), "{closed:?}");
     }
 
     #[test]
@@ -1006,7 +1064,7 @@ mod tests {
         let lines = screen(&mut app, 80, 20);
         assert!(lines[0].contains("● подключение…"), "{lines:?}");
         assert!(has_line(&lines, "данных от демона ещё нет"), "{lines:?}");
-        assert!(lines.last().unwrap().contains("q выход"));
+        assert!(lines.last().unwrap().contains("выход"));
 
         app.apply(Msg::Down {
             reason: "демон не запущен: сокета /run/raycat/raycat.sock нет".to_owned(),
@@ -1078,8 +1136,8 @@ mod tests {
             assert!(display_width(line) <= 44, "{line:?}");
         }
         assert!(lines[1].contains("1 Обзор"));
-        assert!(lines.last().unwrap().contains("? справка"));
-        assert!(lines.last().unwrap().contains("q выход"));
+        assert!(lines.last().unwrap().contains("справка"));
+        assert!(lines.last().unwrap().contains("выход"));
     }
 
     #[test]
@@ -1099,7 +1157,7 @@ mod tests {
             let lines = screen(&mut app, width, 20);
             let last = lines.last().unwrap();
             assert!(
-                last.contains("? справка") && last.contains("q выход"),
+                last.contains("справка") && last.contains("выход"),
                 "{width}: {last:?}"
             );
         }
@@ -1232,7 +1290,7 @@ mod tests {
         status.tunnel = Tunnel::NoLiveNodes;
         status.kill_switch = Some(true);
         let mut app = app_with(status, sample_nodes());
-        let lines = screen(&mut app, 100, 30);
+        let lines = screen(&mut app, 160, 30);
         assert!(has_line(&lines, "● нет живых узлов"), "{lines:?}");
         assert!(has_line(&lines, "мимо VPN он не уйдёт"), "{lines:?}");
     }
@@ -1395,6 +1453,20 @@ mod tests {
         ] {
             assert!(has_line(&lines, word), "{word}: {lines:?}");
         }
+    }
+
+    #[test]
+    fn a_section_has_an_empty_row_above_it_except_the_first() {
+        let mut app = sample_app();
+        on_settings(&mut app);
+        let lines = screen(&mut app, 120, 40);
+        assert!(lines[3].starts_with("│ Подключение"), "{lines:?}");
+        let heading = lines
+            .iter()
+            .position(|line| line.starts_with("│ Выбор узла"))
+            .unwrap();
+        let above: String = lines[heading - 1].chars().skip(1).take(40).collect();
+        assert!(above.trim().is_empty(), "{lines:?}");
     }
 
     #[test]
@@ -1587,7 +1659,7 @@ mod tests {
             shown.join(" "),
             format!("Не удалось обновить подписки: {WRAPPED}")
         );
-        assert!(lines[23].contains("? справка"), "{lines:?}");
+        assert!(lines[23].contains("справка"), "{lines:?}");
     }
 
     #[test]
@@ -1602,7 +1674,7 @@ mod tests {
         assert_eq!(start, 16, "{lines:?}");
         assert!(lines[18].ends_with('…'), "{lines:?}");
         assert!(
-            lines[19].contains("? справка") && lines[19].contains("q выход"),
+            lines[19].contains("справка") && lines[19].contains("выход"),
             "{lines:?}"
         );
     }
@@ -1640,7 +1712,7 @@ mod tests {
             || ('\u{0400}'..='\u{04FF}').contains(&c)
             || ('\u{00A0}'..='\u{00FF}').contains(&c)
             || ('\u{2500}'..='\u{257F}').contains(&c)
-            || "–—…●○▲▼↑↓←→►█░√".contains(c)
+            || "–—…●○▲▼↑↓←→►█░▁▂▃▄▅▆▇√".contains(c)
     }
 
     #[test]
@@ -1669,17 +1741,6 @@ mod tests {
     }
 
     #[test]
-    fn the_connection_card_has_no_blank_row_without_a_hint() {
-        let mut app = sample_app();
-        let lines = screen(&mut app, 80, 20);
-        let node = lines
-            .iter()
-            .position(|line| line.contains("► NL-1"))
-            .unwrap();
-        assert!(lines[node + 1].starts_with('╰'), "{lines:?}");
-    }
-
-    #[test]
     fn the_events_card_takes_the_rest_of_the_screen() {
         let mut app = sample_app();
         for index in 0..10 {
@@ -1691,6 +1752,15 @@ mod tests {
         let lines = screen(&mut app, 80, 30);
         let shown = lines.iter().filter(|line| line.contains("событие")).count();
         assert!(shown > 5, "{lines:?}");
-        assert!(lines[28].starts_with('╰'), "{lines:?}");
+        let top = lines
+            .iter()
+            .position(|line| line.contains("Последние события"))
+            .unwrap();
+        let bottom = top
+            + lines[top..]
+                .iter()
+                .position(|line| line.starts_with('╰'))
+                .unwrap();
+        assert_eq!(bottom, 28, "{lines:?}");
     }
 }

@@ -25,6 +25,10 @@ use crate::util::sanitize;
 use super::prefs::{Prefs, split_masks};
 
 pub(super) const LOG_CAP: usize = 200;
+/// Сколько последних замеров скорости хранит график на вкладке «Обзор».
+pub(super) const SPEED_POINTS: usize = 120;
+/// От этой ширины экрана подробности узла стоят справа от таблицы, ниже — окном.
+pub(super) const NODE_SPLIT: usize = 120;
 const TEXT_WIDTH: usize = 400;
 const NOTICE_SECS: u64 = 8;
 const RESULT_SECS: u64 = 20;
@@ -74,7 +78,6 @@ pub(super) enum Target {
     SubRow(usize),
     Pin,
     Autoselect,
-    UpdateAll,
     UpdateSub,
     DeadToggle,
     SubFilter,
@@ -83,8 +86,6 @@ pub(super) enum Target {
     ExcludedToggle,
     Sort(SortBy),
     HiddenEdit,
-    /// Тест скорости через текущий узел.
-    Speed,
     /// Тест скорости через узел, открытый в подробностях.
     SpeedNode,
     /// Строка «Настроек»: выбор клавишами и кликом по названию или пояснению.
@@ -336,7 +337,8 @@ impl Setting {
     /// Значение по умолчанию в том виде, как его показывает строка.
     pub(super) fn default_text(self) -> &'static str {
         match self {
-            Self::RuDirect | Self::KillSwitch => "вкл",
+            Self::RuDirect => "выкл",
+            Self::KillSwitch => "вкл",
             Self::CheckInterval => "30s",
             Self::Failures => "3",
             Self::SwitchGain => "150ms",
@@ -698,6 +700,11 @@ pub(super) struct App {
     pub(super) tab: Tab,
     /// Открыта панель подробностей узла или подписки.
     pub(super) details: bool,
+    /// Ширина экрана при последней отрисовке вкладки «Узлы»: ниже `NODE_SPLIT` подробности
+    /// показаны окном поверх таблицы, и клик мимо закрывает его.
+    pub(super) screen_width: usize,
+    /// Последние замеры скорости выбранного узла для графика; не больше `SPEED_POINTS`.
+    pub(super) speeds: VecDeque<Speed>,
     /// Сколько строк прокручено вниз в подробностях узла (после шапки с кнопками).
     pub(super) details_offset: usize,
     /// Позиция курсора среди видимых узлов.
@@ -776,6 +783,8 @@ impl App {
             input: InputMode::Normal,
             tab: Tab::Overview,
             details: false,
+            screen_width: 0,
+            speeds: VecDeque::new(),
             details_offset: 0,
             cursor: 0,
             offset: 0,
@@ -946,6 +955,8 @@ impl App {
             self.input = InputMode::Normal;
         } else if self.sub_edit.is_some() {
             self.close_sub_edit();
+        } else if self.details && self.screen_width < NODE_SPLIT {
+            self.details = false;
         }
     }
 
@@ -965,7 +976,6 @@ impl App {
             Target::SubRow(index) => self.sub_cursor = index.min(self.last_sub()),
             Target::Pin => return self.pin_current(),
             Target::Autoselect => return self.unpin(),
-            Target::UpdateAll => return self.start_update(None),
             Target::UpdateSub => return self.update_selected(),
             Target::DeadToggle => self.toggle_dead(),
             Target::SubFilter => self.next_subscription(),
@@ -974,7 +984,6 @@ impl App {
             Target::ExcludedToggle => self.toggle_excluded(),
             Target::Sort(by) => self.sort_click(by),
             Target::HiddenEdit => self.start_masks(),
-            Target::Speed => return self.speedtest(None),
             Target::SpeedNode => return self.speed_selected(),
             Target::SettingRow(index) => self.select_setting(index),
             Target::SettingCell(index) => {
@@ -1169,7 +1178,18 @@ impl App {
         self.status_at = self.now;
         self.nodes = snapshot.nodes.nodes;
         self.measure(snapshot.at);
+        if let Some(speed) = self.speed() {
+            self.push_speed(speed);
+        }
         self.refilter();
+    }
+
+    /// Добавляет замер в график; самый старый уходит, когда буфер полон.
+    fn push_speed(&mut self, speed: Speed) {
+        if self.speeds.len() >= SPEED_POINTS {
+            self.speeds.pop_front();
+        }
+        self.speeds.push_back(speed);
     }
 
     /// Смена узла и уменьшение счётчика (перезапуск xray) начинают измерение заново.
@@ -1186,13 +1206,18 @@ impl App {
             {
                 Some(meter.advance(at, uplink, downlink))
             }
-            (Some((node, uplink, downlink)), _) => Some(Meter::start(node, at, uplink, downlink)),
+            (Some((node, uplink, downlink)), _) => {
+                // Другой узел или перезапуск счётчиков: прошлые замеры к нему не относятся.
+                self.speeds.clear();
+                Some(Meter::start(node, at, uplink, downlink))
+            }
         };
     }
 
     fn on_down(&mut self, reason: &str, retry_in: Duration) {
         // После обрыва интервал до следующего снимка не говорит о скорости.
         self.meter = None;
+        self.speeds.clear();
         let (cause, hint) = split_lines(reason);
         let cause = clip(cause);
         if !matches!(self.link, Link::Down { .. }) {
@@ -1719,6 +1744,7 @@ impl App {
     }
 
     fn move_to(&mut self, index: usize) {
+        self.details_offset = 0;
         self.cursor = index.min(self.visible.len().saturating_sub(1));
         self.cursor_id = self.current().map(|node| node.id.clone());
         self.scroll_to_cursor();
@@ -3618,6 +3644,76 @@ mod tests {
             Some(Effect::SavePrefs(_))
         ));
         assert_eq!(app.shown(Setting::Names).source, "вид TUI");
+    }
+
+    #[test]
+    fn the_speed_history_never_grows_past_its_limit() {
+        let mut app = App::new(NOW);
+        for bits in 0..170_u64 {
+            app.push_speed(Speed {
+                down: bits,
+                up: bits,
+            });
+        }
+        assert_eq!(app.speeds.len(), SPEED_POINTS);
+        assert_eq!(app.speeds.front().map(|speed| speed.down), Some(50));
+    }
+
+    #[test]
+    fn the_default_texts_match_what_the_config_uses_without_settings() {
+        use raycat_config::{Config, Env, LogLevel, Mode, format_duration};
+
+        let sub = "[[subscription]]\nname = \"основная\"\nurl = \"https://sub.example.com/api/sub/AbCdEfGh1234\"\napp = \"happ\"\nplatform = \"windows\"\n";
+        let env = Env::new();
+        let config = Config::from_toml_str(sub, &env).unwrap();
+        let gateway =
+            Config::from_toml_str(&format!("{sub}\n[mode]\ntype = \"gateway\"\n"), &env).unwrap();
+        let kill_switch = match gateway.mode {
+            Mode::Gateway { kill_switch, .. } => kill_switch,
+            Mode::Proxy { .. } => panic!("режим шлюза не разобран"),
+        };
+        let xhttp = config.xray.xhttp_connections.map_or_else(
+            || SettingValue::Text(XHTTP_PROVIDER.to_owned()),
+            |count| SettingValue::Number(i64::from(count)),
+        );
+        let level = match config.log.level {
+            LogLevel::Error => "error",
+            LogLevel::Warn => "warn",
+            LogLevel::Info => "info",
+            LogLevel::Debug => "debug",
+        };
+        let actual = [
+            (
+                Setting::RuDirect,
+                value_text(
+                    &SettingValue::Bool(config.routing.ru_direct),
+                    Setting::RuDirect,
+                ),
+            ),
+            (
+                Setting::KillSwitch,
+                value_text(&SettingValue::Bool(kill_switch), Setting::KillSwitch),
+            ),
+            (
+                Setting::CheckInterval,
+                format_duration(config.selection.check_interval),
+            ),
+            (Setting::Failures, config.selection.failures.to_string()),
+            (
+                Setting::SwitchGain,
+                format_duration(config.selection.switch_gain),
+            ),
+            (
+                Setting::ReturnDelay,
+                format_duration(config.selection.return_delay),
+            ),
+            (Setting::Xhttp, value_text(&xhttp, Setting::Xhttp)),
+            (Setting::LogLevel, level.to_owned()),
+            (Setting::Names, names_label(NameStyle::default()).to_owned()),
+        ];
+        for (setting, text) in actual {
+            assert_eq!(setting.default_text(), text, "{setting:?}");
+        }
     }
 
     #[test]
