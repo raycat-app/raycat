@@ -1906,8 +1906,14 @@ mod tests {
         let mut app = sample_app();
         press(&mut app, KeyCode::Char('3'));
         let lines = screen(&mut app, 100, 30);
-        let row = lines.iter().find(|line| line.contains("узлов 2/3")).unwrap();
-        assert!(row.contains("main") && row.contains("работает"), "{lines:?}");
+        let row = lines
+            .iter()
+            .find(|line| line.contains("узлов 2/3"))
+            .unwrap();
+        assert!(
+            row.contains("main") && row.contains("работает"),
+            "{lines:?}"
+        );
     }
 
     #[test]

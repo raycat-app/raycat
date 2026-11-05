@@ -38,9 +38,11 @@ const WINDOW_MAX: usize = 96;
 const TIME_WIDTH: usize = 8;
 const LEVEL_WIDTH: usize = 9;
 /// Колонки строки подписки на обзоре: имя, полоска с процентом, срок; состояние — справа.
-/// Имя сужается на узкой панели до `SUB_NAME_MIN`, срок пропадает, если не помещается.
+/// На узкой панели срок пропадает раньше, чем имя станет короче `SUB_NAME_MIN`.
 const SUB_NAME_WIDTH: usize = 14;
-const SUB_NAME_MIN: usize = 4;
+const SUB_NAME_MIN: usize = 6;
+/// Имя на самой узкой панели, где срока уже нет.
+const SUB_NAME_TIGHT: usize = 4;
 /// `██████████ 100%`: полоска, пробел и процент, всегда одной ширины.
 const SUB_BAR_WIDTH: usize = 15;
 /// Самая длинная строка срока, например `до 05.11 · 23 дн`.
@@ -291,17 +293,29 @@ struct BriefColumns {
     expiry: Option<usize>,
 }
 
-/// Колонки для панели шириной `width`, где состояние занимает `phrase_width`. Имя сужается
-/// раньше, чем пропадает срок.
+/// Колонки для панели с внутренней шириной `width`, где состояние занимает `phrase_width`.
+/// Срок остаётся, пока имя не уже `SUB_NAME_MIN`; иначе срок уходит, а имя сужается дальше.
 fn brief_columns(width: usize, phrase_width: usize) -> BriefColumns {
-    let phrase_at = width.saturating_sub(phrase_width);
+    let with_expiry =
+        width.saturating_sub(SUB_BAR_WIDTH + SUB_EXPIRY_WIDTH + phrase_width + 3 * GAP);
+    if with_expiry >= SUB_NAME_MIN {
+        let name = with_expiry.min(SUB_NAME_WIDTH);
+        let bar = name + GAP;
+        let expiry = bar + SUB_BAR_WIDTH + GAP;
+        return BriefColumns {
+            name,
+            bar,
+            expiry: Some(expiry),
+        };
+    }
     let name = width
-        .saturating_sub(SUB_BAR_WIDTH + 2 * GAP + phrase_width)
-        .clamp(SUB_NAME_MIN, SUB_NAME_WIDTH);
-    let bar = name + GAP;
-    let expiry_at = bar + SUB_BAR_WIDTH + GAP;
-    let expiry = (expiry_at + SUB_EXPIRY_WIDTH + GAP <= phrase_at).then_some(expiry_at);
-    BriefColumns { name, bar, expiry }
+        .saturating_sub(SUB_BAR_WIDTH + phrase_width + 2 * GAP)
+        .clamp(SUB_NAME_TIGHT, SUB_NAME_WIDTH);
+    BriefColumns {
+        name,
+        bar: name + GAP,
+        expiry: None,
+    }
 }
 
 /// Строка подписки на обзоре: имя, полоска и процент (или серое «без лимита»), срок и
@@ -664,7 +678,12 @@ fn node_lines(node: &Node, app: &App, speed: Option<Speed>, width: usize) -> Vec
     lines.extend(pair("Подписка", &node.subscription, Tone::Plain, width));
     lines.extend(pair("Страна", &country, Tone::Plain, width));
     lines.extend(pair("Статус", status_text, status_tone, width));
-    lines.extend(pair("Задержка", &latency, delay_tone(node.latency_ms), width));
+    lines.extend(pair(
+        "Задержка",
+        &latency,
+        delay_tone(node.latency_ms),
+        width,
+    ));
     lines.extend(pair("Сбои", &node.failures.to_string(), Tone::Plain, width));
     lines.extend(pair("Выбор", choice, Tone::Plain, width));
     lines.extend(pair("Протокол", protocol, Tone::Plain, width));
@@ -1014,7 +1033,13 @@ pub(super) fn subscriptions(
         sub_details(canvas, app, details, selected, zone);
     } else {
         let list_rows = (count.max(1) + FRAME).min(room);
-        let found = sub_list(canvas, app, (0, top, canvas.width, list_rows), selected, zone);
+        let found = sub_list(
+            canvas,
+            app,
+            (0, top, canvas.width, list_rows),
+            selected,
+            zone,
+        );
         app.hits.extend(found);
         let panel_top = top + list_rows;
         if end > panel_top + FRAME {
@@ -1652,13 +1677,13 @@ mod tests {
 
     #[test]
     fn the_overview_columns_do_not_overlap_in_40_62_and_80_column_panels() {
-        // Ширина внутри рамки: у панели 40, 62 и 80 столбцов по две ячейки рамки с каждой стороны.
-        for width in [38, 60, 78] {
+        // Внутренняя ширина: панель минус рамка и отступы по две ячейки с каждой стороны.
+        for width in [36, 58, 76] {
             for phrase_width in [8, 15] {
                 let columns = brief_columns(width, phrase_width);
                 let phrase_at = width - phrase_width;
                 assert!(
-                    columns.bar + SUB_BAR_WIDTH + GAP <= phrase_at,
+                    columns.bar + SUB_BAR_WIDTH <= phrase_at,
                     "{width} {phrase_width}: {columns:?}"
                 );
                 if let Some(expiry) = columns.expiry {

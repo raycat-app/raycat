@@ -38,8 +38,7 @@ const DEFAULT_ROWS: usize = 10;
 const WHEEL_ROWS: usize = 3;
 const DOUBLE_CLICK: Duration = Duration::from_millis(500);
 const RESTART_TEXT: &str = "xray перезапустится: связь прервётся на несколько секунд";
-const SPEED_TIMEOUT_TEXT: &str =
-    "Тест скорости не удался: сервер проверки не ответил за 15 с. Попробуйте ещё раз или другой узел";
+const SPEED_TIMEOUT_TEXT: &str = "Тест скорости не удался: сервер проверки не ответил за 15 с. Попробуйте ещё раз или другой узел";
 /// Уровни журнала от подробного к важному: по кругу в порядке этого списка.
 pub(super) const LEVELS: [&str; 4] = ["error", "warn", "info", "debug"];
 
@@ -2933,7 +2932,9 @@ mod tests {
     fn other_speed_errors_are_shown_as_they_are() {
         let mut app = app_with(sample());
         press(&mut app, KeyCode::Char('s'));
-        app.apply(Msg::SpeedDone(Err("сервер не прислал тела ответа".to_owned())));
+        app.apply(Msg::SpeedDone(Err(
+            "сервер не прислал тела ответа".to_owned()
+        )));
         assert_eq!(
             app.notice.as_ref().unwrap().text,
             "Тест скорости не удался: сервер не прислал тела ответа"
