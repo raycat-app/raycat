@@ -1149,7 +1149,7 @@ fn list_status(sub: &SubscriptionStatus, now: u64, zone: &TimeZone) -> (String, 
     if is_expired(sub, now) {
         ("истекла".to_owned(), Tone::Red)
     } else if sub.last_error.is_some() {
-        ("нет связи".to_owned(), Tone::Red)
+        ("ошибка".to_owned(), Tone::Red)
     } else {
         sub_phrase(sub, now, zone)
     }
