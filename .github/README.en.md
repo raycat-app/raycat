@@ -7,15 +7,19 @@
 
 # raycat
 
-**A VPN subscription for your Linux server.**<br>
-Chosen containers, the whole server or your home network go online through it.
+**A VPN subscription manager for Linux servers**<br>
+For chosen containers, the whole server or your home network.
 
 [![Version](https://img.shields.io/github/v/release/raycat-app/raycat?include_prereleases&style=flat-square&label=version&color=2d333b)](https://github.com/raycat-app/raycat/releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/raycat-app/raycat/ci.yml?branch=main&style=flat-square&label=build)](https://github.com/raycat-app/raycat/actions/workflows/ci.yml)
+[![Rust](https://img.shields.io/badge/Rust-1.88%2B-2d333b?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Platforms](https://img.shields.io/badge/Linux-x86__64%20·%20arm64%20·%20armv7-2d333b?style=flat-square&logo=linux&logoColor=white)](https://github.com/raycat-app/raycat/releases)
+[![Docker](https://img.shields.io/badge/Docker-ghcr.io-2d333b?style=flat-square&logo=docker&logoColor=white)](https://github.com/raycat-app/raycat/pkgs/container/raycat)
 [![License](https://img.shields.io/badge/license-MIT-2d333b?style=flat-square)](../LICENSE)
 
-[Getting started](#getting-started) · [Modes](#modes) · [Managing it](#managing-it) · [Settings](#settings) · [Questions](#questions-and-bugs) · [Русский](README.md)
+[Installation](#installation) · [Modes](#modes) · [Managing it](#managing-it) · [Settings](#settings) · [Support](#support) · [Русский](README.md)
 
-[Report a bug](https://github.com/raycat-app/raycat/issues/new?template=bug.yml) · [Suggest an idea](https://github.com/raycat-app/raycat/issues/new?template=feature.yml)
+[Report a bug](https://github.com/raycat-app/raycat/issues/new?template=bug.yml) · [Suggest an improvement](https://github.com/raycat-app/raycat/issues/new?template=feature.yml)
 
 <br>
 
@@ -25,18 +29,18 @@ Chosen containers, the whole server or your home network go online through it.
 
 <br>
 
-You give raycat a subscription link, and it keeps a tunnel running on the server. You don't have to configure the applications themselves. If a node dies, raycat switches to a live one. If none are left, traffic does not leave outside the VPN.
+raycat obtains a VPN subscription from your provider and maintains a tunnel on a Linux server. Traffic from selected containers, the whole server or devices on your home network is routed through the VPN without configuring individual applications.
 
-Many providers only hand their subscriptions to their own apps. raycat requests them the way Happ (Windows and Android) or INCY (Android) does, and builds the tunnel on [xray-core](https://github.com/XTLS/Xray-core).
+The subscription is requested the same way Happ (Windows and Android) and INCY (Android) request it, so raycat also works with providers that only serve their own apps. The tunnel is built on [Xray-core](https://github.com/XTLS/Xray-core). raycat supports backup subscriptions, automatic node selection on failure, excluding nodes by mask and direct access to Russian resources. When no nodes are available, the kill switch keeps traffic from leaving outside the VPN.
 
 > [!NOTE]
-> There is no stable version yet. Until it ships, use the `ghcr.io/raycat-app/raycat:dev` image and install with `--channel dev`.
+> No stable version has been released yet. Until then, use the `ghcr.io/raycat-app/raycat:dev` image and install with `--channel dev`.
 
-## Getting started
+## Installation
 
-### In Docker
+### Docker
 
-Only the containers you attach to raycat go through the VPN. The rest of the server and other containers work as usual.
+Only containers attached to raycat are routed through the VPN. Other containers and the server itself are not affected.
 
 `raycat/config.toml`:
 
@@ -44,16 +48,16 @@ Only the containers you attach to raycat go through the VPN. The rest of the ser
 [[subscription]]
 url = "https://…"       # the subscription link
 app = "happ"            # the app your provider accepts: happ or incy
-platform = "windows"    # windows or android (incy is android only)
+platform = "windows"    # windows or android (android only for incy)
 
 [mode]
 type = "gateway"
 ```
 
 > [!CAUTION]
-> The subscription link works like a password. Don't publish it or keep it in public repositories.
+> A subscription link is equivalent to a password. Do not publish it or keep it in public repositories.
 
-`compose.yml` next to the `raycat` directory. The `app` container here is your application:
+`compose.yml` next to the `raycat` directory, where `app` is your application:
 
 ```yaml
 services:
@@ -68,7 +72,7 @@ services:
 
   app:
     image: your-application
-    network_mode: service:raycat   # this line sends the container through the VPN
+    network_mode: service:raycat   # routes the container's traffic through the VPN
     depends_on:
       raycat:
         condition: service_healthy
@@ -83,7 +87,7 @@ docker compose up -d
 docker compose exec raycat raycat tui
 ```
 
-### On a server
+### Service on a server
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/raycat-app/raycat/main/deploy/install.sh | sudo sh
@@ -96,28 +100,23 @@ sudo raycat tui
 
 ## Modes
 
-| What goes through the VPN | How to run it | Setting |
+| Through the VPN | How to run | Settings |
 | --- | --- | --- |
-| **Chosen containers** | raycat in Docker, containers with `network_mode: service:raycat` | `type = "gateway"` |
-| **The whole server** | raycat as a service on the server | `type = "gateway"` |
-| **Chosen programs** | an HTTP and SOCKS5 proxy on `127.0.0.1:7890` | `type = "proxy"` |
-| **Your home network** | raycat in the host network, the server set as the gateway on devices | `type = "gateway"`, `lan = true` |
+| **Selected containers** | raycat in Docker, containers with `network_mode: service:raycat` | `type = "gateway"` |
+| **The whole server** | raycat as a systemd service | `type = "gateway"` |
+| **Individual programs** | an HTTP and SOCKS5 proxy on `127.0.0.1:7890` | `type = "proxy"` |
+| **Home network** | raycat in the host network, the server set as the gateway on devices | `type = "gateway"`, `lan = true` |
 
 > [!IMPORTANT]
-> The kill switch works in `gateway` mode: without the tunnel, traffic and DNS do not leave. In `proxy` mode, programs that don't use the proxy go direct.
+> The kill switch applies in `gateway` mode: without the tunnel, traffic and DNS queries do not leave. In `proxy` mode, programs that do not use the proxy connect directly.
 
-**raycat can also:**
-
-- keep a main subscription and backups and reorder them on the fly;
-- check nodes and switch on failure, pin a node or exclude nodes with masks like `Bypass*`;
-- send Russian sites around the VPN (`ru_direct = true`);
-- run wherever your server does: builds for x86_64, arm64 and armv7, including Raspberry Pi.
+Builds are available for x86_64, arm64 and armv7, including Raspberry Pi.
 
 <p align="right"><a href="#raycat">back to top</a></p>
 
 ## Managing it
 
-`raycat tui` shows everything on one screen and works with a mouse. You can change settings right there.
+`raycat tui` shows the status, nodes, subscriptions, log and settings on one screen and supports a mouse. The main settings can be changed directly in the interface.
 
 <div align="center">
   <img src="assets/tui-nodes.png" alt="raycat tui: nodes" width="820">
@@ -134,44 +133,44 @@ sudo raycat tui
 
 <br>
 
-| Key | Tab | What you can do there |
+| Key | Tab | Actions |
 | --- | --- | --- |
-| <kbd>1</kbd> | Overview | see the tunnel state, update subscriptions, test the speed |
-| <kbd>2</kbd> | Nodes | pin a node <kbd>p</kbd>, exclude it <kbd>x</kbd>, hide dead ones <kbd>d</kbd>, test the speed <kbd>t</kbd> |
-| <kbd>3</kbd> | Subscriptions | change masks <kbd>m</kbd> and the order <kbd>[</kbd> <kbd>]</kbd> |
-| <kbd>4</kbd> | Log | see events, warnings only <kbd>w</kbd> |
-| <kbd>5</kbd> | Settings | change the main settings |
+| <kbd>1</kbd> | Overview | tunnel status, updating subscriptions, speed test |
+| <kbd>2</kbd> | Nodes | pin <kbd>p</kbd>, exclude <kbd>x</kbd>, hide unavailable <kbd>d</kbd>, speed test <kbd>t</kbd> |
+| <kbd>3</kbd> | Subscriptions | masks <kbd>m</kbd> and order <kbd>[</kbd> <kbd>]</kbd> |
+| <kbd>4</kbd> | Log | events, warnings only <kbd>w</kbd> |
+| <kbd>5</kbd> | Settings | changing the main parameters |
 
-The same things are available as commands:
+The same actions are available from the command line:
 
-| Command | What it does |
+| Command | Purpose |
 | --- | --- |
-| `raycat status` | tunnel state, current node, subscriptions |
+| `raycat status` | tunnel status, current node, subscriptions |
 | `raycat nodes` | list of nodes |
 | `raycat use <node>`, `raycat use auto` | pin a node, return to automatic selection |
 | `raycat update` | update subscriptions now |
-| `raycat speedtest` | test the speed through the VPN |
+| `raycat speedtest` | speed test through the VPN |
 | `raycat check` | check the settings file |
-| `raycat config` | show the effective settings, with secrets hidden |
-| `raycat reload` | apply edits to the settings file |
+| `raycat config` | effective settings, with secrets hidden |
+| `raycat reload` | apply changes to the settings file |
 
-`raycat --help` shows the rest.
+Full list of commands: `raycat --help`.
 
 <p align="right"><a href="#raycat">back to top</a></p>
 
 ## Settings
 
-Settings live in one file: `/etc/raycat/config.toml` on a server, `raycat/config.toml` in the Docker example. Every key is explained in the [example settings](../deploy/config.example.toml), and raycat suggests the right name if you make a typo.
+Settings are stored in one file: `/etc/raycat/config.toml` on a server or `raycat/config.toml` in the Docker example. Every parameter is explained in the [example settings](../deploy/config.example.toml). If a parameter name has a typo, raycat suggests the correct one.
 
 > [!TIP]
-> After editing, run `sudo raycat reload`. The daemon applies what it can on the fly and tells you if something needs a restart.
+> After changing the file, run `sudo raycat reload`. Parameters that can be applied without a restart take effect immediately; for the rest, raycat reports that a restart is required.
 
 <details>
-<summary><b>Your own rules: what goes around the VPN</b></summary>
+<summary><b>Routing rules</b></summary>
 
 <br>
 
-Normally all traffic goes through the VPN. Rules are for exceptions. For example, open your bank's site directly, and send one Russian site through the VPN instead:
+By default all traffic is routed through the VPN. Rules define exceptions: for example, a bank's site opens directly, while a particular Russian site goes through the VPN.
 
 ```toml
 [routing]
@@ -179,14 +178,14 @@ ru_direct = true
 
 [[routing.rule]]
 domains = ["mybank.example"]
-action = "direct"             # direct: around the VPN
+action = "direct"             # direct: bypass the VPN
 
 [[routing.rule]]
 domains = ["*.example.ru"]    # *.example.ru: the site and its subdomains
 action = "proxy"              # proxy: through the VPN, block: block it
 ```
 
-Rules are checked from top to bottom, and the first match wins. They take priority over `ru_direct`. Instead of `domains`, or together with them, you can set `ips`: subnets or single addresses.
+Rules are checked from top to bottom, and the first match applies. They take priority over `ru_direct`. Instead of `domains`, or together with them, you can set `ips`: subnets or single addresses.
 
 </details>
 
@@ -195,7 +194,7 @@ Rules are checked from top to bottom, and the first match wins. They take priori
 
 <br>
 
-raycat must run in the host's own network: as a service, or in Docker with `network_mode: host`.
+raycat must run in the host's network namespace: as a service, or in Docker with `network_mode: host`.
 
 ```toml
 [mode]
@@ -203,7 +202,7 @@ type = "gateway"
 lan = true
 ```
 
-On the device or in your router's DHCP, set the server's address as the gateway and DNS. You don't need to enable `ip_forward`, and SSH and other host services keep working. `raycat check` shows which interface and subnets will be intercepted.
+On the device or in your router's DHCP, set the server's address as the gateway and DNS server. Enabling `ip_forward` is not required, and SSH and other host services keep working. `raycat check` shows the intercepted interface and subnets.
 
 </details>
 
@@ -212,9 +211,9 @@ On the device or in your router's DHCP, set the server's address as the gateway 
 
 <br>
 
-These override the settings file, which is handy in Docker.
+These override values from the settings file, which is convenient in Docker.
 
-| Variable | What it sets |
+| Variable | Parameter |
 | --- | --- |
 | `RAYCAT_SUBSCRIPTION`, `RAYCAT_SUBSCRIPTION_FILE` | the link of the first subscription, or a file with it |
 | `RAYCAT_APP`, `RAYCAT_PLATFORM` | the app and platform of the first subscription |
@@ -230,15 +229,15 @@ These override the settings file, which is handy in Docker.
 
 <br>
 
-**The provider returns no nodes.** Run `raycat fetch <subscription>` to see the provider's response. Errors 403 and 404 usually mean you need a different app or platform. The device limit may also be used up, or the subscription may have expired.
+**The provider returns no nodes.** Run `raycat fetch <subscription>` to see the provider's response. Errors 403 and 404 usually mean a different app or platform is required. The device limit may also be exhausted, or the subscription may have expired.
 
-**`raycat status` says the daemon is not running.** Check `sudo systemctl status raycat` and `journalctl -u raycat -n 100`. Client commands need `sudo`.
+**`raycat status` reports that the daemon is not running.** Check `sudo systemctl status raycat` and `journalctl -u raycat -n 100`. Client commands are run with `sudo`.
 
-**The gateway doesn't start in Docker.** It needs `cap_add: [NET_ADMIN]` and `dns: [1.1.1.1]`, as in the example.
+**The gateway does not start in Docker.** It requires `cap_add: [NET_ADMIN]` and `dns: [1.1.1.1]`, as in the example.
 
-**Settings from the TUI don't save in Docker.** Mount the directory, not a single file, as in the example.
+**Settings from the interface are not saved in Docker.** Mount the directory, not a single file, as in the example.
 
-**Slow on a Raspberry Pi 3 or 4.** These processors have no hardware AES. The installer picks the right build by itself. In Docker, add `-noaes` to the tag, for example `:latest-noaes`.
+**Low speed on Raspberry Pi 3 and 4.** These processors have no hardware AES acceleration. The installer selects the right build automatically; in Docker, use the tag with the `-noaes` suffix, for example `:latest-noaes`.
 
 </details>
 
@@ -247,7 +246,7 @@ These override the settings file, which is handy in Docker.
 
 <br>
 
-There are two channels. `dev` is built from every change. `stable` ships by itself once a build has spent enough time on dev. xray updates and vulnerability fixes ship immediately. To update a server install, run the install command again, and your settings stay. To remove it: `sudo sh install.sh --uninstall`.
+Releases are published on two channels. `dev` is built from every change, and `stable` is released automatically after a build has spent its holding period on dev. Xray-core updates and vulnerability fixes are released without a holding period. To update a server installation, run the install command again; settings are kept. To uninstall: `sudo sh install.sh --uninstall`.
 
 Archives and images are signed with GitHub attestations:
 
@@ -260,24 +259,22 @@ gh attestation verify oci://ghcr.io/raycat-app/raycat:latest --repo raycat-app/r
 
 <p align="right"><a href="#raycat">back to top</a></p>
 
-## What's inside
+## Roadmap
 
-[![Rust](https://img.shields.io/badge/Rust-2d333b?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/) [![Xray-core](https://img.shields.io/badge/Xray--core-2d333b?style=flat-square)](https://github.com/XTLS/Xray-core) [![Ratatui](https://img.shields.io/badge/Ratatui-2d333b?style=flat-square)](https://ratatui.rs/) [![Docker](https://img.shields.io/badge/Docker-2d333b?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/) [![nftables](https://img.shields.io/badge/nftables-2d333b?style=flat-square)](https://www.netfilter.org/projects/nftables/)
-
-raycat itself is written in Rust. [Xray-core](https://github.com/XTLS/Xray-core) builds the tunnel, the interface uses [Ratatui](https://ratatui.rs/), and traffic is intercepted with nftables. Thanks to these projects.
-
-## What's next
-
-- [x] A gateway for containers, the server and your home network
-- [x] Requests like Happ and INCY, with profiles that update themselves
-- [x] A terminal interface with a mouse and on-the-fly settings
+- [x] A gateway for containers, the server and the home network
+- [x] Happ and INCY request formats with automatic profile updates
+- [x] A terminal interface with mouse support and settings applied without a restart
 - [ ] The first stable version, 0.1.0
 - [ ] Version 1.0
 
 <p align="right"><a href="#raycat">back to top</a></p>
 
-## Questions and bugs
+## Support
 
-Ask questions in [Discussions](https://github.com/raycat-app/raycat/discussions) and report bugs in [issues](https://github.com/raycat-app/raycat/issues). Never post your subscription link or the output of `raycat identity`. Report vulnerabilities [privately](https://github.com/raycat-app/raycat/security/advisories/new).
+Questions are discussed in [Discussions](https://github.com/raycat-app/raycat/discussions); report bugs in [Issues](https://github.com/raycat-app/raycat/issues). Do not publish your subscription link or the output of `raycat identity`. Report vulnerabilities [privately](https://github.com/raycat-app/raycat/security/advisories/new).
 
-Licensed under [MIT](../LICENSE).
+Distributed under the [MIT](../LICENSE) license.
+
+## Built with
+
+[![Rust](https://img.shields.io/badge/Rust-2d333b?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/) [![Xray-core](https://img.shields.io/badge/Xray--core-2d333b?style=flat-square)](https://github.com/XTLS/Xray-core) [![Ratatui](https://img.shields.io/badge/Ratatui-2d333b?style=flat-square)](https://ratatui.rs/)
