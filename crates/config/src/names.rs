@@ -36,7 +36,11 @@ fn decoration(c: char) -> bool {
             | 0x2049
             | 0x2122
             | 0x2139
+            | 0x200B
+            | 0x200C
             | 0x200D
+            | 0x2060
+            | 0xFEFF
             | 0x20E3
             | 0xFE0E
             | 0xFE0F
@@ -58,8 +62,10 @@ fn strip(text: &str) -> String {
             chars.next();
             out.push(first);
             out.push(second);
-            // Буква сразу за флагом иначе слилась бы с кодом: `PLTikTok`.
-            if chars.peek().is_some_and(|next| next.is_alphabetic()) {
+            // Буква после флага, даже через невидимые символы, отделяется пробелом: иначе код
+            // слился бы с ней (`PLTikTok`). Проверяется первый видимый символ, любой алфавит.
+            let next_visible = chars.clone().find(|next| !decoration(*next));
+            if next_visible.is_some_and(char::is_alphabetic) {
                 out.push(' ');
             }
             continue;
@@ -119,6 +125,15 @@ mod tests {
         assert_eq!(country_code("🇵🇱TikTok"), Some("PL".to_owned()));
         assert_eq!(without_code(&safe_name("🇵🇱TikTok")), "TikTok");
         assert_eq!(variants("🇵🇱TikTok")[2].as_str(), "TikTok");
+    }
+
+    #[test]
+    fn a_cyrillic_letter_after_a_flag_gets_a_space_even_through_invisible_marks() {
+        assert_eq!(safe_name("🇵🇱Польша"), "PL Польша");
+        assert_eq!(safe_name("🇵🇱\u{FE0F}Польша"), "PL Польша");
+        assert_eq!(safe_name("🇦🇹\u{200D}Австрия"), "AT Австрия");
+        assert_eq!(safe_name("🇦🇹\u{200B}Австрия"), "AT Австрия");
+        assert_eq!(without_code(&safe_name("🇵🇱Польша")), "Польша");
     }
 
     #[test]
