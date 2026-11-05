@@ -1065,13 +1065,18 @@ fn journal_lines(
 /// Строки списка «Настроек»: заголовки разделов и сами настройки.
 #[derive(Debug, Clone, Copy)]
 enum Row {
+    /// Пустая строка перед заголовком раздела; выбор её пропускает.
+    Blank,
     Head(&'static str),
     Item(Setting),
 }
 
 fn list_rows() -> Vec<Row> {
     let mut rows = Vec::new();
-    for (heading, settings) in SECTIONS {
+    for (index, (heading, settings)) in SECTIONS.into_iter().enumerate() {
+        if index > 0 {
+            rows.push(Row::Blank);
+        }
         rows.push(Row::Head(heading));
         rows.extend(settings.iter().map(|setting| Row::Item(*setting)));
     }
@@ -1136,17 +1141,22 @@ pub(super) fn settings(canvas: &mut Canvas<'_>, app: &mut App, top: usize, end: 
 fn settings_list(canvas: &mut Canvas<'_>, app: &mut App, top: usize, width: usize, height: usize) {
     let rows = list_rows();
     let inner_rows = height - 2;
-    // Прокрутка идёт по настройкам; заголовки разделов занимают строки сверх этого числа.
-    app.keep_setting_visible(inner_rows.saturating_sub(SECTIONS.len()).max(1));
+    // Прокрутка идёт по настройкам. Строк-разделителей и заголовков в списке всего
+    // `rows.len() - Setting::ALL.len()`, поэтому столько строк остаётся под настройки.
+    let decor = rows.len() - Setting::ALL.len();
+    app.keep_setting_visible(inner_rows.saturating_sub(decor).max(1));
     let first = rows
         .iter()
         .position(|row| matches!(row, Row::Item(setting) if setting.row() == app.setting_offset))
         .unwrap_or(0);
-    let start = if first > 0 && matches!(rows.get(first - 1), Some(Row::Head(_))) {
-        first - 1
-    } else {
-        first
-    };
+    // Перед первой показанной настройкой возвращаем её заголовок и пустую строку над ним.
+    let mut start = first;
+    if start > 0 && matches!(rows.get(start - 1), Some(Row::Head(_))) {
+        start -= 1;
+    }
+    if start > 0 && matches!(rows.get(start - 1), Some(Row::Blank)) {
+        start -= 1;
+    }
     let cursor = app.setting_cursor;
     let visible = &rows[start..];
     if let Some(row) = visible
@@ -1164,6 +1174,7 @@ fn settings_list(canvas: &mut Canvas<'_>, app: &mut App, top: usize, width: usiz
     let inner_width = inner.width;
     for (row, entry) in visible.iter().take(inner_rows).enumerate() {
         match *entry {
+            Row::Blank => {}
             Row::Head(heading) => inner.line(row, 0, vec![Seg::new(heading, Tone::Dim, 0)]),
             Row::Item(setting) => {
                 let selected = setting.row() == cursor;

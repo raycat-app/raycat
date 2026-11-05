@@ -336,7 +336,8 @@ impl Setting {
     /// Значение по умолчанию в том виде, как его показывает строка.
     pub(super) fn default_text(self) -> &'static str {
         match self {
-            Self::RuDirect | Self::KillSwitch => "вкл",
+            Self::RuDirect => "выкл",
+            Self::KillSwitch => "вкл",
             Self::CheckInterval => "30s",
             Self::Failures => "3",
             Self::SwitchGain => "150ms",
@@ -3618,6 +3619,60 @@ mod tests {
             Some(Effect::SavePrefs(_))
         ));
         assert_eq!(app.shown(Setting::Names).source, "вид TUI");
+    }
+
+    #[test]
+    fn the_default_texts_match_what_the_config_uses_without_settings() {
+        use raycat_config::{Config, Env, LogLevel, Mode, format_duration};
+
+        let sub = "[[subscription]]\nname = \"основная\"\nurl = \"https://sub.example.com/api/sub/AbCdEfGh1234\"\napp = \"happ\"\nplatform = \"windows\"\n";
+        let env = Env::new();
+        let config = Config::from_toml_str(sub, &env).unwrap();
+        let gateway = Config::from_toml_str(&format!("{sub}\n[mode]\ntype = \"gateway\"\n"), &env)
+            .unwrap();
+        let kill_switch = match gateway.mode {
+            Mode::Gateway { kill_switch, .. } => kill_switch,
+            Mode::Proxy { .. } => panic!("режим шлюза не разобран"),
+        };
+        let xhttp = config.xray.xhttp_connections.map_or_else(
+            || SettingValue::Text(XHTTP_PROVIDER.to_owned()),
+            |count| SettingValue::Number(i64::from(count)),
+        );
+        let level = match config.log.level {
+            LogLevel::Error => "error",
+            LogLevel::Warn => "warn",
+            LogLevel::Info => "info",
+            LogLevel::Debug => "debug",
+        };
+        let actual = [
+            (
+                Setting::RuDirect,
+                value_text(&SettingValue::Bool(config.routing.ru_direct), Setting::RuDirect),
+            ),
+            (
+                Setting::KillSwitch,
+                value_text(&SettingValue::Bool(kill_switch), Setting::KillSwitch),
+            ),
+            (
+                Setting::CheckInterval,
+                format_duration(config.selection.check_interval),
+            ),
+            (
+                Setting::Failures,
+                config.selection.failures.to_string(),
+            ),
+            (Setting::SwitchGain, format_duration(config.selection.switch_gain)),
+            (
+                Setting::ReturnDelay,
+                format_duration(config.selection.return_delay),
+            ),
+            (Setting::Xhttp, value_text(&xhttp, Setting::Xhttp)),
+            (Setting::LogLevel, level.to_owned()),
+            (Setting::Names, names_label(NameStyle::default()).to_owned()),
+        ];
+        for (setting, text) in actual {
+            assert_eq!(setting.default_text(), text, "{setting:?}");
+        }
     }
 
     #[test]

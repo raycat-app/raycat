@@ -419,7 +419,12 @@ fn normal_hints(app: &App) -> Vec<Seg> {
 
 /// Ширина подсказки: плашка клавиши с полями и подпись.
 fn hint_width(key: &str, desc: &str) -> usize {
-    display_width(key) + 2 + display_width(desc)
+    let label = if desc.is_empty() {
+        0
+    } else {
+        1 + display_width(desc)
+    };
+    display_width(key) + 2 + label
 }
 
 /// Какие подсказки помещаются в ширину: обязательные всегда, остальные по приоритету.
@@ -488,9 +493,10 @@ fn keys_line(canvas: &mut Canvas<'_>, app: &mut App, y: usize, hints: &[Seg]) {
         }
         x += chip_width;
         if !desc.is_empty() {
+            let text = format!(" {desc}");
             let room = canvas.width.saturating_sub(x);
-            canvas.put(x, y, desc, room, Tone::Plain);
-            x += display_width(desc);
+            canvas.put(x, y, &text, room, Tone::Plain);
+            x += display_width(&text);
         }
     }
 }
@@ -1395,6 +1401,20 @@ mod tests {
         ] {
             assert!(has_line(&lines, word), "{word}: {lines:?}");
         }
+    }
+
+    #[test]
+    fn a_section_has_an_empty_row_above_it_except_the_first() {
+        let mut app = sample_app();
+        on_settings(&mut app);
+        let lines = screen(&mut app, 120, 40);
+        assert!(lines[3].starts_with("│ Подключение"), "{lines:?}");
+        let heading = lines
+            .iter()
+            .position(|line| line.starts_with("│ Выбор узла"))
+            .unwrap();
+        let above: String = lines[heading - 1].chars().skip(1).take(40).collect();
+        assert!(above.trim().is_empty(), "{lines:?}");
     }
 
     #[test]
