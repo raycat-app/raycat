@@ -8,7 +8,7 @@ use ratatui::style::Style;
 use raycat_proto::{SubscriptionStatus, XrayStatus};
 
 use super::app::{App, ExcludeDialog, Hit, InputMode, Link, Tab, Target};
-use super::canvas::{Canvas, GAP, Palette, Seg, fit, wrap};
+use super::canvas::{Canvas, GAP, Paint, Palette, Panel, Seg, fit, wrap};
 use super::pages;
 use crate::render;
 use crate::term::{Tone, display_width, pad};
@@ -127,7 +127,18 @@ fn compose(canvas: &mut Canvas<'_>, app: &mut App, zone: &TimeZone) {
     overlay(canvas, app);
 }
 
-/// Вкладки во второй строке; каждая — область нажатия. Активная — плашкой акцента.
+/// Панель вкладки: её рамка, плашка в строке вкладок и окна поверх неё.
+fn tab_panel(tab: Tab) -> Panel {
+    match tab {
+        Tab::Overview => Panel::Tunnel,
+        Tab::Nodes => Panel::Nodes,
+        Tab::Subscriptions => Panel::Subs,
+        Tab::Journal => Panel::Events,
+        Tab::Settings => Panel::Settings,
+    }
+}
+
+/// Вкладки во второй строке; каждая — область нажатия. Активная — плашкой цвета своей панели.
 fn tabs(canvas: &mut Canvas<'_>, app: &mut App) {
     let mut x = 0;
     for (index, tab) in Tab::ALL.iter().enumerate() {
@@ -136,7 +147,7 @@ fn tabs(canvas: &mut Canvas<'_>, app: &mut App) {
         let label = format!(" {number} {title} ");
         let width = display_width(&label);
         if *tab == app.tab {
-            let style = canvas.accent_badge();
+            let style = canvas.tab_badge(tab_panel(*tab));
             canvas.put_style(x, 1, &label, width, style);
         } else {
             let digit = format!(" {number} ");
@@ -155,7 +166,7 @@ fn tabs(canvas: &mut Canvas<'_>, app: &mut App) {
 fn header(canvas: &mut Canvas<'_>, app: &App) {
     let name = " raycat ";
     let name_width = display_width(name);
-    let badge = canvas.accent_badge();
+    let badge = canvas.brand_badge();
     canvas.put_style(0, 0, name, name_width, badge);
     let state = tunnel_seg(app);
     let plaque = format!(" {} ", state.text);
@@ -315,7 +326,7 @@ pub(super) fn traffic_seg(used: u64, total: Option<u64>) -> Seg {
         format_bytes(used),
         format_bytes(total)
     );
-    Seg::new(text, tone, 1)
+    Seg::new(text, tone, 1).painted(Paint::Gauge)
 }
 
 /// Срок подписки прошёл. Бессрочная подписка (срок 0) не истекает.
@@ -697,7 +708,7 @@ fn popup(
     let x = (canvas.width - width) / 2;
     let y = (canvas.height - height) / 2;
     canvas.clear_rect(x, y, width, height);
-    let border = canvas.active_frame();
+    let border = canvas.frame(tab_panel(app.tab), true);
     let title = vec![Seg::new(heading, Tone::Header, 0)];
     let mut inner = canvas.boxed(x, y, width, height, title, border);
     for (row, (text, tone)) in lines.iter().enumerate() {
@@ -809,7 +820,7 @@ fn sub_popup(canvas: &mut Canvas<'_>, app: &mut App) {
 /// Заголовок подписок в таблице и подсказках; нужен и вкладкам.
 pub(super) fn subscription_title(count: usize) -> Vec<Seg> {
     vec![
-        Seg::new("Подписки", Tone::Bold, 0),
+        Seg::new("Подписки", Tone::Header, 0),
         Seg::new(format!("всего {count}"), Tone::Dim, 2),
     ]
 }
@@ -1088,7 +1099,7 @@ mod tests {
         for x in 1..99 {
             assert_eq!(
                 buffer[(x, u16::try_from(y).unwrap())].bg,
-                Color::Indexed(238),
+                Color::Indexed(52),
                 "ячейка {x}"
             );
         }
@@ -1153,7 +1164,7 @@ mod tests {
         assert!(lines[0].contains("raycat"), "{lines:?}");
         assert!(lines[0].contains("● нет связи с демоном"), "{lines:?}");
         assert_eq!(buffer[(10, 0)].symbol(), "●");
-        assert_eq!(buffer[(10, 0)].style().bg, Some(Color::Indexed(203)));
+        assert_eq!(buffer[(10, 0)].style().bg, Some(Color::Indexed(167)));
     }
 
     #[test]
@@ -1440,8 +1451,8 @@ mod tests {
         assert_eq!(lines[2], "демон недоступен: raycat не запущен");
         assert_eq!(lines[3], "Запустите службу: sudo systemctl start raycat");
         assert_eq!(lines[4], "повторное подключение через 1 с");
-        assert_eq!(buffer[(0, 2)].style().fg, Some(Color::Indexed(203)));
-        assert_ne!(buffer[(0, 3)].style().fg, Some(Color::Indexed(203)));
+        assert_eq!(buffer[(0, 2)].style().fg, Some(Color::Indexed(167)));
+        assert_ne!(buffer[(0, 3)].style().fg, Some(Color::Indexed(167)));
     }
 
     #[test]
@@ -1495,7 +1506,18 @@ mod tests {
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(0, 2)].symbol(), "╭");
         assert_eq!(buffer[(79, 2)].symbol(), "╮");
-        assert_eq!(buffer[(0, 2)].style().fg, Some(Color::Indexed(80)));
+        assert_eq!(buffer[(0, 2)].style().fg, Some(Color::Indexed(100)));
+    }
+
+    #[test]
+    fn the_active_tab_is_a_badge_in_its_panel_colour() {
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('2'));
+        let terminal = paint(&mut app, 80, 20, true);
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(10, 1)].symbol(), "2");
+        assert_eq!(buffer[(10, 1)].bg, Color::Indexed(95));
+        assert_eq!(buffer[(10, 1)].fg, Color::Indexed(255));
     }
 
     #[test]
@@ -1604,7 +1626,7 @@ mod tests {
             .unwrap();
         let y = u16::try_from(y).unwrap();
         for x in 1..54 {
-            assert_eq!(buffer[(x, y)].bg, Color::Indexed(238), "ячейка {x}");
+            assert_eq!(buffer[(x, y)].bg, Color::Indexed(52), "ячейка {x}");
         }
     }
 
@@ -1754,11 +1776,11 @@ mod tests {
         for key in ["?", "q"] {
             let x = (0..buffer.area.width)
                 .find(|&x| {
-                    buffer[(x, y)].symbol() == key && buffer[(x, y)].bg == Color::Indexed(250)
+                    buffer[(x, y)].symbol() == key && buffer[(x, y)].bg == Color::Indexed(237)
                 })
                 .unwrap_or_else(|| panic!("клавиша {key} не в плашке: {lines:?}"));
             // Плашка ` ? ` — правый отступ ещё на плашке, потом пробел и подпись без фона.
-            assert_eq!(buffer[(x + 1, y)].bg, Color::Indexed(250), "{key}");
+            assert_eq!(buffer[(x + 1, y)].bg, Color::Indexed(237), "{key}");
             assert_eq!(buffer[(x + 2, y)].bg, Color::Reset, "{key}");
             assert_ne!(buffer[(x + 3, y)].symbol(), " ", "{key}: {lines:?}");
         }
