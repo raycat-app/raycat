@@ -8,7 +8,7 @@ use ratatui::style::Style;
 use raycat_proto::{SubscriptionStatus, XrayStatus};
 
 use super::app::{App, ExcludeDialog, Hit, InputMode, Link, Tab, Target};
-use super::canvas::{Canvas, GAP, Palette, Seg, fit, wrap};
+use super::canvas::{Canvas, GAP, GAUGE_EMPTY, GAUGE_FULL, Palette, Seg, fit, gauge_cells, wrap};
 use super::pages;
 use crate::render;
 use crate::term::{Tone, display_width, pad};
@@ -20,7 +20,7 @@ const MIN_HEIGHT: usize = 12;
 const STATUS_LINES: usize = 3;
 const BANNER_LINES: usize = 3;
 const BANNER_HINT_LINES: usize = 2;
-const BAR_CELLS: usize = 10;
+pub(super) const BAR_CELLS: usize = 10;
 /// Скорость ниже этого значения бит/с показывается как «—».
 const MIN_SPEED: u64 = 1_000;
 /// Строки, которые всегда остаются телу вкладки.
@@ -127,49 +127,48 @@ fn compose(canvas: &mut Canvas<'_>, app: &mut App, zone: &TimeZone) {
     overlay(canvas, app);
 }
 
-/// Вкладки во второй строке; каждая — область нажатия. Активная — плашкой акцента.
+/// Вкладки во второй строке; каждая — область нажатия. Активная — акцентом с
+/// подчёркиванием, остальные серые.
 fn tabs(canvas: &mut Canvas<'_>, app: &mut App) {
     let mut x = 0;
     for (index, tab) in Tab::ALL.iter().enumerate() {
         let number = index + 1;
         let title = tab.title();
-        let label = format!(" {number} {title} ");
-        let width = display_width(&label);
+        let label = format!("{number} {title}");
+        let label_width = display_width(&label);
+        // Поле в одну ячейку с каждой стороны: по нему тоже можно щёлкнуть.
+        let width = label_width + 2;
         if *tab == app.tab {
-            let style = canvas.accent_badge();
-            canvas.put_style(x, 1, &label, width, style);
+            let style = canvas.active_tab();
+            canvas.put_style(x + 1, 1, &label, label_width, style);
         } else {
-            let digit = format!(" {number} ");
-            let digit_width = display_width(&digit);
-            canvas.put(x, 1, &digit, digit_width, Tone::Dim);
-            let name = format!("{title} ");
-            canvas.put(x + digit_width, 1, &name, width - digit_width, Tone::Plain);
+            canvas.put(x + 1, 1, &label, label_width, Tone::Dim);
         }
         app.hits.push(Hit::new(x, 1, width, Target::Tab(*tab)));
         x += width + 1;
     }
 }
 
-/// Шапка в первой строке: название и состояние туннеля плашками, справа серым режим,
-/// выключатель и время работы. Текущий узел здесь не показывается.
+/// Шапка в первой строке: название акцентом и состояние туннеля цветом, справа серым
+/// режим, killswitch и время работы. Текущий узел здесь не показывается.
 fn header(canvas: &mut Canvas<'_>, app: &App) {
-    let name = " raycat ";
+    let name = " raycat";
     let name_width = display_width(name);
-    let badge = canvas.accent_badge();
-    canvas.put_style(0, 0, name, name_width, badge);
+    let style = canvas.accent();
+    canvas.put_style(0, 0, name, name_width, style);
     let state = tunnel_seg(app);
-    let plaque = format!(" {} ", state.text);
-    let plaque_width = display_width(&plaque);
-    let left = name_width + 1;
-    let style = canvas.plaque(state.tone);
-    canvas.put_style(left, 0, &plaque, plaque_width, style);
-    let left_end = left + plaque_width;
-    let room = canvas.width.saturating_sub(left_end + GAP);
+    let state_width = display_width(&state.text);
+    let left = name_width + GAP;
+    let style = canvas.state(state.tone);
+    canvas.put_style(left, 0, &state.text, state_width, style);
+    let left_end = left + state_width;
+    let room = canvas.width.saturating_sub(left_end + GAP + 1);
     let right = header_right(app, room);
     let right_width = display_width(&right);
-    if right_width > 0 && left_end + GAP + right_width <= canvas.width {
+    // Справа поле в одну ячейку, как слева у названия.
+    if right_width > 0 && left_end + GAP + right_width < canvas.width {
         canvas.put(
-            canvas.width - right_width,
+            canvas.width - right_width - 1,
             0,
             &right,
             right_width,
@@ -186,7 +185,7 @@ fn header_right(app: &App, room: usize) -> String {
     let mut segs = vec![Seg::new(render::mode_name(status.mode), Tone::Dim, 0)];
     if let Some(on) = status.kill_switch {
         let state = if on { "вкл" } else { "выкл" };
-        segs.push(Seg::new(format!("kill switch {state}"), Tone::Dim, 1));
+        segs.push(Seg::new(format!("killswitch {state}"), Tone::Dim, 1));
     }
     let uptime = status.uptime_secs + app.now.saturating_sub(app.status_at);
     segs.push(Seg::new(render::span(uptime), Tone::Dim, 2));
@@ -289,10 +288,13 @@ pub(super) fn speed_part(bits: u64) -> String {
     }
 }
 
-/// Полоска из десяти ячеек: заполненная часть отвечает проценту.
+/// Полоска из десяти ячеек одной строкой: заполненная часть отвечает проценту. Где можно
+/// раскрасить части по-разному, рисуется `Canvas::gauge`.
 pub(super) fn bar(percent: u128) -> String {
-    let filled = usize::try_from(percent / 10).map_or(BAR_CELLS, |cells| cells.min(BAR_CELLS));
-    format!("{}{}", "█".repeat(filled), "░".repeat(BAR_CELLS - filled))
+    let filled = gauge_cells(percent, BAR_CELLS);
+    let full: String = std::iter::repeat_n(GAUGE_FULL, filled).collect();
+    let empty: String = std::iter::repeat_n(GAUGE_EMPTY, BAR_CELLS - filled).collect();
+    format!("{full}{empty}")
 }
 
 /// Трафик подписки: полоска, процент и объёмы. Без лимита остаётся только объём.
@@ -433,25 +435,27 @@ fn normal_hints(app: &App) -> Vec<Seg> {
         .collect()
 }
 
-/// Ширина подсказки: плашка клавиши с полями и подпись.
+/// Ширина подсказки: клавиша и подпись через пробел.
 fn hint_width(key: &str, desc: &str) -> usize {
     let label = if desc.is_empty() {
         0
     } else {
         1 + display_width(desc)
     };
-    display_width(key) + 2 + label
+    display_width(key) + label
 }
 
 /// Какие подсказки помещаются в ширину: обязательные всегда, остальные по приоритету.
 fn keep_hints(items: &[(&str, &str, u8)], width: usize) -> Vec<bool> {
+    let sep = display_width(SEPARATOR);
     let mut order: Vec<usize> = (0..items.len()).collect();
     order.sort_by_key(|&index| items[index].2);
     let mut keep = vec![false; items.len()];
-    let mut used = 0;
+    // Поля по одной ячейке у краёв строки.
+    let mut used = 2;
     for (count, index) in order.into_iter().enumerate() {
         let (key, desc, priority) = items[index];
-        let need = hint_width(key, desc) + if count > 0 { GAP } else { 0 };
+        let need = hint_width(key, desc) + if count > 0 { sep } else { 0 };
         if priority > 0 && used + need > width {
             break;
         }
@@ -478,8 +482,8 @@ fn key_code(key: &str) -> Option<KeyCode> {
     }
 }
 
-/// Строка клавиш: клавиша в плашке, подпись обычным текстом. Клик по плашке работает как
-/// клавиша; пока открыто поле ввода, плашки не нажимаются.
+/// Строка клавиш: клавиша ярким жирным, подпись серым, между подсказками серая точка.
+/// Клик по подсказке работает как клавиша; пока открыто поле ввода, подсказки не нажимаются.
 fn keys_line(canvas: &mut Canvas<'_>, app: &mut App, y: usize, hints: &[Seg]) {
     let items: Vec<(&str, &str, u8)> = hints
         .iter()
@@ -490,15 +494,17 @@ fn keys_line(canvas: &mut Canvas<'_>, app: &mut App, y: usize, hints: &[Seg]) {
         .collect();
     let keep = keep_hints(&items, canvas.width);
     let style = canvas.key_style();
+    let sep = display_width(SEPARATOR);
     // Справка и выход прижаты к правому краю; остальные подсказки идут слева по порядку.
     let kept: Vec<usize> = (0..items.len()).filter(|&index| keep[index]).collect();
     let (right, left): (Vec<usize>, Vec<usize>) = kept
         .into_iter()
         .partition(|&index| matches!(items[index].0, "?" | "q"));
-    let mut x = 0;
+    let mut x = 1;
     for (count, index) in left.into_iter().enumerate() {
         if count > 0 {
-            x += GAP;
+            canvas.put(x, y, SEPARATOR, sep, Tone::Dim);
+            x += sep;
         }
         x = draw_hint(canvas, app, x, y, items[index], style);
     }
@@ -506,15 +512,19 @@ fn keys_line(canvas: &mut Canvas<'_>, app: &mut App, y: usize, hints: &[Seg]) {
         .iter()
         .map(|&index| hint_width(items[index].0, items[index].1))
         .sum::<usize>()
-        + GAP * right.len().saturating_sub(1);
-    let mut x = canvas.width.saturating_sub(right_width).max(x + GAP);
-    for index in right {
-        x = draw_hint(canvas, app, x, y, items[index], style) + GAP;
+        + sep * right.len().saturating_sub(1);
+    let mut x = canvas.width.saturating_sub(right_width + 1).max(x + sep);
+    for (count, index) in right.into_iter().enumerate() {
+        if count > 0 {
+            canvas.put(x, y, SEPARATOR, sep, Tone::Dim);
+            x += sep;
+        }
+        x = draw_hint(canvas, app, x, y, items[index], style);
     }
 }
 
-/// Одна подсказка: плашка клавиши и подпись обычным текстом. Возвращает x после неё.
-/// Клик по плашке выполняет клавишу, если окно не открыто.
+/// Одна подсказка: клавиша и подпись серым. Возвращает x после неё. Клик по подсказке
+/// выполняет клавишу, если окно не открыто.
 fn draw_hint(
     canvas: &mut Canvas<'_>,
     app: &mut App,
@@ -523,20 +533,19 @@ fn draw_hint(
     (key, desc, _): (&str, &str, u8),
     style: Style,
 ) -> usize {
-    let chip = format!(" {key} ");
-    let chip_width = display_width(&chip);
-    canvas.put_style(x, y, &chip, chip_width, style);
-    if app.input == InputMode::Normal
-        && let Some(code) = key_code(key)
-    {
-        app.hits.push(Hit::new(x, y, chip_width, Target::Key(code)));
-    }
-    let mut next = x + chip_width;
+    let key_width = display_width(key);
+    canvas.put_style(x, y, key, key_width, style);
+    let mut next = x + key_width;
     if !desc.is_empty() {
         let text = format!(" {desc}");
         let room = canvas.width.saturating_sub(next);
-        canvas.put(next, y, &text, room, Tone::Plain);
+        canvas.put(next, y, &text, room, Tone::Dim);
         next += display_width(&text);
+    }
+    if app.input == InputMode::Normal
+        && let Some(code) = key_code(key)
+    {
+        app.hits.push(Hit::new(x, y, next - x, Target::Key(code)));
     }
     next
 }
@@ -703,16 +712,15 @@ fn popup(
     for (row, (text, tone)) in lines.iter().enumerate() {
         inner.line(row, 0, vec![Seg::new(text.as_str(), *tone, 0)]);
     }
-    let chip = inner.key_style();
+    let style = inner.accent();
     let row = lines.len() + 1;
     let mut at = 0;
     for (label, target) in buttons {
-        let text = format!(" {label} ");
-        let text_width = display_width(&text);
-        inner.put_style(at, row, &text, text_width, chip);
+        let text_width = display_width(label);
+        inner.put_style(at, row, label, text_width, style);
         app.hits
             .push(Hit::new(x + 2 + at, y + 1 + row, text_width, *target));
-        at += text_width + GAP;
+        at += text_width + 2 * GAP;
     }
 }
 
@@ -1088,7 +1096,7 @@ mod tests {
         for x in 1..99 {
             assert_eq!(
                 buffer[(x, u16::try_from(y).unwrap())].bg,
-                Color::Indexed(238),
+                Color::Indexed(236),
                 "ячейка {x}"
             );
         }
@@ -1141,7 +1149,7 @@ mod tests {
     }
 
     #[test]
-    fn a_lost_link_shows_in_the_header_as_a_red_plaque() {
+    fn a_lost_link_shows_in_the_header_in_red_without_a_plaque() {
         let mut app = sample_app();
         app.apply(Msg::Down {
             reason: "обрыв связи".to_owned(),
@@ -1150,10 +1158,32 @@ mod tests {
         let terminal = paint(&mut app, 80, 24, true);
         let buffer = terminal.backend().buffer();
         let lines = rows(buffer);
-        assert!(lines[0].contains("raycat"), "{lines:?}");
-        assert!(lines[0].contains("● нет связи с демоном"), "{lines:?}");
-        assert_eq!(buffer[(10, 0)].symbol(), "●");
-        assert_eq!(buffer[(10, 0)].style().bg, Some(Color::Indexed(203)));
+        assert!(lines[0].starts_with(" raycat  ● нет связи с демоном"), "{lines:?}");
+        assert_eq!(buffer[(1, 0)].style().fg, Some(Color::Indexed(111)));
+        assert_eq!(buffer[(9, 0)].symbol(), "●");
+        assert_eq!(buffer[(9, 0)].style().fg, Some(Color::Indexed(210)));
+        assert_eq!(buffer[(9, 0)].bg, Color::Reset);
+    }
+
+    #[test]
+    fn the_active_tab_is_underlined_in_the_accent_and_the_others_are_grey() {
+        let mut app = sample_app();
+        on_nodes(&mut app);
+        let terminal = paint(&mut app, 100, 30, true);
+        let buffer = terminal.backend().buffer();
+        let lines = rows(buffer);
+        let x = |word: &str| {
+            let at = lines[1].find(word).unwrap();
+            u16::try_from(display_width(&lines[1][..at])).unwrap()
+        };
+        let active = buffer[(x("2 Узлы"), 1)].style();
+        assert_eq!(active.fg, Some(Color::Indexed(111)));
+        assert!(active.add_modifier.contains(Modifier::UNDERLINED));
+        let other = buffer[(x("1 Обзор"), 1)].style();
+        assert_eq!(other.fg, Some(Color::Indexed(245)));
+        assert!(!other.add_modifier.contains(Modifier::UNDERLINED));
+        let painted = |cell: &Cell| cell.bg != Color::Reset && cell.bg != Color::Indexed(236);
+        assert!(!any_cell(buffer, painted));
     }
 
     #[test]
@@ -1366,7 +1396,7 @@ mod tests {
         let lines = screen(&mut app, 80, 20);
         assert!(lines[0].contains("● VPN работает"), "{lines:?}");
         assert!(lines[0].contains("прокси"), "{lines:?}");
-        assert!(!lines[0].contains("kill switch"), "{lines:?}");
+        assert!(!lines[0].contains("killswitch"), "{lines:?}");
     }
 
     #[test]
@@ -1440,8 +1470,8 @@ mod tests {
         assert_eq!(lines[2], "демон недоступен: raycat не запущен");
         assert_eq!(lines[3], "Запустите службу: sudo systemctl start raycat");
         assert_eq!(lines[4], "повторное подключение через 1 с");
-        assert_eq!(buffer[(0, 2)].style().fg, Some(Color::Indexed(203)));
-        assert_ne!(buffer[(0, 3)].style().fg, Some(Color::Indexed(203)));
+        assert_eq!(buffer[(0, 2)].style().fg, Some(Color::Indexed(210)));
+        assert_ne!(buffer[(0, 3)].style().fg, Some(Color::Indexed(210)));
     }
 
     #[test]
@@ -1495,17 +1525,17 @@ mod tests {
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(0, 2)].symbol(), "╭");
         assert_eq!(buffer[(79, 2)].symbol(), "╮");
-        assert_eq!(buffer[(0, 2)].style().fg, Some(Color::Indexed(80)));
+        assert_eq!(buffer[(0, 2)].style().fg, Some(Color::Indexed(111)));
     }
 
     #[test]
     fn the_header_drops_its_right_part_first_when_narrow() {
         let mut app = sample_app();
         let wide = screen(&mut app, 100, 20);
-        assert!(wide[0].contains("kill switch вкл"), "{wide:?}");
+        assert!(wide[0].contains("killswitch вкл"), "{wide:?}");
         assert!(wide[0].contains("шлюз"), "{wide:?}");
         let narrow = screen(&mut app, 44, 20);
-        assert!(!narrow[0].contains("kill switch"), "{narrow:?}");
+        assert!(!narrow[0].contains("killswitch"), "{narrow:?}");
     }
 
     fn text(value: &str) -> SettingValue {
@@ -1604,7 +1634,7 @@ mod tests {
             .unwrap();
         let y = u16::try_from(y).unwrap();
         for x in 1..54 {
-            assert_eq!(buffer[(x, y)].bg, Color::Indexed(238), "ячейка {x}");
+            assert_eq!(buffer[(x, y)].bg, Color::Indexed(236), "ячейка {x}");
         }
     }
 
@@ -1744,24 +1774,27 @@ mod tests {
     }
 
     #[test]
-    fn the_keys_line_keeps_each_key_in_its_plaque_and_pins_help_and_quit_right() {
+    fn the_keys_line_shows_bright_keys_with_grey_labels_and_pins_help_and_quit_right() {
         let mut app = sample_app();
         let terminal = paint(&mut app, 140, 30, true);
         let buffer = terminal.backend().buffer();
         let y = buffer.area.height - 1;
         let lines = rows(buffer);
-        assert!(lines.last().unwrap().ends_with("выход"), "{lines:?}");
-        for key in ["?", "q"] {
+        assert!(lines.last().unwrap().ends_with("? справка · q выход"), "{lines:?}");
+        assert!(lines.last().unwrap().starts_with(" u обновить · s скорость"), "{lines:?}");
+        for key in ["?", "q", "u"] {
             let x = (0..buffer.area.width)
-                .find(|&x| {
-                    buffer[(x, y)].symbol() == key && buffer[(x, y)].bg == Color::Indexed(250)
-                })
-                .unwrap_or_else(|| panic!("клавиша {key} не в плашке: {lines:?}"));
-            // Плашка ` ? ` — правый отступ ещё на плашке, потом пробел и подпись без фона.
-            assert_eq!(buffer[(x + 1, y)].bg, Color::Indexed(250), "{key}");
-            assert_eq!(buffer[(x + 2, y)].bg, Color::Reset, "{key}");
-            assert_ne!(buffer[(x + 3, y)].symbol(), " ", "{key}: {lines:?}");
+                .find(|&x| buffer[(x, y)].symbol() == key)
+                .unwrap_or_else(|| panic!("клавиши {key} нет: {lines:?}"));
+            let style = buffer[(x, y)].style();
+            assert_eq!(style.fg, Some(Color::Indexed(255)), "{key}");
+            assert!(style.add_modifier.contains(Modifier::BOLD), "{key}");
+            // Пробел, потом подпись серым; фона нет ни у клавиши, ни у подписи.
+            assert_eq!(buffer[(x + 2, y)].fg, Color::Indexed(245), "{key}");
+            assert_eq!(buffer[(x, y)].bg, Color::Reset, "{key}");
         }
+        let at = app.hit_at(Target::Key(KeyCode::Char('u'))).unwrap();
+        assert_eq!(at, (1, y));
     }
 
     #[test]
@@ -1783,7 +1816,7 @@ mod tests {
         assert!(limited.contains("50%"), "{lines:?}");
         // Полоска и «без лимита» начинаются в одной колонке.
         let at = |line: &str, mark: &str| display_width(&line[..line.find(mark).unwrap()]);
-        assert_eq!(at(plain, "без лимита"), at(limited, "█"), "{lines:?}");
+        assert_eq!(at(plain, "без лимита"), at(limited, "━"), "{lines:?}");
     }
 
     #[test]

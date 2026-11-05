@@ -8,7 +8,7 @@ use raycat_proto::{Node, NodeStatus, SubscriptionStatus};
 use super::app::{App, Hit, InputMode, LEVELS, NODE_SPLIT, Setting, Shown, SortBy, Speed, Target};
 use super::canvas::{Canvas, GAP, Seg, wrap};
 use super::view::{
-    bar, brief_phrase, delay_tone, is_expired, speed_label, speed_part, sub_phrase,
+    BAR_CELLS, brief_phrase, delay_tone, is_expired, speed_label, speed_part, sub_phrase,
     subscription_title, traffic_seg, tunnel_hint, xray_segs,
 };
 use crate::names::{NameStyle, country_code, display_name, node_reason, node_reason_short};
@@ -43,7 +43,7 @@ const SUB_NAME_WIDTH: usize = 14;
 const SUB_NAME_MIN: usize = 6;
 /// Имя на самой узкой панели, где срока уже нет.
 const SUB_NAME_TIGHT: usize = 4;
-/// `██████████ 100%`: полоска, пробел и процент, всегда одной ширины.
+/// `━━━━━━━━━━ 100%`: полоска, пробел и процент, всегда одной ширины.
 const SUB_BAR_WIDTH: usize = 15;
 /// Самая длинная строка срока, например `до 05.11 · 23 дн`.
 const SUB_EXPIRY_WIDTH: usize = 17;
@@ -203,13 +203,21 @@ fn tunnel_panel(
         let down: Vec<u64> = app.speeds.iter().map(|speed| speed.down).collect();
         let up: Vec<u64> = app.speeds.iter().map(|speed| speed.up).collect();
         let now = app.speed();
-        speed_row(&mut inner, 2, "↓", now.map(|speed| speed.down), &down);
-        speed_row(&mut inner, 3, "↑", now.map(|speed| speed.up), &up);
+        let down_row = (2, "↓", Tone::Header);
+        let up_row = (3, "↑", Tone::Dim);
+        speed_row(&mut inner, down_row, now.map(|speed| speed.down), &down);
+        speed_row(&mut inner, up_row, now.map(|speed| speed.up), &up);
     }
 }
 
 /// Строка скорости: стрелка, значение и график за последние замеры. Нет замера — `—`.
-fn speed_row(inner: &mut Canvas<'_>, row: usize, arrow: &str, bits: Option<u64>, history: &[u64]) {
+/// График приёма акцентом, отдачи серым: приём обычно и есть то, на что смотрят.
+fn speed_row(
+    inner: &mut Canvas<'_>,
+    (row, arrow, graph): (usize, &str, Tone),
+    bits: Option<u64>,
+    history: &[u64],
+) {
     let Some(bits) = bits else {
         inner.line(row, 0, vec![Seg::new(format!("{arrow} —"), Tone::Dim, 0)]);
         return;
@@ -218,7 +226,7 @@ fn speed_row(inner: &mut Canvas<'_>, row: usize, arrow: &str, bits: Option<u64>,
     let cells = inner.width.saturating_sub(SPEED_LABEL + GAP);
     let mut segs = vec![Seg::new(label, Tone::Plain, 0)];
     if cells >= GRAPH_MIN && !history.is_empty() {
-        segs.push(Seg::new(sparkline(history, cells), Tone::Plain, 1));
+        segs.push(Seg::new(sparkline(history, cells), graph, 1));
     }
     inner.line(row, 0, segs);
 }
@@ -339,8 +347,10 @@ fn sub_brief_row(
                 71..=90 => Tone::Yellow,
                 _ => Tone::Red,
             };
-            let text = format!("{} {percent}%", bar(percent));
-            inner.put(columns.bar, row, &text, SUB_BAR_WIDTH, bar_tone);
+            inner.gauge(columns.bar, row, percent, BAR_CELLS, bar_tone);
+            let text = format!("{percent}%");
+            let at = columns.bar + BAR_CELLS + 1;
+            inner.put(at, row, &text, SUB_BAR_WIDTH - BAR_CELLS - 1, bar_tone);
         }
         (None, Some(_)) => inner.put(columns.bar, row, "—", SUB_BAR_WIDTH, Tone::Dim),
         (_, None) => inner.put(columns.bar, row, "без лимита", SUB_BAR_WIDTH, Tone::Dim),
@@ -462,18 +472,17 @@ fn filter_row(canvas: &mut Canvas<'_>, app: &mut App, x0: usize, y: usize, limit
     let key_style = canvas.key_style();
     let mut x = x0;
     for (key, label, active, target) in items {
-        let chip = format!(" {key} ");
         let text = format!(" {label}");
-        let chip_width = display_width(&chip);
-        let width = chip_width + display_width(&text);
+        let key_width = display_width(key);
+        let width = key_width + display_width(&text);
         if x + width > limit {
             break;
         }
-        canvas.put_style(x, y, &chip, chip_width, key_style);
+        canvas.put_style(x, y, key, key_width, key_style);
         let tone = if active { Tone::Header } else { Tone::Dim };
-        canvas.put(x + chip_width, y, &text, width - chip_width, tone);
+        canvas.put(x + key_width, y, &text, width - key_width, tone);
         app.hits.push(Hit::new(x, y, width, target));
-        x += width + GAP;
+        x += width + 2 * GAP;
     }
 }
 
