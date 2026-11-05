@@ -203,8 +203,8 @@ fn tunnel_panel(
         let down: Vec<u64> = app.speeds.iter().map(|speed| speed.down).collect();
         let up: Vec<u64> = app.speeds.iter().map(|speed| speed.up).collect();
         let now = app.speed();
-        let down_row = (2, "↓", Tone::Header);
-        let up_row = (3, "↑", Tone::Dim);
+        let down_row = (2, "↓", true);
+        let up_row = (3, "↑", false);
         speed_row(&mut inner, down_row, now.map(|speed| speed.down), &down);
         speed_row(&mut inner, up_row, now.map(|speed| speed.up), &up);
     }
@@ -214,7 +214,7 @@ fn tunnel_panel(
 /// График приёма акцентом, отдачи серым: приём обычно и есть то, на что смотрят.
 fn speed_row(
     inner: &mut Canvas<'_>,
-    (row, arrow, graph): (usize, &str, Tone),
+    (row, arrow, main): (usize, &str, bool),
     bits: Option<u64>,
     history: &[u64],
 ) {
@@ -223,12 +223,13 @@ fn speed_row(
         return;
     };
     let label = pad(&format!("{arrow} {}", speed_part(bits)), SPEED_LABEL);
+    inner.line(row, 0, vec![Seg::new(label, Tone::Plain, 0)]);
     let cells = inner.width.saturating_sub(SPEED_LABEL + GAP);
-    let mut segs = vec![Seg::new(label, Tone::Plain, 0)];
     if cells >= GRAPH_MIN && !history.is_empty() {
-        segs.push(Seg::new(sparkline(history, cells), graph, 1));
+        let style = inner.graph(main);
+        let graph = sparkline(history, cells);
+        inner.put_style(SPEED_LABEL + GAP, row, &graph, cells, style);
     }
-    inner.line(row, 0, segs);
 }
 
 /// Столбики `▁▂▃▄▅▆▇` по последним значениям: высота относительно самого большого из них.
@@ -1546,7 +1547,8 @@ fn settings_details(
         setting.default_text(),
         Tone::Plain,
     );
-    row += detail(&mut inner, row, "Откуда", &shown.source, Tone::Plain);
+    let in_file = file_state(&shown.source);
+    row += detail(&mut inner, row, "В файле", in_file, Tone::Plain);
     row += 1;
     if app.input == InputMode::Field {
         let text = format!("[{}█]", app.field);
@@ -1606,6 +1608,16 @@ fn detail(inner: &mut Canvas<'_>, row: usize, label: &str, value: &str, tone: To
         inner.put(LABEL, row + index, part, room, tone);
     }
     parts.len()
+}
+
+/// Задана ли настройка в файле. Демон называет источник значения «из файла» или «по
+/// умолчанию»; рядом со строкой «По умолчанию» второе читалось бы как повтор.
+fn file_state(source: &str) -> &str {
+    match source {
+        "из файла" => "задано",
+        "по умолчанию" => "не задано",
+        other => other,
+    }
 }
 
 /// Варианты уровня журнала в строке: текущий в скобках, каждый нажимается отдельно.
