@@ -11,7 +11,6 @@
 Для нужных контейнеров, всего сервера или домашней сети.
 
 [![Версия](https://img.shields.io/github/v/release/raycat-app/raycat?include_prereleases&style=flat-square&label=версия&color=2d333b)](https://github.com/raycat-app/raycat/releases)
-[![Сборка](https://img.shields.io/github/actions/workflow/status/raycat-app/raycat/ci.yml?branch=main&style=flat-square&label=сборка)](https://github.com/raycat-app/raycat/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/Rust-1.88%2B-2d333b?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Платформы](https://img.shields.io/badge/Linux-x86__64%20·%20arm64%20·%20armv7-2d333b?style=flat-square&logo=linux&logoColor=white)](https://github.com/raycat-app/raycat/releases)
 [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2d333b?style=flat-square&logo=docker&logoColor=white)](https://github.com/raycat-app/raycat/pkgs/container/raycat)
@@ -31,7 +30,7 @@
 
 raycat получает VPN-подписку у провайдера и поддерживает туннель на Linux-сервере. Трафик выбранных контейнеров, всего сервера или устройств домашней сети направляется через VPN без настройки отдельных приложений.
 
-Подписка запрашивается так же, как это делают Happ (Windows и Android) и INCY (Android), поэтому raycat работает и с провайдерами, которые выдают подписку только своим приложениям. Туннель строится на [Xray-core](https://github.com/XTLS/Xray-core). Поддерживаются резервные подписки, автоматический выбор узла при сбое, исключение узлов по маскам и прямой доступ к российским ресурсам. Если доступных узлов нет, аварийный выключатель (kill switch) не выпускает трафик мимо VPN.
+Подписка запрашивается так же, как это делают Happ (Windows и Android) и INCY (Android), поэтому raycat работает и с провайдерами, которые выдают подписку только своим приложениям. Туннель строится на [Xray-core](https://github.com/XTLS/Xray-core). Поддерживаются резервные подписки, автоматический выбор узла при сбое, исключение узлов по маскам и прямой доступ к российским ресурсам. Если доступных узлов нет, killswitch блокирует трафик мимо VPN.
 
 > [!NOTE]
 > Стабильная версия ещё не выпущена. До её выхода используйте образ `ghcr.io/raycat-app/raycat:dev` и установку с параметром `--channel dev`.
@@ -108,7 +107,7 @@ sudo raycat tui
 | **Домашняя сеть** | raycat в сети хоста, сервер указан шлюзом на устройствах | `type = "gateway"`, `lan = true` |
 
 > [!IMPORTANT]
-> Аварийный выключатель действует в режиме `gateway`: без туннеля трафик и DNS-запросы не выходят наружу. В режиме `proxy` программы, не использующие прокси, обращаются в сеть напрямую.
+> Killswitch действует в режиме `gateway`: без туннеля трафик и DNS-запросы не выходят наружу. В режиме `proxy` программы, не использующие прокси, обращаются в сеть напрямую.
 
 Сборки доступны для x86_64, arm64 и armv7, включая Raspberry Pi.
 
@@ -256,16 +255,6 @@ gh attestation verify oci://ghcr.io/raycat-app/raycat:latest --repo raycat-app/r
 ```
 
 </details>
-
-<p align="right"><a href="#raycat">наверх</a></p>
-
-## План развития
-
-- [x] Шлюз для контейнеров, сервера и домашней сети
-- [x] Запросы в формате Happ и INCY с автоматическим обновлением профилей
-- [x] Интерфейс в терминале с поддержкой мыши и изменением настроек без перезапуска
-- [ ] Первая стабильная версия 0.1.0
-- [ ] Версия 1.0
 
 <p align="right"><a href="#raycat">наверх</a></p>
 
