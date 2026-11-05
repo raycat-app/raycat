@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="raycat">
+  <defs>
+    <linearGradient id="light" x1="0" y1="0" x2="0.7" y2="1"><stop offset="0" stop-color="#10141c"/><stop offset="1" stop-color="#2a303b"/></linearGradient>
+    <linearGradient id="fold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6d7584"/><stop offset="1" stop-color="#2a303b"/></linearGradient>
+    <linearGradient id="wing" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#10141c"/><stop offset="0.55" stop-color="#10141c"/><stop offset="1" stop-color="#2a303b"/></linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5a6270"/><stop offset="1" stop-color="#a4abb8"/></linearGradient>
+    <linearGradient id="beam" gradientUnits="userSpaceOnUse" x1="770" y1="478" x2="1110" y2="590"><stop offset="0" stop-color="#2a303b"/><stop offset="1" stop-color="#2a303b" stop-opacity="0"/></linearGradient>
+  </defs>
+  <g transform="translate(-14 -6) scale(0.44)">
+    <path d="M770 472 L1110 578 L1085 600 L772 486 Z" fill="url(#beam)"/>
+    <path d="M118 435 H262 L306 482 H146 L118 503 Z" fill="url(#fold)"/>
+    <g fill="url(#light)"><path d="M145 505 H291 L386 590 H145 Z"/><path d="M145 602 H396 L472 650 L394 650 L430 685 H145 Z"/><path d="M145 698 H310 L386 775 H145 Z"/></g>
+    <g fill="#8c94a3"><path d="M145 505 L118 530 V568 L145 590 Z"/><path d="M145 602 L118 625 V662 L145 685 Z"/><path d="M145 698 L118 722 V748 L145 775 Z"/></g>
+    <g fill="#ffffff"><rect x="203" y="538" width="17" height="17"/><rect x="234" y="538" width="17" height="17"/><rect x="264" y="538" width="17" height="17"/><rect x="203" y="632" width="17" height="17"/><rect x="234" y="632" width="17" height="17"/><rect x="264" y="632" width="17" height="17"/><rect x="203" y="730" width="17" height="17"/><rect x="234" y="730" width="17" height="17"/><rect x="264" y="730" width="17" height="17"/></g>
+    <path d="M262 437 H392 L650 696 H522 Z" fill="url(#light)"/>
+    <path d="M400 437 H496 L656 598 V692 Z" fill="url(#fold)"/>
+    <path d="M345 698 H590 L612 752 H418 Z" fill="url(#fold)"/>
+    <path d="M660 580 H808 L946 716 L305 980 L405 885 H262 L152 790 H424 L612 756 L700 700 L660 640 Z" fill="url(#wing)"/>
+    <path d="M736 640 L790 719" stroke="#ffffff" stroke-width="5" fill="none"/>
+    <path d="M216 1018 L405 885 L305 980 Z" fill="#8c94a3"/>
+    <path d="M222 847 H275 L298 884 H262 Z" fill="#8c94a3"/>
+    <path d="M401 153 L657 338 L625 308 V265 L785 403 V470 L735 548 H620 L505 432 L498 421 H306 L401 303 Z" fill="url(#light)"/>
+    <path d="M435 210 L561 322 L445 363 L469 320 Z" fill="#ffffff"/>
+    <path d="M570 393 L632 420 L642 440 L752 470 L690 466 L640 452 Z" fill="#ffffff"/>
+    <path d="M385 186 C300 165 195 165 176 225 C160 285 270 410 400 530 C520 640 700 800 770 900 C800 945 804 1000 772 1022 C700 1058 520 1012 398 965 L422 955 C540 1000 690 1030 746 1008 C784 994 780 950 745 905 C670 810 520 680 392 566 C268 452 190 290 207 232 C222 192 300 178 383 196 Z" fill="#ffffff" stroke="#ffffff" stroke-width="16" stroke-linejoin="round"/>
+    <path d="M385 186 C300 165 195 165 176 225 C160 285 270 410 400 530 C520 640 700 800 770 900 C800 945 804 1000 772 1022 C700 1058 520 1012 398 965 L422 955 C540 1000 690 1030 746 1008 C784 994 780 950 745 905 C670 810 520 680 392 566 C268 452 190 290 207 232 C222 192 300 178 383 196 Z" fill="url(#ring)"/>
+    <path d="M460 940 C590 895 720 835 840 785 C735 850 600 905 460 940 Z" fill="url(#ring)"/>
+  </g>
+</svg>

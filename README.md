@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="assets/logo.svg" alt="raycat" width="168">
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.svg">
+  <img src="assets/logo.svg" alt="raycat" width="200">
+</picture>
 
 # raycat
 
