@@ -15,6 +15,8 @@ Chosen containers, the whole server or your home network go online through it.
 
 [Getting started](#getting-started) · [Modes](#modes) · [Managing it](#managing-it) · [Settings](#settings) · [Questions](#questions-and-bugs) · [Русский](README.md)
 
+[Report a bug](https://github.com/raycat-app/raycat/issues/new?template=bug.yml) · [Suggest an idea](https://github.com/raycat-app/raycat/issues/new?template=feature.yml)
+
 <br>
 
 <img src="assets/tui.png" alt="raycat tui: overview" width="820">
@@ -90,6 +92,8 @@ sudo systemctl start raycat
 sudo raycat tui
 ```
 
+<p align="right"><a href="#raycat">back to top</a></p>
+
 ## Modes
 
 | What goes through the VPN | How to run it | Setting |
@@ -109,6 +113,8 @@ sudo raycat tui
 - send Russian sites around the VPN (`ru_direct = true`);
 - run wherever your server does: builds for x86_64, arm64 and armv7, including Raspberry Pi.
 
+<p align="right"><a href="#raycat">back to top</a></p>
+
 ## Managing it
 
 `raycat tui` shows everything on one screen and works with a mouse. You can change settings right there.
@@ -116,6 +122,15 @@ sudo raycat tui
 <div align="center">
   <img src="assets/tui-nodes.png" alt="raycat tui: nodes" width="820">
 </div>
+
+<details>
+<summary><b>The Settings tab</b></summary>
+
+<br>
+
+<img src="assets/tui-settings.png" alt="raycat tui: settings" width="820">
+
+</details>
 
 <br>
 
@@ -141,6 +156,8 @@ The same things are available as commands:
 | `raycat reload` | apply edits to the settings file |
 
 `raycat --help` shows the rest.
+
+<p align="right"><a href="#raycat">back to top</a></p>
 
 ## Settings
 
@@ -240,6 +257,24 @@ gh attestation verify oci://ghcr.io/raycat-app/raycat:latest --repo raycat-app/r
 ```
 
 </details>
+
+<p align="right"><a href="#raycat">back to top</a></p>
+
+## What's inside
+
+[![Rust](https://img.shields.io/badge/Rust-2d333b?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/) [![Xray-core](https://img.shields.io/badge/Xray--core-2d333b?style=flat-square)](https://github.com/XTLS/Xray-core) [![Ratatui](https://img.shields.io/badge/Ratatui-2d333b?style=flat-square)](https://ratatui.rs/) [![Docker](https://img.shields.io/badge/Docker-2d333b?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/) [![nftables](https://img.shields.io/badge/nftables-2d333b?style=flat-square)](https://www.netfilter.org/projects/nftables/)
+
+raycat itself is written in Rust. [Xray-core](https://github.com/XTLS/Xray-core) builds the tunnel, the interface uses [Ratatui](https://ratatui.rs/), and traffic is intercepted with nftables. Thanks to these projects.
+
+## What's next
+
+- [x] A gateway for containers, the server and your home network
+- [x] Requests like Happ and INCY, with profiles that update themselves
+- [x] A terminal interface with a mouse and on-the-fly settings
+- [ ] The first stable version, 0.1.0
+- [ ] Version 1.0
+
+<p align="right"><a href="#raycat">back to top</a></p>
 
 ## Questions and bugs
 
