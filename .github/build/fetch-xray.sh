@@ -12,7 +12,7 @@ test -n "$version" && test -n "$sha256"
 archive=Xray-linux-64.zip
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-curl -fsSL -o "$tmp/$archive" "https://github.com/XTLS/Xray-core/releases/download/v${version}/${archive}"
+curl -fsSL --retry 5 --retry-all-errors -o "$tmp/$archive" "https://github.com/XTLS/Xray-core/releases/download/v${version}/${archive}"
 echo "${sha256}  $tmp/$archive" | sha256sum -c -
 mkdir -p "$dest"
 unzip -q -o "$tmp/$archive" xray -d "$dest"
