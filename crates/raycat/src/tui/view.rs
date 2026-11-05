@@ -1590,13 +1590,27 @@ mod tests {
             "Вид",
             "Сейчас",
             "По умолчанию",
-            "из файла",
+            "В файле",
             "российские домены и подсети идут напрямую",
             "Файл настроек: не найден",
             "Остальное в файле, raycat config покажет итог",
         ] {
             assert!(has_line(&lines, word), "{word}: {lines:?}");
         }
+        let row = lines.iter().find(|line| line.contains("В файле")).unwrap();
+        let set = row.contains("задано") && !row.contains("не задано");
+        assert!(set, "{row}");
+        assert!(!has_line(&lines, "Откуда"), "{lines:?}");
+    }
+
+    #[test]
+    fn a_setting_absent_from_the_file_says_so_instead_of_repeating_the_default() {
+        let mut app = sample_app();
+        on_settings(&mut app);
+        press(&mut app, KeyCode::Down);
+        let lines = screen(&mut app, 120, 30);
+        let row = lines.iter().find(|line| line.contains("В файле")).unwrap();
+        assert!(row.contains("не задано"), "{lines:?}");
     }
 
     #[test]
@@ -1675,7 +1689,7 @@ mod tests {
         {
             assert!(has_line(&lines, word), "{word}: {lines:?}");
         }
-        assert!(!has_line(&lines, "из файла"), "{lines:?}");
+        assert!(!has_line(&lines, "В файле"), "{lines:?}");
         assert!(has_line(&lines, "Файл настроек"), "{lines:?}");
         assert!(
             lines.iter().all(|line| display_width(line) <= 44),

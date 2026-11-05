@@ -734,8 +734,9 @@ mod tests {
                 assert!(!style.add_modifier.contains(Modifier::BOLD), "{color} {main}");
             }
         }
-        assert_eq!(Palette::new(true).graph(true).fg, Some(Color::Indexed(111)));
-        assert_eq!(Palette::new(true).graph(false).fg, Some(Color::Indexed(245)));
+        let colored = Palette::new(true);
+        assert_eq!(colored.graph(true).fg, Some(Color::Indexed(111)));
+        assert_eq!(colored.graph(false).fg, Some(Color::Indexed(245)));
     }
 
     #[test]

@@ -1547,7 +1547,8 @@ fn settings_details(
         setting.default_text(),
         Tone::Plain,
     );
-    row += detail(&mut inner, row, "Откуда", &shown.source, Tone::Plain);
+    let in_file = file_state(&shown.source);
+    row += detail(&mut inner, row, "В файле", in_file, Tone::Plain);
     row += 1;
     if app.input == InputMode::Field {
         let text = format!("[{}█]", app.field);
@@ -1607,6 +1608,16 @@ fn detail(inner: &mut Canvas<'_>, row: usize, label: &str, value: &str, tone: To
         inner.put(LABEL, row + index, part, room, tone);
     }
     parts.len()
+}
+
+/// Задана ли настройка в файле. Демон называет источник значения «из файла» или «по
+/// умолчанию»; рядом со строкой «По умолчанию» второе читалось бы как повтор.
+fn file_state(source: &str) -> &str {
+    match source {
+        "из файла" => "задано",
+        "по умолчанию" => "не задано",
+        other => other,
+    }
 }
 
 /// Варианты уровня журнала в строке: текущий в скобках, каждый нажимается отдельно.
