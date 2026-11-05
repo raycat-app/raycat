@@ -372,7 +372,8 @@ fn client_commands(command: Command) -> Command {
         ))
 }
 
-/// Автодополнение, man-страница и справка.
+/// Автодополнение, man-страница и справка. Первые две нужны установщику и сборке выпуска,
+/// а не человеку, поэтому в общей справке их нет.
 fn utility_commands(command: Command) -> Command {
     command
         .subcommand(
@@ -389,7 +390,8 @@ fn utility_commands(command: Command) -> Command {
                     .hide_possible_values(true)
                     .help("bash, zsh или fish")
                     .help_heading(ARGUMENTS),
-            ),
+            )
+            .hide(true),
         )
         .subcommand(
             subcommand(
@@ -892,12 +894,14 @@ mod tests {
             "update",
             "events",
             "tui",
-            "completions",
             "help",
         ] {
             assert!(help.contains(word), "{word}: {help}");
         }
         assert!(!help.contains("Print help"));
+        // Служебные команды для установщика работают, но в справке не видны.
+        assert!(!help.contains("completions"), "{help}");
+        assert!(!help.contains("man-страниц"), "{help}");
     }
 
     #[test]
