@@ -355,6 +355,21 @@ pub(super) fn sub_phrase(sub: &SubscriptionStatus, now: u64, zone: &TimeZone) ->
     ("работает".to_owned(), Tone::Green)
 }
 
+/// Состояние подписки на обзоре: истёкшая подписка показывает дату без года, остальное как в
+/// `sub_phrase`. Полная дата остаётся на вкладке «Подписки».
+pub(super) fn brief_phrase(sub: &SubscriptionStatus, now: u64, zone: &TimeZone) -> (String, Tone) {
+    if is_expired(sub, now) {
+        let day_month: String = sub
+            .expire
+            .map_or_else(String::new, |expire| format_date(expire, zone))
+            .chars()
+            .take(5)
+            .collect();
+        return (format!("истекла {day_month}"), Tone::Red);
+    }
+    sub_phrase(sub, now, zone)
+}
+
 /// Подсказки «клавиша описание»: клавиша в плашке, описание обычным текстом.
 fn normal_hints(app: &App) -> Vec<Seg> {
     let items: &[(&str, u8)] = match app.tab {
@@ -1478,9 +1493,9 @@ mod tests {
         press(&mut app, KeyCode::Char('3'));
         let terminal = paint(&mut app, 80, 20, true);
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, 3)].symbol(), "╭");
-        assert_eq!(buffer[(79, 3)].symbol(), "╮");
-        assert_eq!(buffer[(0, 3)].style().fg, Some(Color::Indexed(80)));
+        assert_eq!(buffer[(0, 2)].symbol(), "╭");
+        assert_eq!(buffer[(79, 2)].symbol(), "╮");
+        assert_eq!(buffer[(0, 2)].style().fg, Some(Color::Indexed(80)));
     }
 
     #[test]
@@ -1656,10 +1671,11 @@ mod tests {
             "happ · windows",
             "Отсечено масками",
             "Узлов живых",
-            "[m] Маски",
         ] {
             assert!(has_line(&lines, word), "{word}: {lines:?}");
         }
+        assert!(!has_line(&lines, "[m] Маски"), "{lines:?}");
+        assert!(!has_line(&lines, "[u] Обновить"), "{lines:?}");
     }
 
     #[test]
@@ -1852,21 +1868,151 @@ mod tests {
         status.subscriptions[0].note = Some(format!("истекла {date}"));
         let mut app = app_with(status, sample_nodes());
         let overview = screen(&mut app, 100, 30);
+        let short: String = date.chars().take(5).collect();
         assert!(
-            has_line(&overview, &format!("истекла {date}")),
+            has_line(&overview, &format!("истекла {short}")),
             "{overview:?}"
         );
         assert!(!has_line(&overview, "истёк"), "{overview:?}");
-        assert_eq!(
-            overview.join("\n").matches(date.as_str()).count(),
-            1,
-            "{overview:?}"
-        );
+        assert!(!overview.join("\n").contains(date.as_str()), "{overview:?}");
         press(&mut app, KeyCode::Char('3'));
         let subs = screen(&mut app, 100, 30);
         assert!(has_line(&subs, "узлов 2/3"), "{subs:?}");
+        assert!(
+            subs.iter()
+                .any(|line| line.contains("узлов 2/3") && line.contains("истекла")),
+            "{subs:?}"
+        );
         let state = subs.iter().find(|line| line.contains("Состояние")).unwrap();
         assert!(state.contains(&format!("истекла {date}")), "{state}");
+    }
+
+    #[test]
+    fn the_overview_row_shows_a_short_expiry_next_to_the_state() {
+        let mut app = sample_app();
+        let date: String = format_date(NOW + 40 * DAY, &TimeZone::UTC)
+            .chars()
+            .take(5)
+            .collect();
+        for width in [80_u16, 124] {
+            let lines = screen(&mut app, width, 30);
+            assert!(has_line(&lines, &format!("до {date} · 40 дн")), "{lines:?}");
+            assert!(!has_line(&lines, "осталось"), "{lines:?}");
+        }
+    }
+
+    #[test]
+    fn the_subscription_list_shows_a_state_word_and_the_node_count() {
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('3'));
+        let lines = screen(&mut app, 100, 30);
+        let row = lines
+            .iter()
+            .find(|line| line.contains("узлов 2/3"))
+            .unwrap();
+        assert!(
+            row.contains("main") && row.contains("работает"),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn provider_emoji_is_removed_from_the_subscription_panel() {
+        let mut status = sample_status();
+        status.subscriptions[0].title = Some("❗ Мой VPN 🌐".to_owned());
+        status.subscriptions[0].announce = Some("⚡ Скидка 🆔 для всех".to_owned());
+        let mut app = app_with(status, sample_nodes());
+        press(&mut app, KeyCode::Char('3'));
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "Мой VPN"), "{lines:?}");
+        assert!(has_line(&lines, "Скидка для всех"), "{lines:?}");
+        let emoji = ['❗', '🌐', '⚡', '🆔'];
+        assert!(!lines.iter().any(|line| line.contains(emoji)), "{lines:?}");
+    }
+
+    #[test]
+    fn a_long_detail_value_wraps_under_its_label_instead_of_being_cut() {
+        let mut status = sample_status();
+        status.subscriptions[0].url = format!("{} ХВОСТ", "адрес ".repeat(12));
+        let mut app = app_with(status, sample_nodes());
+        press(&mut app, KeyCode::Char('3'));
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "ХВОСТ"), "{lines:?}");
+        assert!(has_line(&lines, "Состояние"), "{lines:?}");
+    }
+
+    #[test]
+    fn the_journal_names_the_warnings_filter_in_its_title_only_when_it_is_on() {
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('4'));
+        let off = screen(&mut app, 100, 30);
+        assert!(!has_line(&off, "только предупреждения"), "{off:?}");
+        assert!(!has_line(&off, "[w]"), "{off:?}");
+        press(&mut app, KeyCode::Char('w'));
+        let on = screen(&mut app, 100, 30);
+        assert!(
+            has_line(&on, "Журнал · время UTC · только предупреждения"),
+            "{on:?}"
+        );
+    }
+
+    #[test]
+    fn a_warning_in_the_journal_shows_its_level_once() {
+        let mut app = sample_app();
+        app.apply(Msg::Event(Event::Warning {
+            level: "warn".to_owned(),
+            message: "медленно".to_owned(),
+        }));
+        press(&mut app, KeyCode::Char('4'));
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "внимание"), "{lines:?}");
+        assert!(has_line(&lines, "медленно"), "{lines:?}");
+        assert!(!has_line(&lines, "WARN"), "{lines:?}");
+    }
+
+    #[test]
+    fn the_subscription_column_is_never_narrower_than_its_title() {
+        let mut app = sample_app();
+        on_nodes(&mut app);
+        let wide = screen(&mut app, 100, 30);
+        assert!(has_line(&wide, "Подписка"), "{wide:?}");
+        let narrow = screen(&mut app, 79, 30);
+        assert!(has_line(&narrow, "Подп."), "{narrow:?}");
+        assert!(!has_line(&narrow, "Подписка"), "{narrow:?}");
+    }
+
+    #[test]
+    fn the_node_details_say_the_choice_in_a_word_and_the_speed_in_two_rows() {
+        let mut nodes = sample_nodes();
+        nodes[0].uplink_bytes = Some(0);
+        nodes[0].downlink_bytes = Some(0);
+        let mut app = App::new(NOW);
+        let base = Instant::now();
+        app.apply(snapshot_at(sample_status(), nodes.clone(), base));
+        nodes[0].downlink_bytes = Some(125_000);
+        app.apply(snapshot_at(
+            sample_status(),
+            nodes,
+            base + Duration::from_secs(1),
+        ));
+        on_nodes(&mut app);
+        press(&mut app, KeyCode::Enter);
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "Скорость ↓"), "{lines:?}");
+        assert!(has_line(&lines, "Скорость ↑"), "{lines:?}");
+        let choice = lines.iter().find(|line| line.contains("Выбор")).unwrap();
+        assert!(choice.contains("закреплён"), "{lines:?}");
+    }
+
+    #[test]
+    fn a_long_node_value_wraps_under_its_label() {
+        let mut nodes = sample_nodes();
+        nodes[0].subscription = format!("{} ХВОСТ", "подписка ".repeat(12));
+        let mut app = app_with(sample_status(), nodes);
+        on_nodes(&mut app);
+        press(&mut app, KeyCode::Enter);
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "ХВОСТ"), "{lines:?}");
     }
 
     /// Символы, которые есть в шрифте консоли Windows: ASCII, кириллица, Latin-1, рамки и

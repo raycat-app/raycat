@@ -38,6 +38,7 @@ const DEFAULT_ROWS: usize = 10;
 const WHEEL_ROWS: usize = 3;
 const DOUBLE_CLICK: Duration = Duration::from_millis(500);
 const RESTART_TEXT: &str = "xray перезапустится: связь прервётся на несколько секунд";
+const SPEED_TIMEOUT_TEXT: &str = "Тест скорости не удался: сервер проверки не ответил за 15 с. Попробуйте ещё раз или другой узел";
 /// Уровни журнала от подробного к важному: по кругу в порядке этого списка.
 pub(super) const LEVELS: [&str; 4] = ["error", "warn", "info", "debug"];
 
@@ -78,11 +79,9 @@ pub(super) enum Target {
     SubRow(usize),
     Pin,
     Autoselect,
-    UpdateSub,
     DeadToggle,
     SubFilter,
     Search,
-    WarningsToggle,
     ExcludedToggle,
     Sort(SortBy),
     HiddenEdit,
@@ -96,12 +95,6 @@ pub(super) enum Target {
     SettingLevel(&'static str),
     ConfirmYes,
     ConfirmNo,
-    /// Правка масок выбранной подписки.
-    SubMasks,
-    /// Подписка на одно место выше (приоритет выше).
-    SubUp,
-    /// Подписка на одно место ниже.
-    SubDown,
     /// Плашка клавиши: клик выполняет то же, что нажатие этой клавиши.
     Key(KeyCode),
 }
@@ -772,6 +765,24 @@ fn clip(text: &str) -> String {
     truncate(&sanitize(text), TEXT_WIDTH)
 }
 
+/// Клавиши, которые переключают вкладки на обычном экране.
+fn switches_tab(code: KeyCode) -> bool {
+    matches!(
+        code,
+        KeyCode::Char('1'..='5') | KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right
+    )
+}
+
+/// Текст ошибки теста скорости в строке состояния. Истёкший срок значит, что сервер проверки
+/// не ответил: об этом и подсказка. В журнале остаётся полный текст ошибки.
+fn speed_failure(cause: &str) -> String {
+    if cause.contains("истёк общий срок запроса") {
+        SPEED_TIMEOUT_TEXT.to_owned()
+    } else {
+        format!("Тест скорости не удался: {cause}")
+    }
+}
+
 /// Ошибка демона: первая строка — что случилось, вторая — что сделать. Делить надо до
 /// очистки: `sanitize` превращает перевод строки в пробел.
 fn split_lines(text: &str) -> (&str, Option<&str>) {
@@ -891,6 +902,11 @@ impl App {
             self.quit = true;
             return None;
         }
+        // Ошибка держится дольше обычных сообщений, но любая клавиша, кроме переключения
+        // вкладок, убирает её раньше срока.
+        if self.input != InputMode::Normal || !switches_tab(key.code) {
+            self.clear_error_notice();
+        }
         if self.exclude.is_some() {
             return self.exclude_key(key);
         }
@@ -987,11 +1003,9 @@ impl App {
             Target::SubRow(index) => self.sub_cursor = index.min(self.last_sub()),
             Target::Pin => return self.pin_current(),
             Target::Autoselect => return self.unpin(),
-            Target::UpdateSub => return self.update_selected(),
             Target::DeadToggle => self.toggle_dead(),
             Target::SubFilter => self.next_subscription(),
             Target::Search => self.input = InputMode::Filter,
-            Target::WarningsToggle => self.journal_warnings = !self.journal_warnings,
             Target::ExcludedToggle => self.toggle_excluded(),
             Target::Sort(by) => self.sort_click(by),
             Target::HiddenEdit => self.start_masks(),
@@ -1004,9 +1018,6 @@ impl App {
             Target::SettingLevel(level) => return self.choose_level(level),
             Target::ConfirmYes => return self.confirm_yes(),
             Target::ConfirmNo => self.cancel_confirm(),
-            Target::SubMasks => self.start_sub_edit(),
-            Target::SubUp => return self.move_sub(true),
-            Target::SubDown => return self.move_sub(false),
             Target::Key(code) => return self.handle_key(KeyEvent::new(code, KeyModifiers::NONE)),
         }
         None
@@ -1159,7 +1170,7 @@ impl App {
             Msg::Connected => self.link = Link::Up,
             Msg::Snapshot(snapshot) => self.set_snapshot(*snapshot),
             Msg::Event(event) => {
-                let (tone, text) = render::event_text(&event, self.names);
+                let (tone, text) = render::journal_text(&event, self.names);
                 self.push_log(tone, &text);
             }
             Msg::Down { reason, retry_in } => self.on_down(&reason, retry_in),
@@ -1302,6 +1313,16 @@ impl App {
             tone,
             until: self.now + secs,
         });
+    }
+
+    fn clear_error_notice(&mut self) {
+        if self
+            .notice
+            .as_ref()
+            .is_some_and(|notice| notice.tone == Tone::Red)
+        {
+            self.notice = None;
+        }
     }
 
     fn push_log(&mut self, tone: Tone, text: &str) {
@@ -1467,7 +1488,8 @@ impl App {
             }
             Err(error) => {
                 let (cause, _) = split_lines(&error);
-                self.fail(&format!("Тест скорости не удался: {cause}"));
+                self.push_log(Tone::Red, &format!("Тест скорости не удался: {cause}"));
+                self.notify(Tone::Red, &speed_failure(cause), RESULT_SECS);
             }
         }
     }
@@ -2866,6 +2888,69 @@ mod tests {
         assert!(app.notice.is_some());
         app.set_now(NOW + NOTICE_SECS);
         assert!(app.notice.is_none());
+    }
+
+    #[test]
+    fn an_error_stays_longer_and_goes_on_the_next_key_except_a_tab() {
+        let mut app = app_with(sample());
+        app.apply(Msg::Updated(Err("сбой".to_owned())));
+        app.set_now(NOW + NOTICE_SECS);
+        assert!(app.notice.is_some());
+        press(&mut app, KeyCode::Char('2'));
+        assert!(app.notice.is_some());
+        press(&mut app, KeyCode::Down);
+        assert!(app.notice.is_none());
+        app.apply(Msg::Updated(Err("сбой".to_owned())));
+        app.set_now(NOW + NOTICE_SECS + RESULT_SECS);
+        assert!(app.notice.is_none());
+    }
+
+    #[test]
+    fn a_regular_notice_is_not_cleared_by_a_key() {
+        let mut app = app_with(sample());
+        app.apply(Msg::Pinned(Ok(Pinned { node: None })));
+        press(&mut app, KeyCode::Down);
+        assert!(app.notice.is_some());
+    }
+
+    #[test]
+    fn a_speed_timeout_gets_a_short_notice_and_the_journal_keeps_the_cause() {
+        let mut app = app_with(sample());
+        press(&mut app, KeyCode::Char('s'));
+        app.apply(Msg::SpeedDone(Err(
+            "соединение не вышло: отправка запроса: истёк общий срок запроса".to_owned(),
+        )));
+        assert_eq!(app.notice.as_ref().unwrap().text, SPEED_TIMEOUT_TEXT);
+        assert_eq!(app.notice.as_ref().unwrap().tone, Tone::Red);
+        assert_eq!(
+            app.log.back().unwrap().text,
+            "Тест скорости не удался: соединение не вышло: отправка запроса: истёк общий срок запроса"
+        );
+    }
+
+    #[test]
+    fn other_speed_errors_are_shown_as_they_are() {
+        let mut app = app_with(sample());
+        press(&mut app, KeyCode::Char('s'));
+        app.apply(Msg::SpeedDone(Err(
+            "сервер не прислал тела ответа".to_owned()
+        )));
+        assert_eq!(
+            app.notice.as_ref().unwrap().text,
+            "Тест скорости не удался: сервер не прислал тела ответа"
+        );
+    }
+
+    #[test]
+    fn a_warning_in_the_journal_has_no_level_prefix() {
+        let mut app = App::new(NOW);
+        app.apply(Msg::Event(Event::Warning {
+            level: "warn".to_owned(),
+            message: "медленно".to_owned(),
+        }));
+        let entry = app.log.back().unwrap();
+        assert_eq!(entry.text, "медленно");
+        assert_eq!(entry.tone, Tone::Yellow);
     }
 
     #[test]

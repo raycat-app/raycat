@@ -117,6 +117,27 @@ pub(crate) fn expiry_text(expire: u64, now: u64, zone: &TimeZone) -> (String, To
     (format!("до {date}, осталось {}", span(left)), tone)
 }
 
+/// Срок для строки обзора в TUI: дата без года и самая крупная единица остатка, например
+/// `до 05.11 · 23 дн`. Полный текст даёт `expiry_text`.
+pub(crate) fn expiry_short(expire: u64, now: u64, zone: &TimeZone) -> (String, Tone) {
+    if expire == 0 {
+        return ("бессрочно".to_owned(), Tone::Plain);
+    }
+    let day_month: String = format_date(expire, zone).chars().take(5).collect();
+    let left = expire.saturating_sub(now);
+    let largest: String = span(left)
+        .split_whitespace()
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let tone = if left < WARN_BEFORE_EXPIRY {
+        Tone::Yellow
+    } else {
+        Tone::Plain
+    };
+    (format!("до {day_month} · {largest}"), tone)
+}
+
 fn expiry(term: Term, expire: u64, now: u64, zone: &TimeZone) -> String {
     let (text, tone) = expiry_text(expire, now, zone);
     term.paint(tone, &text)
@@ -676,11 +697,18 @@ pub(crate) fn reloaded(reloaded: &Reloaded) -> String {
 /// Текст события без времени и его тон. Весь текст, включая имена узлов, проходит ту же
 /// нормализацию, что и имена: флаги становятся кодами стран, эмодзи убираются.
 pub(crate) fn event_text(event: &Event, style: NameStyle) -> (Tone, String) {
-    let (tone, text) = event_body(event);
+    let (tone, text) = event_body(event, true);
     (tone, display_name(&text, style))
 }
 
-fn event_body(event: &Event) -> (Tone, String) {
+/// Текст для журнала TUI: уровень предупреждения уже стоит в колонке, поэтому без префикса.
+pub(crate) fn journal_text(event: &Event, style: NameStyle) -> (Tone, String) {
+    let (tone, text) = event_body(event, false);
+    (tone, display_name(&text, style))
+}
+
+/// `with_level` — писать ли уровень перед текстом предупреждения (`WARN: …`).
+fn event_body(event: &Event, with_level: bool) -> (Tone, String) {
     match event {
         Event::Hello { version } => (
             Tone::Dim,
@@ -730,10 +758,12 @@ fn event_body(event: &Event) -> (Tone, String) {
             } else {
                 Tone::Yellow
             };
-            (
-                tone,
-                format!("{}: {}", sanitize(&level.to_uppercase()), sanitize(message)),
-            )
+            let text = if with_level {
+                format!("{}: {}", sanitize(&level.to_uppercase()), sanitize(message))
+            } else {
+                sanitize(message)
+            };
+            (tone, text)
         }
     }
 }
@@ -963,6 +993,25 @@ mod tests {
         assert!(traffic(on, 100, Some(100)).contains("\x1b[91m"));
         assert!(!traffic(on, 10, Some(100)).contains('\x1b'));
         assert_eq!(traffic(plain(), 0, None), "0 Б");
+    }
+
+    #[test]
+    fn the_short_expiry_keeps_the_day_month_and_the_largest_unit() {
+        let utc = &TimeZone::UTC;
+        let date: String = format_date(NOW + 40 * DAY, utc).chars().take(5).collect();
+        assert_eq!(
+            expiry_short(NOW + 40 * DAY, NOW, utc),
+            (format!("до {date} · 40 дн"), Tone::Plain)
+        );
+        let soon: String = format_date(NOW + 5 * 3_600 + 180, utc)
+            .chars()
+            .take(5)
+            .collect();
+        assert_eq!(
+            expiry_short(NOW + 5 * 3_600 + 180, NOW, utc),
+            (format!("до {soon} · 5 ч"), Tone::Yellow)
+        );
+        assert_eq!(expiry_short(0, NOW, utc).0, "бессрочно");
     }
 
     #[test]
