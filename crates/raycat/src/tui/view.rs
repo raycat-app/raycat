@@ -428,15 +428,13 @@ fn keep_hints(items: &[(&str, &str, u8)], width: usize) -> Vec<bool> {
     order.sort_by_key(|&index| items[index].2);
     let mut keep = vec![false; items.len()];
     let mut used = 0;
-    let mut count = 0;
-    for index in order {
+    for (count, index) in order.into_iter().enumerate() {
         let (key, desc, priority) = items[index];
         let need = hint_width(key, desc) + if count > 0 { GAP } else { 0 };
         if priority > 0 && used + need > width {
             break;
         }
         used += need;
-        count += 1;
         keep[index] = true;
     }
     keep
