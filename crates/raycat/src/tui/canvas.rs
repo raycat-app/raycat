@@ -18,13 +18,13 @@ pub(super) const GAP: usize = 2;
 const TITLE: u8 = 255;
 /// Заголовок неактивной панели.
 const TITLE_DIM: u8 = 250;
-/// Горячая клавиша (btop hi_fg `#b54040`; на тёмном фоне 131 читается плохо).
+/// Горячая клавиша (btop `hi_fg` `#b54040`; на тёмном фоне 131 читается плохо).
 const HOTKEY: u8 = 167;
-/// Фон выделенной строки (btop selected_bg `#6a2f2f`).
+/// Фон выделенной строки (btop `selected_bg` `#6a2f2f`).
 const SELECTED: u8 = 52;
 /// Второстепенный текст.
 const SECONDARY: u8 = 245;
-/// Разделители и пустые ячейки полосок (btop div_line `#303030`). Он же фон плашки клавиши.
+/// Разделители и пустые ячейки полосок (btop `div_line` `#303030`). Он же фон плашки клавиши.
 const DIVIDER: u8 = 237;
 /// Хорошо, начало градиента (btop `#77ca9b`).
 const GREEN: u8 = 115;
@@ -592,7 +592,7 @@ impl<'a> Canvas<'a> {
             if at + width > x + max {
                 break;
             }
-            let style = match self.paint_color(paint, c, &mut cell) {
+            let style = match paint_color(paint, c, &mut cell) {
                 Some(color) => self.palette.tint(base, color),
                 None => base,
             };
@@ -604,7 +604,7 @@ impl<'a> Canvas<'a> {
 
     /// Цвет одного символа куба xterm; `None` — символ рисуется цветом тона.
     /// Полоска считает свои ячейки в `cell`: заполненная — по градиенту, пустая — `DIVIDER`.
-    fn paint_color(&self, paint: Paint, c: char, cell: &mut u16) -> Option<u8> {
+    fn paint_color(paint: Paint, c: char, cell: &mut u16) -> Option<u8> {
         match paint {
             Paint::Text => None,
             Paint::Gauge => match c {
