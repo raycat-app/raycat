@@ -645,7 +645,7 @@ fn check_rows(node: &Node, now: u64) -> Vec<Vec<Seg>> {
                 (
                     "●",
                     Tone::Green,
-                    render::latency_text(check.latency_ms).to_owned(),
+                    render::latency_text(check.latency_ms),
                     delay_tone(check.latency_ms),
                 )
             } else {
