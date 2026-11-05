@@ -1,24 +1,24 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
-  <img src="assets/logo.png" alt="raycat" width="180">
-</picture>
+<img src="assets/logo.svg" alt="raycat" width="168">
 
 # raycat
 
-A VPN subscription for your Linux server: containers, the whole server or your home network go online through it
+**A VPN subscription for your Linux server.**<br>
+Chosen containers, the whole server or your home network go online through it.
 
 [![Version](https://img.shields.io/github/v/release/raycat-app/raycat?include_prereleases&style=flat-square&label=version&color=2d333b)](https://github.com/raycat-app/raycat/releases)
 [![License](https://img.shields.io/badge/license-MIT-2d333b?style=flat-square)](LICENSE)
 
-[Русский](README.md) · English
+[Getting started](#getting-started) · [Modes](#modes) · [Managing it](#managing-it) · [Settings](#settings) · [Questions](#questions-and-bugs) · [Русский](README.md)
+
+<br>
+
+<img src="assets/tui.png" alt="raycat tui: overview" width="820">
 
 </div>
 
-<p align="center">
-  <img src="assets/tui.png" alt="raycat tui: overview" width="820">
-</p>
+<br>
 
 You give raycat a subscription link, and it keeps a tunnel running on the server. You don't have to configure the applications themselves. If a node dies, raycat switches to a live one. If none are left, traffic does not leave outside the VPN.
 
@@ -31,13 +31,13 @@ Many providers only hand their subscriptions to their own apps. raycat requests 
 
 ### In Docker
 
-The `app` container here is your application: all its traffic goes through the VPN.
+Only the containers you attach to raycat go through the VPN. The rest of the server and other containers work as usual.
 
 `raycat/config.toml`:
 
 ```toml
 [[subscription]]
-url = "https://…"       # the subscription link, keep it private
+url = "https://…"       # the subscription link
 app = "happ"            # the app your provider accepts: happ or incy
 platform = "windows"    # windows or android (incy is android only)
 
@@ -45,7 +45,10 @@ platform = "windows"    # windows or android (incy is android only)
 type = "gateway"
 ```
 
-`compose.yml` next to the `raycat` directory:
+> [!CAUTION]
+> The subscription link works like a password. Don't publish it or keep it in public repositories.
+
+`compose.yml` next to the `raycat` directory. The `app` container here is your application:
 
 ```yaml
 services:
@@ -60,7 +63,7 @@ services:
 
   app:
     image: your-application
-    network_mode: service:raycat
+    network_mode: service:raycat   # this line sends the container through the VPN
     depends_on:
       raycat:
         condition: service_healthy
@@ -84,24 +87,42 @@ sudo systemctl start raycat
 sudo raycat tui
 ```
 
-`proxy` mode leaves the rest of the server's traffic alone and opens an HTTP and SOCKS5 proxy on `127.0.0.1:7890`. `gateway` mode sends the whole server through the VPN.
+## Modes
 
-## What it does
+| What goes through the VPN | How to run it | Setting |
+| --- | --- | --- |
+| **Chosen containers** | raycat in Docker, containers with `network_mode: service:raycat` | `type = "gateway"` |
+| **The whole server** | raycat as a service on the server | `type = "gateway"` |
+| **Chosen programs** | an HTTP and SOCKS5 proxy on `127.0.0.1:7890` | `type = "proxy"` |
+| **Your home network** | raycat in the host network, the server set as the gateway on devices | `type = "gateway"`, `lan = true` |
 
-- **Several subscriptions.** A main one and backups, with configurable order and priority.
-- **Node selection.** Checks nodes itself and switches on failure. You can pin a node or exclude nodes with masks like `Bypass*`.
-- **Gateway for your home network.** A TV or console goes online through the server once you set it as the gateway.
-- **Russia direct.** With `ru_direct = true`, Russian sites bypass the VPN.
-- **Kill switch.** In gateway mode, nothing leaves without the tunnel, DNS included.
-- **Lightweight.** Static builds for x86_64, arm64 and armv7. It runs even on a Raspberry Pi.
+> [!IMPORTANT]
+> The kill switch works in `gateway` mode: without the tunnel, traffic and DNS do not leave. In `proxy` mode, programs that don't use the proxy go direct.
+
+**raycat can also:**
+
+- keep a main subscription and backups and reorder them on the fly;
+- check nodes and switch on failure, pin a node or exclude nodes with masks like `Bypass*`;
+- send Russian sites around the VPN (`ru_direct = true`);
+- run wherever your server does: builds for x86_64, arm64 and armv7, including Raspberry Pi.
 
 ## Managing it
 
-`raycat tui` shows everything on one screen and works with a mouse: status, nodes, subscriptions, the log and settings. You can change settings right there.
+`raycat tui` shows everything on one screen and works with a mouse. You can change settings right there.
 
-<p align="center">
+<div align="center">
   <img src="assets/tui-nodes.png" alt="raycat tui: nodes" width="820">
-</p>
+</div>
+
+<br>
+
+| Key | Tab | What you can do there |
+| --- | --- | --- |
+| <kbd>1</kbd> | Overview | see the tunnel state, update subscriptions, test the speed |
+| <kbd>2</kbd> | Nodes | pin a node <kbd>p</kbd>, exclude it <kbd>x</kbd>, hide dead ones <kbd>d</kbd>, test the speed <kbd>t</kbd> |
+| <kbd>3</kbd> | Subscriptions | change masks <kbd>m</kbd> and the order <kbd>[</kbd> <kbd>]</kbd> |
+| <kbd>4</kbd> | Log | see events, warnings only <kbd>w</kbd> |
+| <kbd>5</kbd> | Settings | change the main settings |
 
 The same things are available as commands:
 
@@ -122,10 +143,37 @@ The same things are available as commands:
 
 Settings live in one file: `/etc/raycat/config.toml` on a server, `raycat/config.toml` in the Docker example. Every key is explained in the [example settings](deploy/config.example.toml), and raycat suggests the right name if you make a typo.
 
-After editing, run `sudo raycat reload`. The daemon applies what it can on the fly and tells you if something needs a restart.
+> [!TIP]
+> After editing, run `sudo raycat reload`. The daemon applies what it can on the fly and tells you if something needs a restart.
 
 <details>
-<summary>Home network</summary>
+<summary><b>Your own rules: what goes around the VPN</b></summary>
+
+<br>
+
+Normally all traffic goes through the VPN. Rules are for exceptions. For example, open your bank's site directly, and send one Russian site through the VPN instead:
+
+```toml
+[routing]
+ru_direct = true
+
+[[routing.rule]]
+domains = ["mybank.example"]
+action = "direct"             # direct: around the VPN
+
+[[routing.rule]]
+domains = ["*.example.ru"]    # *.example.ru: the site and its subdomains
+action = "proxy"              # proxy: through the VPN, block: block it
+```
+
+Rules are checked from top to bottom, and the first match wins. They take priority over `ru_direct`. Instead of `domains`, or together with them, you can set `ips`: subnets or single addresses.
+
+</details>
+
+<details>
+<summary><b>Home network</b></summary>
+
+<br>
 
 raycat must run in the host's own network: as a service, or in Docker with `network_mode: host`.
 
@@ -140,7 +188,9 @@ On the device or in your router's DHCP, set the server's address as the gateway 
 </details>
 
 <details>
-<summary>Environment variables</summary>
+<summary><b>Environment variables</b></summary>
+
+<br>
 
 These override the settings file, which is handy in Docker.
 
@@ -156,7 +206,9 @@ These override the settings file, which is handy in Docker.
 </details>
 
 <details>
-<summary>Troubleshooting</summary>
+<summary><b>Troubleshooting</b></summary>
+
+<br>
 
 **The provider returns no nodes.** Run `raycat fetch <subscription>` to see the provider's response. Errors 403 and 404 usually mean you need a different app or platform. The device limit may also be used up, or the subscription may have expired.
 
@@ -171,7 +223,9 @@ These override the settings file, which is handy in Docker.
 </details>
 
 <details>
-<summary>Updates and verifying builds</summary>
+<summary><b>Updates and verifying builds</b></summary>
+
+<br>
 
 There are two channels. `dev` is built from every change. `stable` ships by itself once a build has spent enough time on dev. xray updates and vulnerability fixes ship immediately. To update a server install, run the install command again, and your settings stay. To remove it: `sudo sh install.sh --uninstall`.
 
