@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Тесты обновления xray на выдуманных данных, без сети: выбор версии по списку релизов и
-# запись versions.toml. Запуск: bash .github/xray/test.sh
+# запись .github/versions.toml. Запуск: bash .github/xray/test.sh
 set -uo pipefail
 
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

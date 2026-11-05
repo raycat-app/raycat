@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Нужен ли выпуск stable с новым xray и тем же raycat. Он нужен, если последняя stable везёт xray
-# старее versions.toml main, а продвинуть новую dev-сборку целиком нельзя (код ещё не выдержал
+# старее .github/versions.toml main, а продвинуть новую dev-сборку целиком нельзя (код ещё не выдержал
 # срок). Метка «стоп-релиз» этот выпуск отменяет. Версия — следующий патч прошлого тега.
 #   xray-decide.sh <xray в main> <xray в прошлой stable или пусто> <прошлый тег или пусто> <стоп: true|false>
 # Печатает строки update=, version=, xray=, reason=. Прошлый тег может быть dev-сборкой,
@@ -45,6 +45,6 @@ else
   if [ "$newest" = "$main_xray" ]; then
     emit true "$next" "xray $main_xray новее xray $stable_xray в $last_tag"
   else
-    emit false "" "xray $stable_xray в $last_tag новее versions.toml ($main_xray)"
+    emit false "" "xray $stable_xray в $last_tag новее .github/versions.toml ($main_xray)"
   fi
 fi

@@ -44,7 +44,7 @@ pack() {
     echo "# заглушка" | tee "$dir/completions/raycat.bash" "$dir/completions/_raycat" \
       "$dir/completions/raycat.fish" >"$dir/man/raycat.1"
   fi
-  cp "$root/LICENSE" "$root/README.md" "$dir/"
+  cp "$root/LICENSE" "$root/.github/README.md" "$dir/"
   cp "$root/deploy/raycat.service" "$dir/systemd/raycat.service"
   tar -czf "$out/$name.tar.gz" -C "$stage" "$name"
 }

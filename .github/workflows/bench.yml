@@ -10,7 +10,7 @@ on:
         description: Версии xray через пробел
         default: "26.3.27 26.9.30"
       xray_build:
-        description: "noaes — к версиям добавляется сборка xray для процессоров без AES из versions.toml (только arm64)"
+        description: "noaes — к версиям добавляется сборка xray для процессоров без AES из .github/versions.toml (только arm64)"
         type: choice
         options: [release, noaes]
         default: release
@@ -52,7 +52,7 @@ jobs:
           bash .github/build/docker-args.sh aarch64 Xray-linux-arm64-v8a.zip noaes > "$RUNNER_TEMP/docker-args.txt"
           mapfile -t args < "$RUNNER_TEMP/docker-args.txt"
           docker build "${args[@]}" --target xray-noaes --output "type=local,dest=$RUNNER_TEMP/noaes" .
-          echo "version=$(sed -n '/^\[xray\.noaes\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' versions.toml)" >> "$GITHUB_OUTPUT"
+          echo "version=$(sed -n '/^\[xray\.noaes\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' .github/versions.toml)" >> "$GITHUB_OUTPUT"
       - name: Замер
         env:
           NOAES_BIN: ${{ runner.temp }}/noaes/out/xray

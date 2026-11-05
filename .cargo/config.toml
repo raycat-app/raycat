@@ -5,6 +5,7 @@ linker = "rust-lld"
 linker = "rust-lld"
 
 [env]
+CLIPPY_CONF_DIR = { value = ".cargo", relative = true }
 CC_x86_64_unknown_linux_musl = "clang"
 CFLAGS_x86_64_unknown_linux_musl = "--target=x86_64-linux-musl"
 CC_aarch64_unknown_linux_musl = "clang"

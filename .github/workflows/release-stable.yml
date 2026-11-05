@@ -6,7 +6,7 @@ name: Выпуск stable
 # С веток, кроме main, и с флагом dry_run работает как сухой прогон: проверяет всё, ничего не публикует.
 #
 # Если продвижение не принесло в stable свежий xray (код ещё не выдержал срок), после него
-# выпускается обновление xray vX.Y.(Z+1): тот же raycat, что в последней stable, и xray из versions.toml.
+# выпускается обновление xray vX.Y.(Z+1): тот же raycat, что в последней stable, и xray из .github/versions.toml.
 # Решение и сборка — в задачах xray-plan и xray (см. .github/release/xray-decide.sh).
 
 on:
@@ -215,7 +215,7 @@ jobs:
           LAST_TAG: ${{ steps.last.outputs.tag }}
           STOP: ${{ steps.stop.outputs.stop }}
         run: |
-          main_xray=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' versions.toml)
+          main_xray=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' .github/versions.toml)
           stable_xray=
           if [ -n "$LAST_TAG" ]; then
             last="$RUNNER_TEMP/last"
@@ -265,7 +265,7 @@ jobs:
       - name: Версия xray
         run: |
           version=$(bash .github/release/xray-version.sh xray-files/xray-x86_64)
-          [ "$version" = "$XRAY_VERSION" ] || { echo "::error::xray $version, в versions.toml $XRAY_VERSION"; exit 1; }
+          [ "$version" = "$XRAY_VERSION" ] || { echo "::error::xray $version, в .github/versions.toml $XRAY_VERSION"; exit 1; }
       - name: Архивы
         run: |
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$LAST_SHA")

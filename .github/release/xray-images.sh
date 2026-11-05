@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Образ выпуска с новым xray для одного варианта: тот же raycat, что в архивах выпуска
-# (dist/<архитектура>/raycat), и xray по versions.toml тем же Dockerfile, что в CI. Образ проходит
+# (dist/<архитектура>/raycat), и xray по .github/versions.toml тем же Dockerfile, что в CI. Образ проходит
 # дымовую проверку и сохраняется как image-<вариант>.tar.gz для images.sh. Дымовая проверка сверяет
 # коммит raycat с SMOKE_COMMIT (коммит прошлой stable). Собирать на раннере той же архитектуры:
 # дымовая проверка nft не работает под эмуляцией.

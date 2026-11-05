@@ -11,7 +11,7 @@
 Chosen containers, the whole server or your home network go online through it.
 
 [![Version](https://img.shields.io/github/v/release/raycat-app/raycat?include_prereleases&style=flat-square&label=version&color=2d333b)](https://github.com/raycat-app/raycat/releases)
-[![License](https://img.shields.io/badge/license-MIT-2d333b?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-2d333b?style=flat-square)](../LICENSE)
 
 [Getting started](#getting-started) · [Modes](#modes) · [Managing it](#managing-it) · [Settings](#settings) · [Questions](#questions-and-bugs) · [Русский](README.md)
 
@@ -144,7 +144,7 @@ The same things are available as commands:
 
 ## Settings
 
-Settings live in one file: `/etc/raycat/config.toml` on a server, `raycat/config.toml` in the Docker example. Every key is explained in the [example settings](deploy/config.example.toml), and raycat suggests the right name if you make a typo.
+Settings live in one file: `/etc/raycat/config.toml` on a server, `raycat/config.toml` in the Docker example. Every key is explained in the [example settings](../deploy/config.example.toml), and raycat suggests the right name if you make a typo.
 
 > [!TIP]
 > After editing, run `sudo raycat reload`. The daemon applies what it can on the fly and tells you if something needs a restart.
@@ -245,4 +245,4 @@ gh attestation verify oci://ghcr.io/raycat-app/raycat:latest --repo raycat-app/r
 
 Ask questions in [Discussions](https://github.com/raycat-app/raycat/discussions) and report bugs in [issues](https://github.com/raycat-app/raycat/issues). Never post your subscription link or the output of `raycat identity`. Report vulnerabilities [privately](https://github.com/raycat-app/raycat/security/advisories/new).
 
-Licensed under [MIT](LICENSE).
+Licensed under [MIT](../LICENSE).

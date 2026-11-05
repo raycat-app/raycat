@@ -2,7 +2,7 @@
 # Заметки к выпуску на русском. Список изменений (вывод notes.sh) читается из stdin.
 #   make-notes.sh dev <версия> <владелец/репозиторий> [<с какого тега изменения>]
 #   make-notes.sh stable <версия> <владелец/репозиторий> <с какого тега изменения или пусто> <версия dev-сборки>
-#   make-notes.sh xray <версия> <владелец/репозиторий> <прошлая stable> <коммит main с versions.toml>
+#   make-notes.sh xray <версия> <владелец/репозиторий> <прошлая stable> <коммит main с .github/versions.toml>
 set -euo pipefail
 
 kind=${1:?не указан вид выпуска}
@@ -48,7 +48,7 @@ EOF
     IFS= read -r -d '' template <<'EOF' || true
 Обновление xray до @XRAY@. Сам raycat не менялся: его файлы те же, что в @PREVIOUS@, заменён только xray.
 
-Версия xray взята из versions.toml коммита @COMMIT@. Релиз xray: https://github.com/XTLS/Xray-core/releases/tag/v@XRAY@
+Версия xray взята из .github/versions.toml коммита @COMMIT@. Релиз xray: https://github.com/XTLS/Xray-core/releases/tag/v@XRAY@
 
 ## Установка
 
@@ -106,8 +106,8 @@ image="ghcr.io/${repo,,}"
 minor=${version%.*}
 
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-xray_version=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' "$dir/../../versions.toml")
-noaes_version=$(sed -n '/^\[xray\.noaes\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' "$dir/../../versions.toml")
+xray_version=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' "$dir/../versions.toml")
+noaes_version=$(sed -n '/^\[xray\.noaes\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' "$dir/../versions.toml")
 noaes_note=
 if [ "$noaes_version" != "$xray_version" ]; then
   noaes_note=" Сборка \`-noaes\` собрана на xray $noaes_version, основная сборка — на xray $xray_version."

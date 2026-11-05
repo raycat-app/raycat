@@ -1,24 +1,14 @@
 /*
 !/.cargo/
-!/.clippy.toml
-!/.dockerignore
-!/.editorconfig
-!/.gitattributes
 !/.github/
+!/.gitattributes
 !/.gitignore
-!/.rustfmt.toml
-!/.typos.toml
-!/assets/
 !/Cargo.lock
 !/Cargo.toml
 !/crates/
 !/deploy/
-!/Dockerfile
 !/LICENSE
-!/README.en.md
-!/README.md
 !/rust-toolchain.toml
-!/versions.toml
 
 target/
 *.rs.bk

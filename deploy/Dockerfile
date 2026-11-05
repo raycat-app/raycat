@@ -1,6 +1,6 @@
 # Образ собирается из готового статического бинарника raycat: dist/<amd64|arm64>/raycat.
-# Версия и sha256 архива xray — в versions.toml, имя архива зависит от архитектуры.
-# Готовый набор аргументов печатает .github/build/docker-args.sh:
+# Версия и sha256 архива xray — в .github/versions.toml, имя архива зависит от архитектуры.
+# Готовый набор аргументов печатает .github/build/docker-args.sh (в нём же -f deploy/Dockerfile):
 #   docker build -t raycat \
 #     --build-arg XRAY_VERSION=26.9.30 \
 #     --build-arg XRAY_ARCHIVE=Xray-linux-64.zip \
@@ -9,8 +9,8 @@
 # XRAY_BUILD=noaes (только arm64 и armv7) собирает xray для процессоров без аппаратного AES.
 # Сначала из исходников тега GO_VERSION собирается тулчейн Go с патчем .github/build/go-noaes.patch
 # (он отменяет медленный константный GHASH), затем им собирается xray. XRAY_VERSION, XRAY_COMMIT,
-# GO_VERSION, GO_COMMIT и GO_IMAGE берутся из секции [xray.noaes] файла versions.toml. Только бинарник xray:
-#   docker build --platform linux/arm/v7 --target xray-noaes --output type=local,dest=out ...
+# GO_VERSION, GO_COMMIT и GO_IMAGE берутся из секции [xray.noaes] файла .github/versions.toml. Только бинарник xray:
+#   docker build -f deploy/Dockerfile --platform linux/arm/v7 --target xray-noaes --output type=local,dest=out ...
 
 ARG ALPINE_IMAGE=alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 ARG GO_IMAGE=scratch
