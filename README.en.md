@@ -99,13 +99,6 @@ sudo raycat tui
 > [!IMPORTANT]
 > The kill switch works in `gateway` mode: without the tunnel, traffic and DNS do not leave. In `proxy` mode, programs that don't use the proxy go direct.
 
-```mermaid
-flowchart LR
-    A[Containers, the server<br>or your home network] --> R(raycat and xray)
-    P[Provider] -- subscription --> R
-    R -- best live node --> V((VPN))
-```
-
 **raycat can also:**
 
 - keep a main subscription and backups and reorder them on the fly;
