@@ -101,6 +101,8 @@ pub(super) enum Target {
     SubUp,
     /// Подписка на одно место ниже.
     SubDown,
+    /// Плашка клавиши: клик выполняет то же, что нажатие этой клавиши.
+    Key(KeyCode),
 }
 
 /// Порядок узлов в таблице; `Priority` — порядок из подписок, как его отдаёт демон.
@@ -328,6 +330,20 @@ impl Setting {
             Self::Xhttp => "параллельные соединения для узлов XHTTP, от 1 до 16",
             Self::LogLevel => "что писать в журнал демона: error, warn, info или debug",
             Self::Names => "код страны вместо флага, например DE",
+        }
+    }
+
+    /// Значение по умолчанию в том виде, как его показывает строка.
+    pub(super) fn default_text(self) -> &'static str {
+        match self {
+            Self::RuDirect | Self::KillSwitch => "вкл",
+            Self::CheckInterval => "30s",
+            Self::Failures => "3",
+            Self::SwitchGain => "150ms",
+            Self::ReturnDelay => "5m",
+            Self::Xhttp => "как у провайдера",
+            Self::LogLevel => "info",
+            Self::Names => "код страны",
         }
     }
 
@@ -894,23 +910,43 @@ impl App {
             self.input = InputMode::Normal;
             return None;
         }
-        let target = self
+        let Some(target) = self
             .hits
             .iter()
-            .find(|hit| hit.contains(column, row))?
-            .target;
+            .find(|hit| hit.contains(column, row))
+            .map(|hit| hit.target)
+        else {
+            self.dismiss();
+            return None;
+        };
         // Пока ждут ответа на вопрос, нажатия мимо кнопок ничего не делают.
         if self.confirm.is_some() && !matches!(target, Target::ConfirmYes | Target::ConfirmNo) {
             return None;
         }
-        if matches!(
-            self.input,
-            InputMode::Filter | InputMode::Masks | InputMode::Field | InputMode::SubMasks
-        ) {
+        // Плашка окна нажимает клавишу в нём и не сбрасывает поле до ответа на неё.
+        if !matches!(target, Target::Key(_))
+            && matches!(
+                self.input,
+                InputMode::Filter | InputMode::Masks | InputMode::Field | InputMode::SubMasks
+            )
+        {
             self.input = InputMode::Normal;
             self.sub_edit = None;
         }
         self.click(target, at)
+    }
+
+    /// Щелчок мимо окна закрывает его, как Esc. Без открытого окна ничего не делает.
+    fn dismiss(&mut self) {
+        if self.confirm.is_some() {
+            self.cancel_confirm();
+        } else if self.exclude.is_some() {
+            self.exclude = None;
+        } else if self.input == InputMode::Masks {
+            self.input = InputMode::Normal;
+        } else if self.sub_edit.is_some() {
+            self.close_sub_edit();
+        }
     }
 
     fn click(&mut self, target: Target, at: Instant) -> Option<Effect> {
@@ -951,6 +987,7 @@ impl App {
             Target::SubMasks => self.start_sub_edit(),
             Target::SubUp => return self.move_sub(true),
             Target::SubDown => return self.move_sub(false),
+            Target::Key(code) => return self.handle_key(KeyEvent::new(code, KeyModifiers::NONE)),
         }
         None
     }
