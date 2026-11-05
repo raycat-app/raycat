@@ -592,7 +592,7 @@ impl<'a> Canvas<'a> {
             if at + width > x + max {
                 break;
             }
-            let style = match paint_color(paint, c, &mut cell) {
+            let style = match Self::paint_color(paint, c, &mut cell) {
                 Some(color) => self.palette.tint(base, color),
                 None => base,
             };
