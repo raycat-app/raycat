@@ -15,6 +15,8 @@
 
 [Запуск](#запуск) · [Режимы](#режимы) · [Управление](#управление) · [Настройки](#настройки) · [Вопросы](#вопросы-и-ошибки) · [English](README.en.md)
 
+[Сообщить об ошибке](https://github.com/raycat-app/raycat/issues/new?template=bug.yml) · [Предложить идею](https://github.com/raycat-app/raycat/issues/new?template=feature.yml)
+
 <br>
 
 <img src="assets/tui.png" alt="raycat tui: обзор" width="820">
@@ -90,6 +92,8 @@ sudo systemctl start raycat
 sudo raycat tui
 ```
 
+<p align="right"><a href="#raycat">наверх</a></p>
+
 ## Режимы
 
 | Что идёт через VPN | Как запустить | Настройка |
@@ -109,6 +113,8 @@ sudo raycat tui
 - пускать российские сайты мимо VPN (`ru_direct = true`);
 - работать там же, где и ваш сервер: сборки для x86_64, arm64 и armv7, в том числе Raspberry Pi.
 
+<p align="right"><a href="#raycat">наверх</a></p>
+
 ## Управление
 
 `raycat tui` показывает всё на одном экране и работает с мышью. Настройки можно менять прямо там.
@@ -116,6 +122,15 @@ sudo raycat tui
 <div align="center">
   <img src="assets/tui-nodes.png" alt="raycat tui: узлы" width="820">
 </div>
+
+<details>
+<summary><b>Вкладка «Настройки»</b></summary>
+
+<br>
+
+<img src="assets/tui-settings.png" alt="raycat tui: настройки" width="820">
+
+</details>
 
 <br>
 
@@ -141,6 +156,8 @@ sudo raycat tui
 | `raycat reload` | применить правку файла настроек |
 
 Остальное покажет `raycat --help`.
+
+<p align="right"><a href="#raycat">наверх</a></p>
 
 ## Настройки
 
@@ -240,6 +257,24 @@ gh attestation verify oci://ghcr.io/raycat-app/raycat:latest --repo raycat-app/r
 ```
 
 </details>
+
+<p align="right"><a href="#raycat">наверх</a></p>
+
+## Что внутри
+
+[![Rust](https://img.shields.io/badge/Rust-2d333b?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/) [![Xray-core](https://img.shields.io/badge/Xray--core-2d333b?style=flat-square)](https://github.com/XTLS/Xray-core) [![Ratatui](https://img.shields.io/badge/Ratatui-2d333b?style=flat-square)](https://ratatui.rs/) [![Docker](https://img.shields.io/badge/Docker-2d333b?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/) [![nftables](https://img.shields.io/badge/nftables-2d333b?style=flat-square)](https://www.netfilter.org/projects/nftables/)
+
+Сам raycat написан на Rust. Туннель строит [Xray-core](https://github.com/XTLS/Xray-core), интерфейс сделан на [Ratatui](https://ratatui.rs/), перехват трафика работает через nftables. Спасибо этим проектам.
+
+## Что дальше
+
+- [x] Шлюз для контейнеров, сервера и домашней сети
+- [x] Запросы как у Happ и INCY, профили обновляются сами
+- [x] Интерфейс в терминале с мышью и настройками на лету
+- [ ] Первая стабильная версия 0.1.0
+- [ ] Версия 1.0
+
+<p align="right"><a href="#raycat">наверх</a></p>
 
 ## Вопросы и ошибки
 
