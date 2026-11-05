@@ -23,7 +23,7 @@ for pair in x86_64:Xray-linux-64.zip aarch64:Xray-linux-arm64-v8a.zip armv7:Xray
   archive=${pair#*:}
   sha256=$(sed -n "s/^$key = \"\(.*\)\"/\1/p" .github/versions.toml)
   [ -n "$sha256" ] || fail "в .github/versions.toml нет суммы для $key"
-  curl -fsSL -o "$tmp/$archive" "https://github.com/XTLS/Xray-core/releases/download/v${version}/${archive}"
+  curl -fsSL --retry 5 --retry-all-errors -o "$tmp/$archive" "https://github.com/XTLS/Xray-core/releases/download/v${version}/${archive}"
   echo "$sha256  $tmp/$archive" | sha256sum -c -
   unzip -q -o "$tmp/$archive" xray -d "$tmp/$key"
   install -m 755 "$tmp/$key/xray" "$out/xray-$key"

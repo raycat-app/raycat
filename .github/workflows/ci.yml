@@ -203,7 +203,7 @@ jobs:
       - name: actionlint
         run: |
           archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          curl -fsSLO "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          curl -fsSLO --retry 5 --retry-all-errors "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
           echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum -c -
           tar -xzf "$archive" actionlint
           ./actionlint -color
@@ -211,7 +211,7 @@ jobs:
         run: shellcheck --severity=warning .github/release/*.sh .github/xray/*.sh .github/deps/*.sh .github/bots/*.sh .github/build/fetch-xray.sh .github/build/smoke-image.sh
       - name: hadolint
         run: |
-          curl -fsSLo hadolint "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
+          curl -fsSL --retry 5 --retry-all-errors -o hadolint "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
           echo "${HADOLINT_SHA256}  hadolint" | sha256sum -c -
           chmod +x hadolint
           ./hadolint deploy/Dockerfile
