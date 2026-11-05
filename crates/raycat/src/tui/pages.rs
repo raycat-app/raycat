@@ -162,13 +162,21 @@ fn tunnel_panel(
     let title = vec![Seg::new("Туннель", Tone::Bold, 0)];
     let mut inner = canvas.boxed(x, y, width, height, title, border);
     let Some(status) = &app.status else {
-        inner.line(0, 0, vec![Seg::new("данных от демона ещё нет", Tone::Dim, 0)]);
+        inner.line(
+            0,
+            0,
+            vec![Seg::new("данных от демона ещё нет", Tone::Dim, 0)],
+        );
         return;
     };
     if let Some(node) = &status.node {
         let name = format!("► {}", display_name(&node.name, app.names));
         inner.line(0, 0, vec![Seg::new(name, Tone::Bold, 0)]);
-        let choice = if node.pinned { "закреплён" } else { "авто" };
+        let choice = if node.pinned {
+            "закреплён"
+        } else {
+            "авто"
+        };
         let mut segs = vec![
             Seg::new(
                 render::latency_text(node.latency_ms),
@@ -545,7 +553,8 @@ fn node_details(
         border,
     );
     scroll_rows(&mut inner, lines, &mut app.details_offset);
-    app.hits.push(Hit::new(x + 2, y + 2, pin_width, Target::Pin));
+    app.hits
+        .push(Hit::new(x + 2, y + 2, pin_width, Target::Pin));
     app.hits.push(Hit::new(
         x + 2 + pin_width + GAP,
         y + 2,
@@ -592,11 +601,7 @@ fn node_lines(node: &Node, app: &App, speed: Option<Speed>, width: usize) -> Vec
         pair("Подписка", &node.subscription, Tone::Plain),
         pair("Страна", &country, Tone::Plain),
         pair("Статус", status_text, status_tone),
-        pair(
-            "Задержка",
-            &latency,
-            delay_tone(node.latency_ms),
-        ),
+        pair("Задержка", &latency, delay_tone(node.latency_ms)),
         pair("Сбои", &node.failures.to_string(), Tone::Plain),
         pair("Выбор", &format!("{selected}, {choice}"), Tone::Plain),
         pair("Протокол", protocol, Tone::Plain),
@@ -611,14 +616,14 @@ fn node_lines(node: &Node, app: &App, speed: Option<Speed>, width: usize) -> Vec
     if let Some(reason) = node.last_error.as_deref().and_then(node_reason) {
         lines.push(pair("Причина", reason, Tone::Red));
     }
+    lines.push(vec![Seg::new("Последние проверки:", Tone::Dim, 0)]);
+    lines.extend(check_rows(node, app.now));
     if let Some(error) = node.last_error.as_deref() {
         lines.push(vec![Seg::new("Ошибка полностью:", Tone::Dim, 0)]);
         for line in wrap(error, width, usize::MAX) {
             lines.push(vec![Seg::new(line, Tone::Dim, 0)]);
         }
     }
-    lines.push(vec![Seg::new("Последние проверки:", Tone::Dim, 0)]);
-    lines.extend(check_rows(node, app.now));
     lines.push(vec![Seg::new(
         format!("Тег outbound: {}", node.tag),
         Tone::Dim,
@@ -979,7 +984,13 @@ fn sub_list(
     if selected < inner_rows && !subs.is_empty() {
         let blank = " ".repeat(width.saturating_sub(2));
         let style = canvas.selected();
-        canvas.put_style(x + 1, y + 1 + selected, &blank, width.saturating_sub(2), style);
+        canvas.put_style(
+            x + 1,
+            y + 1 + selected,
+            &blank,
+            width.saturating_sub(2),
+            style,
+        );
     }
     let mut inner = canvas.boxed(x, y, width, height, title, border);
     if subs.is_empty() {
@@ -1293,13 +1304,7 @@ pub(super) fn settings(canvas: &mut Canvas<'_>, app: &mut App, top: usize, end: 
 
 /// Список настроек в рамке: разделы серым, строки с названием слева и значением справа.
 /// Выбранная строка закрашена на всю ширину панели.
-fn settings_list(
-    canvas: &mut Canvas<'_>,
-    app: &mut App,
-    top: usize,
-    width: usize,
-    height: usize,
-) {
+fn settings_list(canvas: &mut Canvas<'_>, app: &mut App, top: usize, width: usize, height: usize) {
     let rows = list_rows();
     let inner_rows = height - 2;
     // Прокрутка идёт по настройкам. Строк-разделителей и заголовков в списке всего
@@ -1351,10 +1356,7 @@ fn settings_list(
                     Tone::Dim
                 };
                 let (name_style, value_style) = if selected {
-                    (
-                        inner.selected_style(name_tone),
-                        inner.selected_style(tone),
-                    )
+                    (inner.selected_style(name_tone), inner.selected_style(tone))
                 } else {
                     (inner.style(name_tone), inner.style(tone))
                 };

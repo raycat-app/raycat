@@ -363,15 +363,15 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("s скорость", 2),
             ("a автовыбор", 3),
             ("2 узлы", 2),
-            ("справка", 0),
-            ("выход", 0),
+            ("? справка", 0),
+            ("q выход", 0),
         ],
         Tab::Nodes if app.details => &[
             ("Esc назад", 0),
             ("p закрепить", 1),
             ("t скорость", 1),
-            ("справка", 0),
-            ("выход", 0),
+            ("? справка", 0),
+            ("q выход", 0),
         ],
         Tab::Nodes => &[
             ("↑↓ выбор", 1),
@@ -385,8 +385,8 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("x исключить", 3),
             ("e исключённые", 4),
             ("/ поиск", 3),
-            ("справка", 0),
-            ("выход", 0),
+            ("? справка", 0),
+            ("q выход", 0),
         ],
         Tab::Subscriptions => &[
             ("↑↓ выбор", 1),
@@ -394,22 +394,22 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("m маски", 1),
             ("[ ] приоритет", 2),
             ("Enter ошибка", 2),
-            ("справка", 0),
-            ("выход", 0),
+            ("? справка", 0),
+            ("q выход", 0),
         ],
         Tab::Journal => &[
             ("↑↓ листать", 1),
             ("w предупреждения", 2),
             ("End к концу", 3),
-            ("справка", 0),
-            ("выход", 0),
+            ("? справка", 0),
+            ("q выход", 0),
         ],
         Tab::Settings => &[
             ("↑↓ выбор", 1),
             ("Enter изменить", 1),
             ("Пробел переключить", 2),
-            ("справка", 0),
-            ("выход", 0),
+            ("? справка", 0),
+            ("q выход", 0),
         ],
     };
     items
@@ -492,10 +492,7 @@ fn keys_line(canvas: &mut Canvas<'_>, app: &mut App, y: usize, hints: &[Seg]) {
         .map(|&index| hint_width(items[index].0, items[index].1))
         .sum::<usize>()
         + GAP * right.len().saturating_sub(1);
-    let mut x = canvas
-        .width
-        .saturating_sub(right_width)
-        .max(x + GAP);
+    let mut x = canvas.width.saturating_sub(right_width).max(x + GAP);
     for index in right {
         x = draw_hint(canvas, app, x, y, items[index], style) + GAP;
     }
@@ -514,7 +511,9 @@ fn draw_hint(
     let chip = format!(" {key} ");
     let chip_width = display_width(&chip);
     canvas.put_style(x, y, &chip, chip_width, style);
-    if app.input == InputMode::Normal && let Some(code) = key_code(key) {
+    if app.input == InputMode::Normal
+        && let Some(code) = key_code(key)
+    {
         app.hits.push(Hit::new(x, y, chip_width, Target::Key(code)));
     }
     let mut next = x + chip_width;
@@ -1685,7 +1684,14 @@ mod tests {
         on_nodes(&mut app);
         press(&mut app, KeyCode::Enter);
         let lines = screen(&mut app, 100, 30);
-        for word in ["Протокол", "vless", "Транспорт", "xhttp", "Безопасность", "reality"] {
+        for word in [
+            "Протокол",
+            "vless",
+            "Транспорт",
+            "xhttp",
+            "Безопасность",
+            "reality",
+        ] {
             assert!(has_line(&lines, word), "{word}: {lines:?}");
         }
         assert!(has_line(&lines, "31 мс"), "{lines:?}");
@@ -1780,7 +1786,7 @@ mod tests {
         assert!(has_line(&end, "[p] закрепить"), "{end:?}");
         press(&mut app, KeyCode::Home);
         let back = screen(&mut app, 100, 20);
-        assert!(has_line(&back, "Выбор:"), "{back:?}");
+        assert!(has_line(&back, "Выбор"), "{back:?}");
         assert!(!has_line(&back, "ХВОСТ"), "{back:?}");
     }
 
