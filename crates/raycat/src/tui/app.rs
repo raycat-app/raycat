@@ -757,6 +757,17 @@ pub(super) struct App {
     last_click: Option<(Target, Instant)>,
 }
 
+#[cfg(test)]
+impl App {
+    /// Экранные координаты первой области нажатия с этой целью: для тестов кликов.
+    pub(super) fn hit_at(&self, target: Target) -> Option<(u16, u16)> {
+        self.hits
+            .iter()
+            .find(|hit| hit.target == target)
+            .map(|hit| (hit.x, hit.y))
+    }
+}
+
 fn clip(text: &str) -> String {
     truncate(&sanitize(text), TEXT_WIDTH)
 }

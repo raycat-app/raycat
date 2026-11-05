@@ -781,14 +781,16 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::{Buffer, Cell};
-    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use ratatui::style::{Color, Modifier};
     use raycat_proto::{
         CurrentNode, Event, Mode, Node, NodeCheck, NodeStatus, Nodes, SettingItem, SettingValue,
         SettingsView, Status, Tunnel, XHTTP_PROVIDER,
     };
 
-    use super::super::app::{Confirm, Edit, InputMode, Msg, Setting, Snapshot, Tab};
+    use super::super::app::{Confirm, Edit, Effect, InputMode, Msg, Setting, Snapshot, Tab};
     use super::*;
 
     const NOW: u64 = 1_790_596_800;
@@ -1181,6 +1183,86 @@ mod tests {
         }
     }
 
+    /// Щелчок левой кнопкой в клетку `(column, row)`, как его отдаёт терминал.
+    fn click(app: &mut App, (column, row): (u16, u16)) -> Option<Effect> {
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse, Instant::now())
+    }
+
+    fn question(app: &mut App) {
+        app.confirm = Some(Confirm {
+            question: "xray перезапустится".to_owned(),
+            edit: Edit {
+                changes: Vec::new(),
+                done: String::new(),
+                row: None,
+                warn: None,
+            },
+        });
+    }
+
+    #[test]
+    fn a_click_outside_the_question_window_cancels_it() {
+        let mut app = sample_app();
+        question(&mut app);
+        screen(&mut app, 100, 24);
+        assert!(click(&mut app, (0, 0)).is_none());
+        assert!(app.confirm.is_none());
+    }
+
+    #[test]
+    fn the_confirm_button_of_the_question_window_applies_the_change() {
+        let mut app = sample_app();
+        question(&mut app);
+        screen(&mut app, 100, 24);
+        let at = app.hit_at(Target::ConfirmYes).unwrap();
+        assert!(matches!(click(&mut app, at), Some(Effect::Apply(_))));
+    }
+
+    #[test]
+    fn the_cancel_button_of_the_exclusion_window_closes_it() {
+        let mut app = sample_app();
+        on_nodes(&mut app);
+        press(&mut app, KeyCode::Char('x'));
+        screen(&mut app, 100, 30);
+        assert!(app.exclude.is_some());
+        let cancel = app.hit_at(Target::Key(KeyCode::Esc)).unwrap();
+        click(&mut app, cancel);
+        assert!(app.exclude.is_none());
+    }
+
+    #[test]
+    fn the_masks_window_closes_by_its_button_and_by_a_click_outside() {
+        let mut app = sample_app();
+        on_nodes(&mut app);
+        press(&mut app, KeyCode::Char('h'));
+        screen(&mut app, 100, 30);
+        let cancel = app.hit_at(Target::Key(KeyCode::Esc)).unwrap();
+        click(&mut app, cancel);
+        assert_eq!(app.input, InputMode::Normal);
+        press(&mut app, KeyCode::Char('h'));
+        screen(&mut app, 100, 30);
+        click(&mut app, (0, 0));
+        assert_eq!(app.input, InputMode::Normal);
+    }
+
+    #[test]
+    fn the_filter_chips_in_the_nodes_panel_work_as_buttons() {
+        let mut app = sample_app();
+        on_nodes(&mut app);
+        screen(&mut app, 100, 30);
+        let at = app.hit_at(Target::DeadToggle).unwrap();
+        click(&mut app, at);
+        assert!(app.filter.hide_dead);
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "мёртвые скрыты"), "{lines:?}");
+    }
+
     #[test]
     fn any_key_closes_the_help_window() {
         let mut app = sample_app();
@@ -1373,7 +1455,7 @@ mod tests {
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(0, 3)].symbol(), "╭");
         assert_eq!(buffer[(79, 3)].symbol(), "╮");
-        assert_eq!(buffer[(0, 3)].style().fg, Some(Color::Indexed(240)));
+        assert_eq!(buffer[(0, 3)].style().fg, Some(Color::Indexed(80)));
     }
 
     #[test]
@@ -1546,8 +1628,8 @@ mod tests {
         let lines = screen(&mut app, 100, 30);
         for word in [
             "Подписка «main»",
-            "эмуляция: happ · windows",
-            "отсечено масками: 0",
+            "happ · windows",
+            "Отсечено масками",
             "Узлов живых",
             "[m] Маски",
         ] {
@@ -1700,9 +1782,9 @@ mod tests {
         );
         press(&mut app, KeyCode::Char('3'));
         let subs = screen(&mut app, 100, 30);
-        let row = subs.iter().find(|line| line.contains("узлов 2/3")).unwrap();
-        assert!(row.contains(&format!("истекла {date}")), "{row}");
-        assert_eq!(row.matches(date.as_str()).count(), 1, "{row}");
+        assert!(has_line(&subs, "узлов 2/3"), "{subs:?}");
+        let state = subs.iter().find(|line| line.contains("Состояние")).unwrap();
+        assert!(state.contains(&format!("истекла {date}")), "{state}");
     }
 
     /// Символы, которые есть в шрифте консоли Windows: ASCII, кириллица, Latin-1, рамки и
