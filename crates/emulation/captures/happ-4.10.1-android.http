@@ -1,8 +1,8 @@
 GET /sub/capture-android HTTP/1.1
 Connection: close
-User-agent: Happ/4.9.0/Android/17926543066011721504
+User-agent: Happ/4.10.1/Android/17936974847161731680
 X-Device-Locale: en
-X-HWID: b0fcada5df059fc7
+X-HWID: 05a1289aa40df695
 X-Device-OS: Android
 X-Ver-OS: 14
 X-Device-model: sdk_gphone64_x86_64
