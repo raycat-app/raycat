@@ -203,8 +203,22 @@ fn tunnel_panel(
         let down: Vec<u64> = app.speeds.iter().map(|speed| speed.down).collect();
         let up: Vec<u64> = app.speeds.iter().map(|speed| speed.up).collect();
         let now = app.speed();
-        speed_row(&mut inner, 2, "↓", now.map(|speed| speed.down), &down, Paint::Download);
-        speed_row(&mut inner, 3, "↑", now.map(|speed| speed.up), &up, Paint::Upload);
+        speed_row(
+            &mut inner,
+            2,
+            "↓",
+            now.map(|speed| speed.down),
+            &down,
+            Paint::Download,
+        );
+        speed_row(
+            &mut inner,
+            3,
+            "↑",
+            now.map(|speed| speed.up),
+            &up,
+            Paint::Upload,
+        );
     }
 }
 
@@ -348,7 +362,14 @@ fn sub_brief_row(
                 _ => Tone::Red,
             };
             let text = format!("{} {percent}%", bar(percent));
-            inner.put_painted(columns.bar, row, &text, SUB_BAR_WIDTH, bar_tone, Paint::Gauge);
+            inner.put_painted(
+                columns.bar,
+                row,
+                &text,
+                SUB_BAR_WIDTH,
+                bar_tone,
+                Paint::Gauge,
+            );
         }
         (None, Some(_)) => inner.put(columns.bar, row, "—", SUB_BAR_WIDTH, Tone::Dim),
         (_, None) => inner.put(columns.bar, row, "без лимита", SUB_BAR_WIDTH, Tone::Dim),
@@ -1222,7 +1243,11 @@ fn sub_details(
     };
     let (phrase, phrase_tone) = sub_phrase(sub, now, zone);
     let border = canvas.frame(Panel::Subs, false);
-    let title = vec![Seg::new(format!("Подписка «{}»", sub.name), Tone::Header, 0)];
+    let title = vec![Seg::new(
+        format!("Подписка «{}»", sub.name),
+        Tone::Header,
+        0,
+    )];
     let mut inner = canvas.boxed(x, y, width, height, title, border);
     let inner_width = inner.width;
     let emulation = format!("{} · {}", sub.app, sub.platform);

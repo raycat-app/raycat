@@ -1515,9 +1515,9 @@ mod tests {
         press(&mut app, KeyCode::Char('2'));
         let terminal = paint(&mut app, 80, 20, true);
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(10, 1)].symbol(), "2");
-        assert_eq!(buffer[(10, 1)].bg, Color::Indexed(95));
-        assert_eq!(buffer[(10, 1)].fg, Color::Indexed(255));
+        assert_eq!(buffer[(11, 1)].symbol(), "2");
+        assert_eq!(buffer[(11, 1)].bg, Color::Indexed(95));
+        assert_eq!(buffer[(11, 1)].fg, Color::Indexed(255));
     }
 
     #[test]

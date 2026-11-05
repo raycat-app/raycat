@@ -812,9 +812,11 @@ mod tests {
         {
             let mut canvas = Canvas::new(&mut buffer, Palette::new(true));
             let active = canvas.frame(Panel::Nodes, true);
-            let _inner = canvas.boxed(0, 0, 10, 3, vec![seg("А", 0)], active);
+            let title_a = vec![Seg::new("А", Tone::Header, 0)];
+            let _inner = canvas.boxed(0, 0, 10, 3, title_a, active);
             let idle = canvas.frame(Panel::Nodes, false);
-            let _other = canvas.boxed(10, 0, 10, 3, vec![seg("Б", 0)], idle);
+            let title_b = vec![Seg::new("Б", Tone::Header, 0)];
+            let _other = canvas.boxed(10, 0, 10, 3, title_b, idle);
         }
         let title = |x: u16| {
             let style = buffer[(x, 0)].style();
