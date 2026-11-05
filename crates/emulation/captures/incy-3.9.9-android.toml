@@ -1,12 +1,12 @@
 app = "incy"
 platform = "android"
 arch = "x64"
-release = "android-v3.9.8"
+release = "android-v3.9.9"
 url = "http://127.0.0.1:{PORT}/sub/capture-android"
-# Часы захвата: Mon Nov  2 15:45:23 UTC 2026.
-unix = 1_793_634_323
+# Часы захвата: Thu Nov  5 22:03:32 UTC 2026.
+unix = 1_793_916_212
 machine_id = "0d0af05ee8fd4dc29275718f2ce4dff1"
-hwid = "0500C263-7091-31D2-C5EE-C0621AD8405E"
+hwid = "BAAF1AE6-56BE-A944-9671-CD55FCF7D0EF"
 model = "sdk_gphone64_x86_64"
 manufacturer = "Google"
 locale = "en_US"
