@@ -4,3 +4,5 @@ extend-exclude = ["Cargo.lock", ".github/assets/", "crates/xray-api/proto/"]
 [default.extend-words]
 # Параметр `mport` (порты для port hopping) в ссылках hysteria2.
 mport = "mport"
+# Библиотека интерфейса в терминале.
+ratatui = "ratatui"
