@@ -731,7 +731,10 @@ mod tests {
         for color in [true, false] {
             for main in [true, false] {
                 let style = Palette::new(color).graph(main);
-                assert!(!style.add_modifier.contains(Modifier::BOLD), "{color} {main}");
+                assert!(
+                    !style.add_modifier.contains(Modifier::BOLD),
+                    "{color} {main}"
+                );
             }
         }
         let colored = Palette::new(true);
