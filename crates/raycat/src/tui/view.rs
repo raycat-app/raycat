@@ -4,6 +4,7 @@
 use jiff::tz::TimeZone;
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyCode;
+use ratatui::style::Style;
 use raycat_proto::{SubscriptionStatus, XrayStatus};
 
 use super::app::{App, ExcludeDialog, Hit, InputMode, Link, Tab, Target};
@@ -362,15 +363,15 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("s скорость", 2),
             ("a автовыбор", 3),
             ("2 узлы", 2),
-            ("справка", 0),
-            ("выход", 0),
+            ("? справка", 0),
+            ("q выход", 0),
         ],
         Tab::Nodes if app.details => &[
             ("Esc назад", 0),
             ("p закрепить", 1),
             ("t скорость", 1),
-            ("справка", 0),
-            ("выход", 0),
+            ("? справка", 0),
+            ("q выход", 0),
         ],
         Tab::Nodes => &[
             ("↑↓ выбор", 1),
@@ -384,8 +385,8 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("x исключить", 3),
             ("e исключённые", 4),
             ("/ поиск", 3),
-            ("справка", 0),
-            ("выход", 0),
+            ("? справка", 0),
+            ("q выход", 0),
         ],
         Tab::Subscriptions => &[
             ("↑↓ выбор", 1),
@@ -393,22 +394,22 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("m маски", 1),
             ("[ ] приоритет", 2),
             ("Enter ошибка", 2),
-            ("справка", 0),
-            ("выход", 0),
+            ("? справка", 0),
+            ("q выход", 0),
         ],
         Tab::Journal => &[
             ("↑↓ листать", 1),
             ("w предупреждения", 2),
             ("End к концу", 3),
-            ("справка", 0),
-            ("выход", 0),
+            ("? справка", 0),
+            ("q выход", 0),
         ],
         Tab::Settings => &[
             ("↑↓ выбор", 1),
             ("Enter изменить", 1),
             ("Пробел переключить", 2),
-            ("справка", 0),
-            ("выход", 0),
+            ("? справка", 0),
+            ("q выход", 0),
         ],
     };
     items
@@ -465,7 +466,6 @@ fn key_code(key: &str) -> Option<KeyCode> {
 /// Строка клавиш: клавиша в плашке, подпись обычным текстом. Клик по плашке работает как
 /// клавиша; пока открыто поле ввода, плашки не нажимаются.
 fn keys_line(canvas: &mut Canvas<'_>, app: &mut App, y: usize, hints: &[Seg]) {
-    let clickable = app.input == InputMode::Normal;
     let items: Vec<(&str, &str, u8)> = hints
         .iter()
         .map(|seg| {
@@ -475,30 +475,55 @@ fn keys_line(canvas: &mut Canvas<'_>, app: &mut App, y: usize, hints: &[Seg]) {
         .collect();
     let keep = keep_hints(&items, canvas.width);
     let style = canvas.key_style();
+    // Справка и выход прижаты к правому краю; остальные подсказки идут слева по порядку.
+    let kept: Vec<usize> = (0..items.len()).filter(|&index| keep[index]).collect();
+    let (right, left): (Vec<usize>, Vec<usize>) = kept
+        .into_iter()
+        .partition(|&index| matches!(items[index].0, "?" | "q"));
     let mut x = 0;
-    let mut first = true;
-    for (&(key, desc, _), kept) in items.iter().zip(keep) {
-        if !kept {
-            continue;
-        }
-        if !first {
+    for (count, index) in left.into_iter().enumerate() {
+        if count > 0 {
             x += GAP;
         }
-        first = false;
-        let chip = format!(" {key} ");
-        let chip_width = display_width(&chip);
-        canvas.put_style(x, y, &chip, chip_width, style);
-        if clickable && let Some(code) = key_code(key) {
-            app.hits.push(Hit::new(x, y, chip_width, Target::Key(code)));
-        }
-        x += chip_width;
-        if !desc.is_empty() {
-            let text = format!(" {desc}");
-            let room = canvas.width.saturating_sub(x);
-            canvas.put(x, y, &text, room, Tone::Plain);
-            x += display_width(&text);
-        }
+        x = draw_hint(canvas, app, x, y, items[index], style);
     }
+    let right_width = right
+        .iter()
+        .map(|&index| hint_width(items[index].0, items[index].1))
+        .sum::<usize>()
+        + GAP * right.len().saturating_sub(1);
+    let mut x = canvas.width.saturating_sub(right_width).max(x + GAP);
+    for index in right {
+        x = draw_hint(canvas, app, x, y, items[index], style) + GAP;
+    }
+}
+
+/// Одна подсказка: плашка клавиши и подпись обычным текстом. Возвращает x после неё.
+/// Клик по плашке выполняет клавишу, если окно не открыто.
+fn draw_hint(
+    canvas: &mut Canvas<'_>,
+    app: &mut App,
+    x: usize,
+    y: usize,
+    (key, desc, _): (&str, &str, u8),
+    style: Style,
+) -> usize {
+    let chip = format!(" {key} ");
+    let chip_width = display_width(&chip);
+    canvas.put_style(x, y, &chip, chip_width, style);
+    if app.input == InputMode::Normal
+        && let Some(code) = key_code(key)
+    {
+        app.hits.push(Hit::new(x, y, chip_width, Target::Key(code)));
+    }
+    let mut next = x + chip_width;
+    if !desc.is_empty() {
+        let text = format!(" {desc}");
+        let room = canvas.width.saturating_sub(next);
+        canvas.put(next, y, &text, room, Tone::Plain);
+        next += display_width(&text);
+    }
+    next
 }
 
 fn filter_hint(app: &App) -> Vec<Seg> {
@@ -781,14 +806,16 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::{Buffer, Cell};
-    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use ratatui::style::{Color, Modifier};
     use raycat_proto::{
         CurrentNode, Event, Mode, Node, NodeCheck, NodeStatus, Nodes, SettingItem, SettingValue,
         SettingsView, Status, Tunnel, XHTTP_PROVIDER,
     };
 
-    use super::super::app::{Confirm, Edit, InputMode, Msg, Setting, Snapshot, Tab};
+    use super::super::app::{Confirm, Edit, Effect, InputMode, Msg, Setting, Snapshot, Tab};
     use super::*;
 
     const NOW: u64 = 1_790_596_800;
@@ -1005,7 +1032,7 @@ mod tests {
         on_nodes(&mut app);
         let wide = screen(&mut app, 160, 30);
         assert!(has_line(&wide, "Узел · подробности"), "{wide:?}");
-        assert!(has_line(&wide, "Протокол:"), "{wide:?}");
+        assert!(has_line(&wide, "Протокол"), "{wide:?}");
         let narrow = screen(&mut app, 100, 30);
         assert!(!has_line(&narrow, "Узел · подробности"), "{narrow:?}");
     }
@@ -1179,6 +1206,86 @@ mod tests {
         for line in &narrow {
             assert!(display_width(line) <= 44, "{line:?}");
         }
+    }
+
+    /// Щелчок левой кнопкой в клетку `(column, row)`, как его отдаёт терминал.
+    fn click(app: &mut App, (column, row): (u16, u16)) -> Option<Effect> {
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse, Instant::now())
+    }
+
+    fn question(app: &mut App) {
+        app.confirm = Some(Confirm {
+            question: "xray перезапустится".to_owned(),
+            edit: Edit {
+                changes: Vec::new(),
+                done: String::new(),
+                row: None,
+                warn: None,
+            },
+        });
+    }
+
+    #[test]
+    fn a_click_outside_the_question_window_cancels_it() {
+        let mut app = sample_app();
+        question(&mut app);
+        screen(&mut app, 100, 24);
+        assert!(click(&mut app, (0, 0)).is_none());
+        assert!(app.confirm.is_none());
+    }
+
+    #[test]
+    fn the_confirm_button_of_the_question_window_applies_the_change() {
+        let mut app = sample_app();
+        question(&mut app);
+        screen(&mut app, 100, 24);
+        let at = app.hit_at(Target::ConfirmYes).unwrap();
+        assert!(matches!(click(&mut app, at), Some(Effect::Apply(_))));
+    }
+
+    #[test]
+    fn the_cancel_button_of_the_exclusion_window_closes_it() {
+        let mut app = sample_app();
+        on_nodes(&mut app);
+        press(&mut app, KeyCode::Char('x'));
+        screen(&mut app, 100, 30);
+        assert!(app.exclude.is_some());
+        let cancel = app.hit_at(Target::Key(KeyCode::Esc)).unwrap();
+        click(&mut app, cancel);
+        assert!(app.exclude.is_none());
+    }
+
+    #[test]
+    fn the_masks_window_closes_by_its_button_and_by_a_click_outside() {
+        let mut app = sample_app();
+        on_nodes(&mut app);
+        press(&mut app, KeyCode::Char('h'));
+        screen(&mut app, 100, 30);
+        let cancel = app.hit_at(Target::Key(KeyCode::Esc)).unwrap();
+        click(&mut app, cancel);
+        assert_eq!(app.input, InputMode::Normal);
+        press(&mut app, KeyCode::Char('h'));
+        screen(&mut app, 100, 30);
+        click(&mut app, (0, 0));
+        assert_eq!(app.input, InputMode::Normal);
+    }
+
+    #[test]
+    fn the_filter_chips_in_the_nodes_panel_work_as_buttons() {
+        let mut app = sample_app();
+        on_nodes(&mut app);
+        screen(&mut app, 100, 30);
+        let at = app.hit_at(Target::DeadToggle).unwrap();
+        click(&mut app, at);
+        assert!(app.filter.hide_dead);
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "мёртвые скрыты"), "{lines:?}");
     }
 
     #[test]
@@ -1373,7 +1480,7 @@ mod tests {
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(0, 3)].symbol(), "╭");
         assert_eq!(buffer[(79, 3)].symbol(), "╮");
-        assert_eq!(buffer[(0, 3)].style().fg, Some(Color::Indexed(240)));
+        assert_eq!(buffer[(0, 3)].style().fg, Some(Color::Indexed(80)));
     }
 
     #[test]
@@ -1546,8 +1653,8 @@ mod tests {
         let lines = screen(&mut app, 100, 30);
         for word in [
             "Подписка «main»",
-            "эмуляция: happ · windows",
-            "отсечено масками: 0",
+            "happ · windows",
+            "Отсечено масками",
             "Узлов живых",
             "[m] Маски",
         ] {
@@ -1577,15 +1684,18 @@ mod tests {
         on_nodes(&mut app);
         press(&mut app, KeyCode::Enter);
         let lines = screen(&mut app, 100, 30);
-        assert!(
-            has_line(
-                &lines,
-                "Протокол: vless, транспорт: xhttp, безопасность: reality"
-            ),
-            "{lines:?}"
-        );
+        for word in [
+            "Протокол",
+            "vless",
+            "Транспорт",
+            "xhttp",
+            "Безопасность",
+            "reality",
+        ] {
+            assert!(has_line(&lines, word), "{word}: {lines:?}");
+        }
         assert!(has_line(&lines, "31 мс"), "{lines:?}");
-        assert!(has_line(&lines, "сбой"), "{lines:?}");
+        assert!(has_line(&lines, "×"), "{lines:?}");
     }
 
     #[test]
@@ -1596,6 +1706,7 @@ mod tests {
             alive: true,
             latency_ms: Some(31),
         }];
+        nodes[0].last_error = Some("тайм-аут соединения".to_owned());
         let mut app = app_with(sample_status(), nodes);
         on_nodes(&mut app);
         press(&mut app, KeyCode::Enter);
@@ -1604,6 +1715,59 @@ mod tests {
         let checks = line_of("Последние проверки:");
         let error = line_of("Ошибка полностью:");
         assert!(checks.is_some() && checks < error, "{lines:?}");
+    }
+
+    #[test]
+    fn the_node_details_hide_the_reason_and_the_error_when_there_is_none() {
+        let mut app = sample_app();
+        on_nodes(&mut app);
+        press(&mut app, KeyCode::Enter);
+        let lines = screen(&mut app, 100, 30);
+        assert!(!has_line(&lines, "Причина: нет"), "{lines:?}");
+        assert!(!has_line(&lines, "Ошибка полностью"), "{lines:?}");
+    }
+
+    #[test]
+    fn the_keys_line_keeps_each_key_in_its_plaque_and_pins_help_and_quit_right() {
+        let mut app = sample_app();
+        let terminal = paint(&mut app, 140, 30, true);
+        let buffer = terminal.backend().buffer();
+        let y = buffer.area.height - 1;
+        let lines = rows(buffer);
+        assert!(lines.last().unwrap().ends_with("выход"), "{lines:?}");
+        for key in ["?", "q"] {
+            let x = (0..buffer.area.width)
+                .find(|&x| {
+                    buffer[(x, y)].symbol() == key && buffer[(x, y)].bg == Color::Indexed(250)
+                })
+                .unwrap_or_else(|| panic!("клавиша {key} не в плашке: {lines:?}"));
+            // Плашка ` ? ` — правый отступ ещё на плашке, потом пробел и подпись без фона.
+            assert_eq!(buffer[(x + 1, y)].bg, Color::Indexed(250), "{key}");
+            assert_eq!(buffer[(x + 2, y)].bg, Color::Reset, "{key}");
+            assert_ne!(buffer[(x + 3, y)].symbol(), " ", "{key}: {lines:?}");
+        }
+    }
+
+    #[test]
+    fn a_subscription_without_a_limit_keeps_its_columns_and_shows_no_percent() {
+        let mut status = sample_status();
+        status.subscriptions[0].total_bytes = None;
+        status.subscriptions.push(SubscriptionStatus {
+            name: "n1".to_owned(),
+            total_bytes: Some(100),
+            used_bytes: Some(50),
+            ..status.subscriptions[0].clone()
+        });
+        let mut app = app_with(status, sample_nodes());
+        let lines = screen(&mut app, 100, 30);
+        let plain = lines.iter().find(|line| line.contains("main")).unwrap();
+        assert!(plain.contains("без лимита"), "{lines:?}");
+        assert!(!plain.contains('%'), "{lines:?}");
+        let limited = lines.iter().find(|line| line.contains("n1")).unwrap();
+        assert!(limited.contains("50%"), "{lines:?}");
+        // Полоска и «без лимита» начинаются в одной колонке.
+        let at = |line: &str, mark: &str| display_width(&line[..line.find(mark).unwrap()]);
+        assert_eq!(at(plain, "без лимита"), at(limited, "█"), "{lines:?}");
     }
 
     #[test]
@@ -1622,7 +1786,7 @@ mod tests {
         assert!(has_line(&end, "[p] закрепить"), "{end:?}");
         press(&mut app, KeyCode::Home);
         let back = screen(&mut app, 100, 20);
-        assert!(has_line(&back, "Выбор:"), "{back:?}");
+        assert!(has_line(&back, "Выбор"), "{back:?}");
         assert!(!has_line(&back, "ХВОСТ"), "{back:?}");
     }
 
@@ -1700,9 +1864,9 @@ mod tests {
         );
         press(&mut app, KeyCode::Char('3'));
         let subs = screen(&mut app, 100, 30);
-        let row = subs.iter().find(|line| line.contains("узлов 2/3")).unwrap();
-        assert!(row.contains(&format!("истекла {date}")), "{row}");
-        assert_eq!(row.matches(date.as_str()).count(), 1, "{row}");
+        assert!(has_line(&subs, "узлов 2/3"), "{subs:?}");
+        let state = subs.iter().find(|line| line.contains("Состояние")).unwrap();
+        assert!(state.contains(&format!("истекла {date}")), "{state}");
     }
 
     /// Символы, которые есть в шрифте консоли Windows: ASCII, кириллица, Latin-1, рамки и
