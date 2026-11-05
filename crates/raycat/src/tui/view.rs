@@ -1158,7 +1158,10 @@ mod tests {
         let terminal = paint(&mut app, 80, 24, true);
         let buffer = terminal.backend().buffer();
         let lines = rows(buffer);
-        assert!(lines[0].starts_with(" raycat  ● нет связи с демоном"), "{lines:?}");
+        assert!(
+            lines[0].starts_with(" raycat  ● нет связи с демоном"),
+            "{lines:?}"
+        );
         assert_eq!(buffer[(1, 0)].style().fg, Some(Color::Indexed(111)));
         assert_eq!(buffer[(9, 0)].symbol(), "●");
         assert_eq!(buffer[(9, 0)].style().fg, Some(Color::Indexed(210)));
@@ -1780,8 +1783,9 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let y = buffer.area.height - 1;
         let lines = rows(buffer);
-        assert!(lines.last().unwrap().ends_with("? справка · q выход"), "{lines:?}");
-        assert!(lines.last().unwrap().starts_with(" u обновить · s скорость"), "{lines:?}");
+        let last = lines.last().unwrap();
+        assert!(last.ends_with("? справка · q выход"), "{lines:?}");
+        assert!(last.starts_with(" u обновить · s скорость"), "{lines:?}");
         for key in ["?", "q", "u"] {
             let x = (0..buffer.area.width)
                 .find(|&x| buffer[(x, y)].symbol() == key)
