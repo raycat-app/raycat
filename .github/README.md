@@ -7,15 +7,19 @@
 
 # raycat
 
-**VPN-подписка для Linux-сервера.**<br>
-Нужные контейнеры, весь сервер или домашняя сеть выходят в интернет через неё.
+**Менеджер VPN-подписок для Linux-серверов**<br>
+Для нужных контейнеров, всего сервера или домашней сети.
 
 [![Версия](https://img.shields.io/github/v/release/raycat-app/raycat?include_prereleases&style=flat-square&label=версия&color=2d333b)](https://github.com/raycat-app/raycat/releases)
+[![Сборка](https://img.shields.io/github/actions/workflow/status/raycat-app/raycat/ci.yml?branch=main&style=flat-square&label=сборка)](https://github.com/raycat-app/raycat/actions/workflows/ci.yml)
+[![Rust](https://img.shields.io/badge/Rust-1.88%2B-2d333b?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Платформы](https://img.shields.io/badge/Linux-x86__64%20·%20arm64%20·%20armv7-2d333b?style=flat-square&logo=linux&logoColor=white)](https://github.com/raycat-app/raycat/releases)
+[![Docker](https://img.shields.io/badge/Docker-ghcr.io-2d333b?style=flat-square&logo=docker&logoColor=white)](https://github.com/raycat-app/raycat/pkgs/container/raycat)
 [![Лицензия](https://img.shields.io/badge/лицензия-MIT-2d333b?style=flat-square)](../LICENSE)
 
-[Запуск](#запуск) · [Режимы](#режимы) · [Управление](#управление) · [Настройки](#настройки) · [Вопросы](#вопросы-и-ошибки) · [English](README.en.md)
+[Установка](#установка) · [Режимы работы](#режимы-работы) · [Управление](#управление) · [Настройки](#настройки) · [Поддержка](#поддержка) · [English](README.en.md)
 
-[Сообщить об ошибке](https://github.com/raycat-app/raycat/issues/new?template=bug.yml) · [Предложить идею](https://github.com/raycat-app/raycat/issues/new?template=feature.yml)
+[Сообщить об ошибке](https://github.com/raycat-app/raycat/issues/new?template=bug.yml) · [Предложить улучшение](https://github.com/raycat-app/raycat/issues/new?template=feature.yml)
 
 <br>
 
@@ -25,35 +29,35 @@
 
 <br>
 
-Вы даёте raycat ссылку на подписку, и он держит туннель на сервере. Настраивать сами приложения не нужно. Если узел умер, raycat переключится на живой. Если живых не осталось, трафик не уйдёт мимо VPN.
+raycat получает VPN-подписку у провайдера и поддерживает туннель на Linux-сервере. Трафик выбранных контейнеров, всего сервера или устройств домашней сети направляется через VPN без настройки отдельных приложений.
 
-Многие провайдеры отдают подписку только своим приложениям. raycat запрашивает её так же, как Happ (Windows и Android) или INCY (Android), а туннель строит на [xray-core](https://github.com/XTLS/Xray-core).
+Подписка запрашивается так же, как это делают Happ (Windows и Android) и INCY (Android), поэтому raycat работает и с провайдерами, которые выдают подписку только своим приложениям. Туннель строится на [Xray-core](https://github.com/XTLS/Xray-core). Поддерживаются резервные подписки, автоматический выбор узла при сбое, исключение узлов по маскам и прямой доступ к российским ресурсам. Если доступных узлов нет, аварийный выключатель (kill switch) не выпускает трафик мимо VPN.
 
 > [!NOTE]
-> Стабильной версии пока нет. До её выхода используйте образ `ghcr.io/raycat-app/raycat:dev` и установку с `--channel dev`.
+> Стабильная версия ещё не выпущена. До её выхода используйте образ `ghcr.io/raycat-app/raycat:dev` и установку с параметром `--channel dev`.
 
-## Запуск
+## Установка
 
-### В Docker
+### Docker
 
-Через VPN пойдут только контейнеры, которые вы подключите к raycat. Остальной сервер и другие контейнеры работают как обычно.
+Через VPN направляются только контейнеры, подключённые к raycat. Остальные контейнеры и сам сервер работают без изменений.
 
 `raycat/config.toml`:
 
 ```toml
 [[subscription]]
 url = "https://…"       # ссылка подписки
-app = "happ"            # какое приложение принимает провайдер: happ или incy
-platform = "windows"    # windows или android (у incy только android)
+app = "happ"            # приложение, которое принимает провайдер: happ или incy
+platform = "windows"    # windows или android (для incy только android)
 
 [mode]
 type = "gateway"
 ```
 
 > [!CAUTION]
-> Ссылка подписки работает как пароль. Не публикуйте её и не храните в открытых репозиториях.
+> Ссылка подписки равнозначна паролю. Не публикуйте её и не храните в открытых репозиториях.
 
-`compose.yml` рядом с каталогом `raycat`. Контейнер `app` здесь ваше приложение:
+`compose.yml` рядом с каталогом `raycat`, где `app` — ваше приложение:
 
 ```yaml
 services:
@@ -68,7 +72,7 @@ services:
 
   app:
     image: ваше-приложение
-    network_mode: service:raycat   # эта строка пускает контейнер через VPN
+    network_mode: service:raycat   # направляет трафик контейнера через VPN
     depends_on:
       raycat:
         condition: service_healthy
@@ -83,41 +87,36 @@ docker compose up -d
 docker compose exec raycat raycat tui
 ```
 
-### На сервере
+### Служба на сервере
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/raycat-app/raycat/main/deploy/install.sh | sudo sh
-sudo raycat init --force    # спросит ссылку, приложение и режим
+sudo raycat init --force    # запрос ссылки, приложения и режима
 sudo systemctl start raycat
 sudo raycat tui
 ```
 
 <p align="right"><a href="#raycat">наверх</a></p>
 
-## Режимы
+## Режимы работы
 
-| Что идёт через VPN | Как запустить | Настройка |
+| Через VPN | Способ запуска | Параметры |
 | --- | --- | --- |
-| **Отдельные контейнеры** | raycat в Docker, у контейнеров `network_mode: service:raycat` | `type = "gateway"` |
-| **Весь сервер** | raycat службой на сервере | `type = "gateway"` |
+| **Выбранные контейнеры** | raycat в Docker, у контейнеров `network_mode: service:raycat` | `type = "gateway"` |
+| **Весь сервер** | raycat как служба systemd | `type = "gateway"` |
 | **Отдельные программы** | прокси HTTP и SOCKS5 на `127.0.0.1:7890` | `type = "proxy"` |
 | **Домашняя сеть** | raycat в сети хоста, сервер указан шлюзом на устройствах | `type = "gateway"`, `lan = true` |
 
 > [!IMPORTANT]
-> Kill switch работает в режиме `gateway`: без туннеля трафик и DNS не выходят наружу. В режиме `proxy` программы, которые не используют прокси, ходят напрямую.
+> Аварийный выключатель действует в режиме `gateway`: без туннеля трафик и DNS-запросы не выходят наружу. В режиме `proxy` программы, не использующие прокси, обращаются в сеть напрямую.
 
-**Ещё raycat умеет:**
-
-- держать основную и резервные подписки и менять их порядок на лету;
-- проверять узлы и переключаться при сбое, закреплять узел или исключать узлы масками вроде `Обход*`;
-- пускать российские сайты мимо VPN (`ru_direct = true`);
-- работать там же, где и ваш сервер: сборки для x86_64, arm64 и armv7, в том числе Raspberry Pi.
+Сборки доступны для x86_64, arm64 и armv7, включая Raspberry Pi.
 
 <p align="right"><a href="#raycat">наверх</a></p>
 
 ## Управление
 
-`raycat tui` показывает всё на одном экране и работает с мышью. Настройки можно менять прямо там.
+`raycat tui` выводит состояние, узлы, подписки, журнал и настройки на одном экране и поддерживает мышь. Основные настройки изменяются прямо в интерфейсе.
 
 <div align="center">
   <img src="assets/tui-nodes.png" alt="raycat tui: узлы" width="820">
@@ -134,44 +133,44 @@ sudo raycat tui
 
 <br>
 
-| Клавиша | Вкладка | Что там можно сделать |
+| Клавиша | Вкладка | Действия |
 | --- | --- | --- |
-| <kbd>1</kbd> | Обзор | увидеть состояние туннеля, обновить подписки, проверить скорость |
-| <kbd>2</kbd> | Узлы | закрепить узел <kbd>p</kbd>, исключить <kbd>x</kbd>, скрыть мёртвые <kbd>d</kbd>, проверить скорость <kbd>t</kbd> |
-| <kbd>3</kbd> | Подписки | изменить маски <kbd>m</kbd> и порядок <kbd>[</kbd> <kbd>]</kbd> |
-| <kbd>4</kbd> | Журнал | посмотреть события, только предупреждения <kbd>w</kbd> |
-| <kbd>5</kbd> | Настройки | поменять основные настройки |
+| <kbd>1</kbd> | Обзор | состояние туннеля, обновление подписок, проверка скорости |
+| <kbd>2</kbd> | Узлы | закрепление <kbd>p</kbd>, исключение <kbd>x</kbd>, скрытие недоступных <kbd>d</kbd>, проверка скорости <kbd>t</kbd> |
+| <kbd>3</kbd> | Подписки | маски <kbd>m</kbd> и порядок <kbd>[</kbd> <kbd>]</kbd> |
+| <kbd>4</kbd> | Журнал | события, только предупреждения <kbd>w</kbd> |
+| <kbd>5</kbd> | Настройки | изменение основных параметров |
 
-То же самое есть в командах:
+Те же действия доступны из командной строки:
 
-| Команда | Что делает |
+| Команда | Назначение |
 | --- | --- |
 | `raycat status` | состояние туннеля, текущий узел, подписки |
 | `raycat nodes` | список узлов |
-| `raycat use <узел>`, `raycat use auto` | закрепить узел, вернуть автовыбор |
-| `raycat update` | обновить подписки сейчас |
-| `raycat speedtest` | проверить скорость через VPN |
-| `raycat check` | проверить файл настроек |
-| `raycat config` | показать итоговые настройки, секреты скрыты |
-| `raycat reload` | применить правку файла настроек |
+| `raycat use <узел>`, `raycat use auto` | закрепление узла, возврат к автоматическому выбору |
+| `raycat update` | внеочередное обновление подписок |
+| `raycat speedtest` | проверка скорости через VPN |
+| `raycat check` | проверка файла настроек |
+| `raycat config` | итоговые настройки, секреты скрыты |
+| `raycat reload` | применение изменений файла настроек |
 
-Остальное покажет `raycat --help`.
+Полный список команд: `raycat --help`.
 
 <p align="right"><a href="#raycat">наверх</a></p>
 
 ## Настройки
 
-Настройки лежат в одном файле: `/etc/raycat/config.toml` на сервере, `raycat/config.toml` в примере с Docker. Все ключи с пояснениями есть в [примере настроек](../deploy/config.example.toml), при опечатке raycat подскажет правильное название.
+Настройки хранятся в одном файле: `/etc/raycat/config.toml` на сервере или `raycat/config.toml` в примере с Docker. Все параметры с пояснениями приведены в [примере настроек](../deploy/config.example.toml). При опечатке в названии параметра raycat предлагает правильный вариант.
 
 > [!TIP]
-> После правки выполните `sudo raycat reload`. Демон применит то, что можно применить на лету, а про остальное скажет, что нужен перезапуск.
+> После изменения файла выполните `sudo raycat reload`. Параметры, которые можно применить без перезапуска, вступят в силу сразу; для остальных будет указано, что требуется перезапуск.
 
 <details>
-<summary><b>Свои правила: что пускать мимо VPN</b></summary>
+<summary><b>Правила маршрутизации</b></summary>
 
 <br>
 
-Обычно весь трафик идёт через VPN. Правила нужны для исключений. Например, открывать сайт банка напрямую, а один российский сайт, наоборот, через VPN:
+По умолчанию весь трафик направляется через VPN. Правила задают исключения: например, сайт банка открывается напрямую, а отдельный российский сайт, наоборот, через VPN.
 
 ```toml
 [routing]
@@ -179,14 +178,14 @@ ru_direct = true
 
 [[routing.rule]]
 domains = ["mybank.example"]
-action = "direct"             # direct: мимо VPN
+action = "direct"             # direct: в обход VPN
 
 [[routing.rule]]
-domains = ["*.example.ru"]    # *.example.ru: сам сайт и его поддомены
-action = "proxy"              # proxy: через VPN, block: заблокировать
+domains = ["*.example.ru"]    # *.example.ru: сайт и его поддомены
+action = "proxy"              # proxy: через VPN, block: блокировать
 ```
 
-Правила проверяются сверху вниз, срабатывает первое подошедшее. Они важнее `ru_direct`. Вместо `domains` или вместе с ними можно указать `ips`: подсети или отдельные адреса.
+Правила проверяются сверху вниз, применяется первое подходящее. Они имеют приоритет над `ru_direct`. Вместо `domains` или вместе с ними можно указать `ips`: подсети или отдельные адреса.
 
 </details>
 
@@ -195,7 +194,7 @@ action = "proxy"              # proxy: через VPN, block: заблокиро
 
 <br>
 
-raycat должен работать в сети самого хоста: как служба или в Docker с `network_mode: host`.
+raycat должен работать в сетевом пространстве хоста: как служба или в Docker с `network_mode: host`.
 
 ```toml
 [mode]
@@ -203,7 +202,7 @@ type = "gateway"
 lan = true
 ```
 
-На устройстве или в DHCP роутера укажите адрес сервера как шлюз и DNS. Включать `ip_forward` не нужно, SSH и другие службы хоста продолжат работать. `raycat check` покажет, какой интерфейс и какие подсети будут перехватываться.
+На устройстве или в DHCP маршрутизатора укажите адрес сервера в качестве шлюза и DNS-сервера. Включать `ip_forward` не требуется, SSH и другие службы хоста продолжают работать. `raycat check` показывает перехватываемый интерфейс и подсети.
 
 </details>
 
@@ -212,12 +211,12 @@ lan = true
 
 <br>
 
-Перекрывают файл настроек, удобно в Docker.
+Переопределяют значения из файла настроек, что удобно в Docker.
 
-| Переменная | Что задаёт |
+| Переменная | Параметр |
 | --- | --- |
-| `RAYCAT_SUBSCRIPTION`, `RAYCAT_SUBSCRIPTION_FILE` | ссылку первой подписки или файл с ней |
-| `RAYCAT_APP`, `RAYCAT_PLATFORM` | приложение и платформу первой подписки |
+| `RAYCAT_SUBSCRIPTION`, `RAYCAT_SUBSCRIPTION_FILE` | ссылка первой подписки или файл с ней |
+| `RAYCAT_APP`, `RAYCAT_PLATFORM` | приложение и платформа первой подписки |
 | `RAYCAT_MODE`, `RAYCAT_KILL_SWITCH`, `RAYCAT_LAN`, `RAYCAT_LISTEN` | режим работы |
 | `RAYCAT_PROXY_AUTH`, `RAYCAT_PROXY_AUTH_FILE` | логин и пароль прокси |
 | `RAYCAT_SEED`, `RAYCAT_LOG` | устройство и уровень журнала |
@@ -226,19 +225,19 @@ lan = true
 </details>
 
 <details>
-<summary><b>Если что-то не работает</b></summary>
+<summary><b>Устранение неполадок</b></summary>
 
 <br>
 
-**Провайдер не отдаёт узлы.** Запустите `raycat fetch <подписка>`: команда покажет ответ провайдера. Ошибки 403 и 404 обычно значат, что нужно другое приложение или платформа. Ещё бывает, что исчерпан лимит устройств или закончился срок подписки.
+**Провайдер не выдаёт узлы.** Выполните `raycat fetch <подписка>`: команда покажет ответ провайдера. Ошибки 403 и 404 обычно означают, что требуется другое приложение или платформа. Также возможны исчерпанный лимит устройств или истёкший срок подписки.
 
-**`raycat status` пишет, что демон не запущен.** Посмотрите `sudo systemctl status raycat` и `journalctl -u raycat -n 100`. Клиентские команды нужно запускать через `sudo`.
+**`raycat status` сообщает, что демон не запущен.** Проверьте `sudo systemctl status raycat` и `journalctl -u raycat -n 100`. Клиентские команды выполняются через `sudo`.
 
-**Шлюз в Docker не стартует.** Нужны `cap_add: [NET_ADMIN]` и `dns: [1.1.1.1]`, как в примере.
+**Шлюз в Docker не запускается.** Требуются `cap_add: [NET_ADMIN]` и `dns: [1.1.1.1]`, как в примере.
 
-**Настройки из TUI не сохраняются в Docker.** Монтируйте каталог, а не отдельный файл, как в примере.
+**Настройки из интерфейса не сохраняются в Docker.** Монтируйте каталог, а не отдельный файл, как в примере.
 
-**Медленно на Raspberry Pi 3 и 4.** У этих процессоров нет аппаратного AES. Установщик сам ставит подходящую сборку, а в Docker добавьте к тегу `-noaes`, например `:latest-noaes`.
+**Низкая скорость на Raspberry Pi 3 и 4.** Эти процессоры не поддерживают аппаратное ускорение AES. Установщик выбирает подходящую сборку автоматически; в Docker используйте тег с суффиксом `-noaes`, например `:latest-noaes`.
 
 </details>
 
@@ -247,7 +246,7 @@ lan = true
 
 <br>
 
-Есть два канала. `dev` собирается из каждого изменения. `stable` выходит сам, когда сборка выдержала срок на dev. Обновления xray и исправления уязвимостей выходят сразу. Обновить установку на сервере можно той же командой установки, настройки сохранятся. Удалить: `sudo sh install.sh --uninstall`.
+Выпуски выходят по двум каналам. `dev` собирается из каждого изменения, `stable` выпускается автоматически после выдержки сборки на канале dev. Обновления Xray-core и исправления уязвимостей выпускаются без выдержки. Для обновления установки на сервере повторите команду установки, настройки сохраняются. Удаление: `sudo sh install.sh --uninstall`.
 
 Архивы и образы подписаны аттестациями GitHub:
 
@@ -260,24 +259,22 @@ gh attestation verify oci://ghcr.io/raycat-app/raycat:latest --repo raycat-app/r
 
 <p align="right"><a href="#raycat">наверх</a></p>
 
-## Что внутри
-
-[![Rust](https://img.shields.io/badge/Rust-2d333b?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/) [![Xray-core](https://img.shields.io/badge/Xray--core-2d333b?style=flat-square)](https://github.com/XTLS/Xray-core) [![Ratatui](https://img.shields.io/badge/Ratatui-2d333b?style=flat-square)](https://ratatui.rs/) [![Docker](https://img.shields.io/badge/Docker-2d333b?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/) [![nftables](https://img.shields.io/badge/nftables-2d333b?style=flat-square)](https://www.netfilter.org/projects/nftables/)
-
-Сам raycat написан на Rust. Туннель строит [Xray-core](https://github.com/XTLS/Xray-core), интерфейс сделан на [Ratatui](https://ratatui.rs/), перехват трафика работает через nftables. Спасибо этим проектам.
-
-## Что дальше
+## План развития
 
 - [x] Шлюз для контейнеров, сервера и домашней сети
-- [x] Запросы как у Happ и INCY, профили обновляются сами
-- [x] Интерфейс в терминале с мышью и настройками на лету
+- [x] Запросы в формате Happ и INCY с автоматическим обновлением профилей
+- [x] Интерфейс в терминале с поддержкой мыши и изменением настроек без перезапуска
 - [ ] Первая стабильная версия 0.1.0
 - [ ] Версия 1.0
 
 <p align="right"><a href="#raycat">наверх</a></p>
 
-## Вопросы и ошибки
+## Поддержка
 
-Вопросы задавайте в [обсуждениях](https://github.com/raycat-app/raycat/discussions), ошибки присылайте в [issues](https://github.com/raycat-app/raycat/issues). Никогда не публикуйте ссылку подписки и вывод `raycat identity`. Об уязвимостях сообщайте [приватно](https://github.com/raycat-app/raycat/security/advisories/new).
+Вопросы обсуждаются в [Discussions](https://github.com/raycat-app/raycat/discussions), об ошибках сообщайте в [Issues](https://github.com/raycat-app/raycat/issues). Не публикуйте ссылку подписки и вывод `raycat identity`. Об уязвимостях сообщайте [приватно](https://github.com/raycat-app/raycat/security/advisories/new).
 
-Лицензия [MIT](../LICENSE).
+Распространяется по лицензии [MIT](../LICENSE).
+
+## Основано на
+
+[![Rust](https://img.shields.io/badge/Rust-2d333b?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/) [![Xray-core](https://img.shields.io/badge/Xray--core-2d333b?style=flat-square)](https://github.com/XTLS/Xray-core) [![Ratatui](https://img.shields.io/badge/Ratatui-2d333b?style=flat-square)](https://ratatui.rs/)
