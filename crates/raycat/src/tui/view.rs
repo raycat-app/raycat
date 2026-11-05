@@ -362,15 +362,15 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("s скорость", 2),
             ("a автовыбор", 3),
             ("2 узлы", 2),
-            ("? справка", 0),
-            ("q выход", 0),
+            ("справка", 0),
+            ("выход", 0),
         ],
         Tab::Nodes if app.details => &[
             ("Esc назад", 0),
             ("p закрепить", 1),
             ("t скорость", 1),
-            ("? справка", 0),
-            ("q выход", 0),
+            ("справка", 0),
+            ("выход", 0),
         ],
         Tab::Nodes => &[
             ("↑↓ выбор", 1),
@@ -384,8 +384,8 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("x исключить", 3),
             ("e исключённые", 4),
             ("/ поиск", 3),
-            ("? справка", 0),
-            ("q выход", 0),
+            ("справка", 0),
+            ("выход", 0),
         ],
         Tab::Subscriptions => &[
             ("↑↓ выбор", 1),
@@ -393,22 +393,22 @@ fn normal_hints(app: &App) -> Vec<Seg> {
             ("m маски", 1),
             ("[ ] приоритет", 2),
             ("Enter ошибка", 2),
-            ("? справка", 0),
-            ("q выход", 0),
+            ("справка", 0),
+            ("выход", 0),
         ],
         Tab::Journal => &[
             ("↑↓ листать", 1),
             ("w предупреждения", 2),
             ("End к концу", 3),
-            ("? справка", 0),
-            ("q выход", 0),
+            ("справка", 0),
+            ("выход", 0),
         ],
         Tab::Settings => &[
             ("↑↓ выбор", 1),
             ("Enter изменить", 1),
             ("Пробел переключить", 2),
-            ("? справка", 0),
-            ("q выход", 0),
+            ("справка", 0),
+            ("выход", 0),
         ],
     };
     items
@@ -1064,7 +1064,7 @@ mod tests {
         let lines = screen(&mut app, 80, 20);
         assert!(lines[0].contains("● подключение…"), "{lines:?}");
         assert!(has_line(&lines, "данных от демона ещё нет"), "{lines:?}");
-        assert!(lines.last().unwrap().contains("q выход"));
+        assert!(lines.last().unwrap().contains("выход"));
 
         app.apply(Msg::Down {
             reason: "демон не запущен: сокета /run/raycat/raycat.sock нет".to_owned(),
@@ -1136,8 +1136,8 @@ mod tests {
             assert!(display_width(line) <= 44, "{line:?}");
         }
         assert!(lines[1].contains("1 Обзор"));
-        assert!(lines.last().unwrap().contains("? справка"));
-        assert!(lines.last().unwrap().contains("q выход"));
+        assert!(lines.last().unwrap().contains("справка"));
+        assert!(lines.last().unwrap().contains("выход"));
     }
 
     #[test]
@@ -1157,7 +1157,7 @@ mod tests {
             let lines = screen(&mut app, width, 20);
             let last = lines.last().unwrap();
             assert!(
-                last.contains("? справка") && last.contains("q выход"),
+                last.contains("справка") && last.contains("выход"),
                 "{width}: {last:?}"
             );
         }
@@ -1659,7 +1659,7 @@ mod tests {
             shown.join(" "),
             format!("Не удалось обновить подписки: {WRAPPED}")
         );
-        assert!(lines[23].contains("? справка"), "{lines:?}");
+        assert!(lines[23].contains("справка"), "{lines:?}");
     }
 
     #[test]
@@ -1674,7 +1674,7 @@ mod tests {
         assert_eq!(start, 16, "{lines:?}");
         assert!(lines[18].ends_with('…'), "{lines:?}");
         assert!(
-            lines[19].contains("? справка") && lines[19].contains("q выход"),
+            lines[19].contains("справка") && lines[19].contains("выход"),
             "{lines:?}"
         );
     }
@@ -1756,7 +1756,11 @@ mod tests {
             .iter()
             .position(|line| line.contains("Последние события"))
             .unwrap();
-        let bottom = top + lines[top..].iter().position(|line| line.starts_with('╰')).unwrap();
-        assert_eq!(bottom, 27, "{lines:?}");
+        let bottom = top
+            + lines[top..]
+                .iter()
+                .position(|line| line.starts_with('╰'))
+                .unwrap();
+        assert_eq!(bottom, 28, "{lines:?}");
     }
 }

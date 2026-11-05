@@ -3663,8 +3663,8 @@ mod tests {
         let sub = "[[subscription]]\nname = \"основная\"\nurl = \"https://sub.example.com/api/sub/AbCdEfGh1234\"\napp = \"happ\"\nplatform = \"windows\"\n";
         let env = Env::new();
         let config = Config::from_toml_str(sub, &env).unwrap();
-        let gateway = Config::from_toml_str(&format!("{sub}\n[mode]\ntype = \"gateway\"\n"), &env)
-            .unwrap();
+        let gateway =
+            Config::from_toml_str(&format!("{sub}\n[mode]\ntype = \"gateway\"\n"), &env).unwrap();
         let kill_switch = match gateway.mode {
             Mode::Gateway { kill_switch, .. } => kill_switch,
             Mode::Proxy { .. } => panic!("режим шлюза не разобран"),
@@ -3682,7 +3682,10 @@ mod tests {
         let actual = [
             (
                 Setting::RuDirect,
-                value_text(&SettingValue::Bool(config.routing.ru_direct), Setting::RuDirect),
+                value_text(
+                    &SettingValue::Bool(config.routing.ru_direct),
+                    Setting::RuDirect,
+                ),
             ),
             (
                 Setting::KillSwitch,
@@ -3692,11 +3695,11 @@ mod tests {
                 Setting::CheckInterval,
                 format_duration(config.selection.check_interval),
             ),
+            (Setting::Failures, config.selection.failures.to_string()),
             (
-                Setting::Failures,
-                config.selection.failures.to_string(),
+                Setting::SwitchGain,
+                format_duration(config.selection.switch_gain),
             ),
-            (Setting::SwitchGain, format_duration(config.selection.switch_gain)),
             (
                 Setting::ReturnDelay,
                 format_duration(config.selection.return_delay),

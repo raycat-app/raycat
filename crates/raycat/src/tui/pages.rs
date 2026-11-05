@@ -152,13 +152,21 @@ fn tunnel_panel(
     let title = vec![Seg::new("Туннель", Tone::Bold, 0)];
     let mut inner = canvas.boxed(x, y, width, height, title, border);
     let Some(status) = &app.status else {
-        inner.line(0, 0, vec![Seg::new("данных от демона ещё нет", Tone::Dim, 0)]);
+        inner.line(
+            0,
+            0,
+            vec![Seg::new("данных от демона ещё нет", Tone::Dim, 0)],
+        );
         return;
     };
     if let Some(node) = &status.node {
         let name = format!("► {}", display_name(&node.name, app.names));
         inner.line(0, 0, vec![Seg::new(name, Tone::Bold, 0)]);
-        let choice = if node.pinned { "закреплён" } else { "авто" };
+        let choice = if node.pinned {
+            "закреплён"
+        } else {
+            "авто"
+        };
         let mut segs = vec![
             Seg::new(
                 render::latency_text(node.latency_ms),
@@ -584,7 +592,8 @@ fn node_details(
         border,
     );
     scroll_rows(&mut inner, lines, &mut app.details_offset);
-    app.hits.push(Hit::new(x + 2, y + 2, pin_width, Target::Pin));
+    app.hits
+        .push(Hit::new(x + 2, y + 2, pin_width, Target::Pin));
     app.hits.push(Hit::new(
         x + 2 + pin_width + GAP,
         y + 2,
@@ -1255,13 +1264,7 @@ pub(super) fn settings(canvas: &mut Canvas<'_>, app: &mut App, top: usize, end: 
 
 /// Список настроек в рамке: разделы серым, строки с названием слева и значением справа.
 /// Выбранная строка закрашена на всю ширину панели.
-fn settings_list(
-    canvas: &mut Canvas<'_>,
-    app: &mut App,
-    top: usize,
-    width: usize,
-    height: usize,
-) {
+fn settings_list(canvas: &mut Canvas<'_>, app: &mut App, top: usize, width: usize, height: usize) {
     let rows = list_rows();
     let inner_rows = height - 2;
     // Прокрутка идёт по настройкам. Строк-разделителей и заголовков в списке всего
@@ -1313,10 +1316,7 @@ fn settings_list(
                     Tone::Dim
                 };
                 let (name_style, value_style) = if selected {
-                    (
-                        inner.selected_style(name_tone),
-                        inner.selected_style(tone),
-                    )
+                    (inner.selected_style(name_tone), inner.selected_style(tone))
                 } else {
                     (inner.style(name_tone), inner.style(tone))
                 };
