@@ -25,9 +25,9 @@ grep -q 'raycat не запущен' <<<"$health_output"
 version_output=$(docker run --rm --entrypoint "$xray" "$image" version)
 echo "$version_output"
 if [ "${XRAY_BUILD:-}" = noaes ]; then
-  go_version=$(sed -n 's/^go_version = "\(.*\)"/\1/p' versions.toml)
+  go_version=$(sed -n 's/^go_version = "\(.*\)"/\1/p' .github/versions.toml)
   grep -qF "(go${go_version}-noaes " <<<"$version_output"
-  noaes_version=$(sed -n '/^\[xray\.noaes\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' versions.toml)
+  noaes_version=$(sed -n '/^\[xray\.noaes\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' .github/versions.toml)
   grep -qF "Xray ${noaes_version} " <<<"$version_output"
 fi
 # Все конфиги проверяются одним запуском контейнера, а не по контейнеру на файл.

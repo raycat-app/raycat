@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Скачивает xray для linux/amd64 из versions.toml, проверяет sha256 и кладёт файл xray
+# Скачивает xray для linux/amd64 из .github/versions.toml, проверяет sha256 и кладёт файл xray
 # в каталог (по умолчанию текущий). Запускать из корня репозитория.
 #   bash .github/build/fetch-xray.sh [каталог]
 set -euo pipefail
 
 dest=${1:-.}
-version=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' versions.toml)
-sha256=$(sed -n 's/^x86_64 = "\(.*\)"/\1/p' versions.toml)
+version=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' .github/versions.toml)
+sha256=$(sed -n 's/^x86_64 = "\(.*\)"/\1/p' .github/versions.toml)
 test -n "$version" && test -n "$sha256"
 
 archive=Xray-linux-64.zip

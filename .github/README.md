@@ -11,7 +11,7 @@
 Нужные контейнеры, весь сервер или домашняя сеть выходят в интернет через неё.
 
 [![Версия](https://img.shields.io/github/v/release/raycat-app/raycat?include_prereleases&style=flat-square&label=версия&color=2d333b)](https://github.com/raycat-app/raycat/releases)
-[![Лицензия](https://img.shields.io/badge/лицензия-MIT-2d333b?style=flat-square)](LICENSE)
+[![Лицензия](https://img.shields.io/badge/лицензия-MIT-2d333b?style=flat-square)](../LICENSE)
 
 [Запуск](#запуск) · [Режимы](#режимы) · [Управление](#управление) · [Настройки](#настройки) · [Вопросы](#вопросы-и-ошибки) · [English](README.en.md)
 
@@ -144,7 +144,7 @@ sudo raycat tui
 
 ## Настройки
 
-Настройки лежат в одном файле: `/etc/raycat/config.toml` на сервере, `raycat/config.toml` в примере с Docker. Все ключи с пояснениями есть в [примере настроек](deploy/config.example.toml), при опечатке raycat подскажет правильное название.
+Настройки лежат в одном файле: `/etc/raycat/config.toml` на сервере, `raycat/config.toml` в примере с Docker. Все ключи с пояснениями есть в [примере настроек](../deploy/config.example.toml), при опечатке raycat подскажет правильное название.
 
 > [!TIP]
 > После правки выполните `sudo raycat reload`. Демон применит то, что можно применить на лету, а про остальное скажет, что нужен перезапуск.
@@ -245,4 +245,4 @@ gh attestation verify oci://ghcr.io/raycat-app/raycat:latest --repo raycat-app/r
 
 Вопросы задавайте в [обсуждениях](https://github.com/raycat-app/raycat/discussions), ошибки присылайте в [issues](https://github.com/raycat-app/raycat/issues). Никогда не публикуйте ссылку подписки и вывод `raycat identity`. Об уязвимостях сообщайте [приватно](https://github.com/raycat-app/raycat/security/advisories/new).
 
-Лицензия [MIT](LICENSE).
+Лицензия [MIT](../LICENSE).

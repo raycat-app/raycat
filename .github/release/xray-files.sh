@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Файлы xray для выпуска с новым xray: обычные сборки — официальные архивы XTLS по versions.toml
+# Файлы xray для выпуска с новым xray: обычные сборки — официальные архивы XTLS по .github/versions.toml
 # (sha256 проверяется), сборки -noaes для aarch64 и armv7 — той же стадией Dockerfile, что в CI.
 # Запускать из корня репозитория: нужны curl, unzip и docker с buildx.
 #   xray-files.sh <каталог результата>
@@ -15,14 +15,14 @@ mkdir -p "$out"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-version=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' versions.toml)
-[ -n "$version" ] || fail "в versions.toml нет версии xray"
+version=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' .github/versions.toml)
+[ -n "$version" ] || fail "в .github/versions.toml нет версии xray"
 
 for pair in x86_64:Xray-linux-64.zip aarch64:Xray-linux-arm64-v8a.zip armv7:Xray-linux-arm32-v7a.zip; do
   key=${pair%%:*}
   archive=${pair#*:}
-  sha256=$(sed -n "s/^$key = \"\(.*\)\"/\1/p" versions.toml)
-  [ -n "$sha256" ] || fail "в versions.toml нет суммы для $key"
+  sha256=$(sed -n "s/^$key = \"\(.*\)\"/\1/p" .github/versions.toml)
+  [ -n "$sha256" ] || fail "в .github/versions.toml нет суммы для $key"
   curl -fsSL -o "$tmp/$archive" "https://github.com/XTLS/Xray-core/releases/download/v${version}/${archive}"
   echo "$sha256  $tmp/$archive" | sha256sum -c -
   unzip -q -o "$tmp/$archive" xray -d "$tmp/$key"

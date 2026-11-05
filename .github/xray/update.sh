@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Записывает релиз Xray в versions.toml: версию и sha256 архивов linux (x86_64, aarch64, armv7)
+# Записывает релиз Xray в .github/versions.toml: версию и sha256 архивов linux (x86_64, aarch64, armv7)
 # в секции [xray], а также версию и коммит тега в секции [xray.noaes]: сборка -noaes идёт на той же
 # версии. Sha256 каждого архива должен совпасть со строкой SHA2-256 его .dgst. Меняются только
 # значения этих ключей, остальной файл остаётся как был. Ошибка до записи не трогает файл.
-#   update.sh <версия без v> <каталог с архивами и .dgst> <коммит тега v<версия>> [versions.toml]
+#   update.sh <версия без v> <каталог с архивами и .dgst> <коммит тега v<версия>> [файл versions.toml]
 set -euo pipefail
 
 version=${1:?не указана версия}
 dir=${2:?не указан каталог архивов}
 commit=${3:?не указан коммит тега}
-file=${4:-versions.toml}
+file=${4:-.github/versions.toml}
 
 fail() {
   echo "ОШИБКА: $*" >&2

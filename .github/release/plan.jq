@@ -10,7 +10,7 @@ def files: .files // [];
 def category:
   if breaking then "breaking"
   elif ((.labels // []) | any(. == "безопасность")) and (.subject | test("^fix(\\([^)]*\\))?:")) then "hotfix"
-  elif ((files | length) > 0) and (files | all(. == "versions.toml")) then "xray"
+  elif ((files | length) > 0) and (files | all(. == ".github/versions.toml")) then "xray"
   elif ((files | length) > 0)
        and (files | all(startswith("crates/emulation/profiles/") or startswith("crates/emulation/captures/")))
   then "emulation"

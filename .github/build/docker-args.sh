@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Печатает аргументы `docker build` из versions.toml: по строке на слово, чтобы читать
-# через mapfile. Запускать из корня репозитория.
+# Печатает аргументы `docker build` из .github/versions.toml: по строке на слово, чтобы читать
+# через mapfile. Первые два слова — путь к Dockerfile. Запускать из корня репозитория.
 #
 #   bash .github/build/docker-args.sh <ключ архитектуры> <архив xray> [release|noaes]
 #   mapfile -t args < <(bash .github/build/docker-args.sh aarch64 Xray-linux-arm64-v8a.zip noaes)
@@ -20,18 +20,18 @@ fail() {
 
 value() {
   local found
-  found=$(sed -n "s/^$1 = \"\(.*\)\"/\1/p" versions.toml)
+  found=$(sed -n "s/^$1 = \"\(.*\)\"/\1/p" .github/versions.toml)
   if [ -z "$found" ] || [ "$(printf '%s\n' "$found" | wc -l)" -ne 1 ]; then
-    fail "в versions.toml нет ровно одного ключа $1"
+    fail "в .github/versions.toml нет ровно одного ключа $1"
   fi
   printf '%s\n' "$found"
 }
 
 section() {
   local found
-  found=$(sed -n "/^\[$1\]\$/,/^\[/ s/^$2 = \"\(.*\)\"\$/\1/p" versions.toml)
+  found=$(sed -n "/^\[$1\]\$/,/^\[/ s/^$2 = \"\(.*\)\"\$/\1/p" .github/versions.toml)
   if [ -z "$found" ] || [ "$(printf '%s\n' "$found" | wc -l)" -ne 1 ]; then
-    fail "в versions.toml нет ровно одного ключа $2 в секции [$1]"
+    fail "в .github/versions.toml нет ровно одного ключа $2 в секции [$1]"
   fi
   printf '%s\n' "$found"
 }
@@ -46,6 +46,7 @@ case "$build" in
   *) fail "неизвестная сборка xray: $build" ;;
 esac
 
+printf '%s\n%s\n' -f deploy/Dockerfile
 arg XRAY_VERSION "$version"
 arg XRAY_ARCHIVE "$archive"
 arg XRAY_SHA256 "$(value "$key")"

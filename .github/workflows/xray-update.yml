@@ -1,6 +1,6 @@
 name: Обновление xray
 
-# Раз в час берёт самый новый релиз XTLS/Xray-core и, если он новее versions.toml, открывает
+# Раз в час берёт самый новый релиз XTLS/Xray-core и, если он новее .github/versions.toml, открывает
 # PR бота «build: xray <версия>»: версия и суммы архивов linux, а также версия и коммит тега в
 # секции [xray.noaes] (сборка noaes идёт на той же версии). Обязательные проверки бот запускает
 # сам и сливает PR, если они зелёные. Если что-то не вышло, заводится issue (одно на версию).
@@ -9,7 +9,7 @@ name: Обновление xray
 # PR которой закрыли без слияния, не предлагается снова. Версия только вперёд.
 #
 # Ручной запуск: version — конкретная версия без v (пусто — последняя), dry_run — только
-# собрать versions.toml в артефакт xray-update, без ветки и PR.
+# собрать .github/versions.toml в артефакт xray-update, без ветки и PR.
 #
 # События GITHUB_TOKEN не запускают другие workflow, поэтому обязательные проверки ruleset
 # («Итог» из ci.yml и «Заголовок PR» из pr-title.yml) бот запускает сам через workflow_dispatch
@@ -25,7 +25,7 @@ on:
         type: string
         default: ""
       dry_run:
-        description: Только собрать versions.toml в артефакт, без ветки и PR
+        description: Только собрать .github/versions.toml в артефакт, без ветки и PR
         type: boolean
         default: false
 
@@ -64,8 +64,8 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          current=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"$/\1/p' versions.toml)
-          [ -n "$current" ] || { echo "::error::версия xray в versions.toml не прочитана"; exit 1; }
+          current=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"$/\1/p' .github/versions.toml)
+          [ -n "$current" ] || { echo "::error::версия xray в .github/versions.toml не прочитана"; exit 1; }
           echo "current=$current" >> "$GITHUB_OUTPUT"
           gh api "repos/XTLS/Xray-core/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
           version=$(bash .github/xray/select.sh "$RUNNER_TEMP/releases.json" "$current" "$INPUT_VERSION")
@@ -83,7 +83,7 @@ jobs:
               echo "::notice::$decision"
             fi
           fi
-          [ -n "$version" ] || echo "::notice::новой версии xray нет (в versions.toml $current)"
+          [ -n "$version" ] || echo "::notice::новой версии xray нет (в .github/versions.toml $current)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Архивы и .dgst
         if: ${{ steps.target.outputs.version != '' }}
@@ -96,7 +96,7 @@ jobs:
               curl -fsSL --retry 3 -o "$RUNNER_TEMP/xray/$file" "https://github.com/XTLS/Xray-core/releases/download/v$VERSION/$file"
             done
           done
-      - name: versions.toml
+      - name: .github/versions.toml
         if: ${{ steps.target.outputs.version != '' }}
         env:
           VERSION: ${{ steps.target.outputs.version }}
@@ -115,7 +115,7 @@ jobs:
             echo "- релиз: https://github.com/XTLS/Xray-core/releases/tag/v$NEW"
             echo "- прогон: $RUN_URL"
             echo
-            echo "В versions.toml меняются версия и sha256 архивов linux (x86_64, aarch64, armv7), а также"
+            echo "В .github/versions.toml меняются версия и sha256 архивов linux (x86_64, aarch64, armv7), а также"
             echo "версия и коммит тега в [xray.noaes]: сборка -noaes собирается из той же версии xray."
             echo
             echo "Коммиты XTLS после v$OLD:"
@@ -126,7 +126,7 @@ jobs:
         if: ${{ steps.target.outputs.version != '' && inputs.dry_run }}
         run: |
           mkdir -p "$RUNNER_TEMP/dry-run"
-          cp versions.toml "$RUNNER_TEMP/dry-run/versions.toml"
+          cp .github/versions.toml "$RUNNER_TEMP/dry-run/versions.toml"
           cp "$RUNNER_TEMP/body.md" "$RUNNER_TEMP/dry-run/body.md"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ steps.target.outputs.version != '' && inputs.dry_run }}
@@ -141,14 +141,14 @@ jobs:
         env:
           VERSION: ${{ steps.target.outputs.version }}
         run: |
-          git diff --quiet -- versions.toml && { echo "::error::versions.toml не изменился"; exit 1; }
+          git diff --quiet -- .github/versions.toml && { echo "::error::.github/versions.toml не изменился"; exit 1; }
           branch="bot/xray-$VERSION"
           title="build: xray $VERSION"
           { echo "$title"; echo; cat "$RUNNER_TEMP/body.md"; } > "$RUNNER_TEMP/message.txt"
           git config user.name sleepyhead-dev
           git config user.email 184401951+sleepyhead-dev@users.noreply.github.com
           git switch -c "$branch"
-          git add versions.toml
+          git add .github/versions.toml
           git commit -q -F "$RUNNER_TEMP/message.txt"
           git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push --force origin "$branch"
           {

@@ -120,7 +120,7 @@ check "auto: без dev-сборок продвигать нечего" false "$
 
 {
   cm c1 "feat: возможность" "$SRC"
-  cm c2 "fix: ошибка" '["versions.toml"]'
+  cm c2 "fix: ошибка" '[".github/versions.toml"]'
 } >"$work/commits.jsonl"
 {
   bd v0.2.0-dev.1 c1 $((4 * DAY))
@@ -133,8 +133,8 @@ check "auto: смена версии xray не ждёт, сразу в stable" "
 } >"$work/builds.jsonl"
 check "auto: смена версии xray продвигается и с возрастом сборки больше суток" "true v0.2.0-dev.2 0.2.0" "$(plan --last 0.1.0 | summary)"
 {
-  cm c1 "chore: версия xray" '["versions.toml"]'
-  cm c2 "chore: версия и код" '["versions.toml","crates/raycat/src/main.rs"]'
+  cm c1 "chore: версия xray" '[".github/versions.toml"]'
+  cm c2 "chore: версия и код" '[".github/versions.toml","crates/raycat/src/main.rs"]'
 } >"$work/commits.jsonl"
 check "классы: версия xray отдельно, а с кодом — код" "xray,code" "$(plan --last 0.1.0 | jq -r '[.entries[].category] | join(",")')"
 check "сроки: версия xray 0 ч, с кодом 72 ч" "0,72" "$(plan --last 0.1.0 | jq -r '[.entries[].wait / 3600] | join(",")')"
@@ -206,7 +206,7 @@ check "hotfix не обходит breaking" false "$(plan --last 0.1.0 | jq -r .
 check "нет изменений: продвигать нечего" false "$(plan --last 0.1.0 | jq -r .promote)"
 
 {
-  cm c1 "chore: служебное" '["versions.toml"]'
+  cm c1 "chore: служебное" '[".github/versions.toml"]'
   cm c2 "fix: профиль" "$EMU"
   cm c3 "fix: профиль и захват" '["crates/emulation/profiles/a.toml","crates/emulation/captures/a.http"]'
   cm c4 "fix: профиль и код" '["crates/emulation/profiles/a.toml","crates/raycat/src/main.rs"]'
