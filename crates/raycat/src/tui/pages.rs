@@ -1133,13 +1133,7 @@ pub(super) fn settings(canvas: &mut Canvas<'_>, app: &mut App, top: usize, end: 
 
 /// Список настроек в рамке: разделы серым, строки с названием слева и значением справа.
 /// Выбранная строка закрашена на всю ширину панели.
-fn settings_list(
-    canvas: &mut Canvas<'_>,
-    app: &mut App,
-    top: usize,
-    width: usize,
-    height: usize,
-) {
+fn settings_list(canvas: &mut Canvas<'_>, app: &mut App, top: usize, width: usize, height: usize) {
     let rows = list_rows();
     let inner_rows = height - 2;
     // Прокрутка идёт по настройкам; заголовки разделов занимают строки сверх этого числа.
@@ -1185,10 +1179,7 @@ fn settings_list(
                     Tone::Dim
                 };
                 let (name_style, value_style) = if selected {
-                    (
-                        inner.selected_style(name_tone),
-                        inner.selected_style(tone),
-                    )
+                    (inner.selected_style(name_tone), inner.selected_style(tone))
                 } else {
                     (inner.style(name_tone), inner.style(tone))
                 };

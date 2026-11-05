@@ -167,7 +167,13 @@ fn header(canvas: &mut Canvas<'_>, app: &App) {
     let right = header_right(app, room);
     let right_width = display_width(&right);
     if right_width > 0 && left_end + GAP + right_width <= canvas.width {
-        canvas.put(canvas.width - right_width, 0, &right, right_width, Tone::Dim);
+        canvas.put(
+            canvas.width - right_width,
+            0,
+            &right,
+            right_width,
+            Tone::Dim,
+        );
     }
 }
 
@@ -460,10 +466,7 @@ fn keys_line(canvas: &mut Canvas<'_>, app: &mut App, y: usize, hints: &[Seg]) {
     let items: Vec<(&str, &str, u8)> = hints
         .iter()
         .map(|seg| {
-            let (key, desc) = seg
-                .text
-                .split_once(' ')
-                .unwrap_or((seg.text.as_str(), ""));
+            let (key, desc) = seg.text.split_once(' ').unwrap_or((seg.text.as_str(), ""));
             (key, desc, seg.priority)
         })
         .collect();
@@ -683,10 +686,7 @@ fn help_popup(canvas: &mut Canvas<'_>, app: &mut App) {
         }
     }
     lines.push((String::new(), Tone::Plain));
-    lines.push((
-        "► выбран   * закреплён вручную".to_owned(),
-        Tone::Dim,
-    ));
+    lines.push(("► выбран   * закреплён вручную".to_owned(), Tone::Dim));
     lines.push(("Любая клавиша закрывает справку".to_owned(), Tone::Dim));
     popup(canvas, app, "raycat tui: клавиши", &lines, &[]);
 }
@@ -712,7 +712,11 @@ fn exclude_popup(canvas: &mut Canvas<'_>, app: &mut App) {
     } else {
         "Исключить узел"
     };
-    let mut lines = wrapped(&exclude_summary(app, dialog), popup_text(canvas), Tone::Plain);
+    let mut lines = wrapped(
+        &exclude_summary(app, dialog),
+        popup_text(canvas),
+        Tone::Plain,
+    );
     lines.push((String::new(), Tone::Plain));
     lines.push((exclude_options(dialog), Tone::Bold));
     let buttons = [
@@ -939,7 +943,8 @@ mod tests {
     fn the_tab_row_names_every_tab_and_is_clickable() {
         let mut app = sample_app();
         let lines = screen(&mut app, 100, 30);
-        for word in ["1 Обзор", "2 Узлы", "3 Подписки", "4 Журнал", "5 Настройки"] {
+        for word in ["1 Обзор", "2 Узлы", "3 Подписки", "4 Журнал", "5 Настройки"]
+        {
             assert!(lines[1].contains(word), "{word}: {:?}", lines[1]);
         }
         assert!(
@@ -1403,7 +1408,7 @@ mod tests {
         let lines = rows(buffer);
         let y = lines
             .iter()
-            .position(|line| line.contains("Россия напрямую"))
+            .position(|line| line.starts_with("│ Россия напрямую"))
             .unwrap();
         let y = u16::try_from(y).unwrap();
         for x in 1..54 {
@@ -1452,7 +1457,8 @@ mod tests {
         let mut app = sample_app();
         on_settings(&mut app);
         let lines = screen(&mut app, 44, 30);
-        for word in ["Россия напрямую", "● вкл", "как у провайдера", "warn"] {
+        for word in ["Россия напрямую", "● вкл", "как у провайдера", "warn"]
+        {
             assert!(has_line(&lines, word), "{word}: {lines:?}");
         }
         assert!(!has_line(&lines, "из файла"), "{lines:?}");
@@ -1687,6 +1693,6 @@ mod tests {
         let lines = screen(&mut app, 80, 30);
         let shown = lines.iter().filter(|line| line.contains("событие")).count();
         assert!(shown > 5, "{lines:?}");
-        assert!(lines[27].starts_with('╰'), "{lines:?}");
+        assert!(lines[28].starts_with('╰'), "{lines:?}");
     }
 }

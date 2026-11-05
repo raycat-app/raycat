@@ -362,7 +362,12 @@ impl<'a> Canvas<'a> {
             }
             self.put_style(x, y + height - 1, &format!("╰{edge}╯"), width, border);
         }
-        self.sub(x + 2, y + 1, width.saturating_sub(4), height.saturating_sub(2))
+        self.sub(
+            x + 2,
+            y + 1,
+            width.saturating_sub(4),
+            height.saturating_sub(2),
+        )
     }
 
     /// Рамка на всю ширину строк `y..y + height` обычным цветом. Возвращает область внутри.
