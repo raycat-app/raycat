@@ -8,8 +8,8 @@ use raycat_proto::{Node, NodeStatus, SubscriptionStatus};
 use super::app::{App, Hit, InputMode, LEVELS, NODE_SPLIT, Setting, Shown, SortBy, Speed, Target};
 use super::canvas::{Canvas, GAP, Seg, wrap};
 use super::view::{
-    bar, delay_tone, is_expired, speed_label, speed_part, sub_phrase, subscription_title,
-    traffic_seg, tunnel_hint, xray_segs,
+    bar, brief_phrase, delay_tone, is_expired, speed_label, speed_part, sub_phrase,
+    subscription_title, traffic_seg, tunnel_hint, xray_segs,
 };
 use crate::names::{NameStyle, country_code, display_name, node_reason, node_reason_short};
 use crate::render;
@@ -38,12 +38,17 @@ const WINDOW_MAX: usize = 96;
 const TIME_WIDTH: usize = 8;
 const LEVEL_WIDTH: usize = 9;
 /// Колонки строки подписки на обзоре: имя, полоска с процентом, срок; состояние — справа.
+/// Имя сужается на узкой панели до `SUB_NAME_MIN`, срок пропадает, если не помещается.
 const SUB_NAME_WIDTH: usize = 14;
-const SUB_BAR_X: usize = SUB_NAME_WIDTH + GAP;
+const SUB_NAME_MIN: usize = 4;
 /// `██████████ 100%`: полоска, пробел и процент, всегда одной ширины.
 const SUB_BAR_WIDTH: usize = 15;
-const SUB_EXPIRY_X: usize = SUB_BAR_X + SUB_BAR_WIDTH + GAP;
-const SUB_EXPIRY_WIDTH: usize = 14;
+/// Самая длинная строка срока, например `до 05.11 · 23 дн`.
+const SUB_EXPIRY_WIDTH: usize = 17;
+/// Имя подписки в списке не уже этого, иначе состояние в списке не показывается.
+const SUB_LIST_NAME_MIN: usize = 6;
+/// Ниже этой ширины экрана колонка подписки в таблице узлов получает заголовок `Подп.`.
+const SUB_TITLE_SCREEN: usize = 80;
 /// Доля таблицы узлов, когда справа панель подробностей.
 const NODE_TABLE_PERCENT: usize = 70;
 
@@ -259,46 +264,83 @@ fn overview_subs(
         return;
     }
     let rows = inner.height;
-    for (row, sub) in subs.iter().enumerate().take(rows) {
-        sub_brief_row(&mut inner, row, sub, app.now, zone);
+    let phrases: Vec<(String, Tone)> = subs
+        .iter()
+        .take(rows)
+        .map(|sub| brief_phrase(sub, app.now, zone))
+        .collect();
+    let phrase_width = phrases
+        .iter()
+        .map(|(phrase, _)| display_width(phrase))
+        .max()
+        .unwrap_or(0);
+    let columns = brief_columns(inner.width, phrase_width);
+    for (row, (sub, (phrase, tone))) in subs.iter().zip(&phrases).enumerate() {
+        let shown = (phrase.as_str(), *tone);
+        sub_brief_row(&mut inner, row, sub, shown, columns, app.now, zone);
     }
 }
 
+/// Где стоят колонки строки подписки на обзоре, в символах от левого края панели. Одни и
+/// те же для всех строк панели.
+#[derive(Debug, Clone, Copy)]
+struct BriefColumns {
+    name: usize,
+    bar: usize,
+    /// Срок есть, только если он помещается между полоской и состоянием.
+    expiry: Option<usize>,
+}
+
+/// Колонки для панели шириной `width`, где состояние занимает `phrase_width`. Имя сужается
+/// раньше, чем пропадает срок.
+fn brief_columns(width: usize, phrase_width: usize) -> BriefColumns {
+    let phrase_at = width.saturating_sub(phrase_width);
+    let name = width
+        .saturating_sub(SUB_BAR_WIDTH + 2 * GAP + phrase_width)
+        .clamp(SUB_NAME_MIN, SUB_NAME_WIDTH);
+    let bar = name + GAP;
+    let expiry_at = bar + SUB_BAR_WIDTH + GAP;
+    let expiry = (expiry_at + SUB_EXPIRY_WIDTH + GAP <= phrase_at).then_some(expiry_at);
+    BriefColumns { name, bar, expiry }
+}
+
 /// Строка подписки на обзоре: имя, полоска и процент (или серое «без лимита»), срок и
-/// состояние справа. Каждая колонка стоит на своём месте, как и у соседних подписок.
+/// состояние справа. Колонки берутся из `columns`, поэтому у всех подписок они совпадают.
 fn sub_brief_row(
     inner: &mut Canvas<'_>,
     row: usize,
     sub: &SubscriptionStatus,
+    (phrase, tone): (&str, Tone),
+    columns: BriefColumns,
     now: u64,
     zone: &TimeZone,
 ) {
-    let name = truncate(&sub.name, SUB_NAME_WIDTH);
-    inner.put(0, row, &name, SUB_NAME_WIDTH, Tone::Bold);
+    let name = truncate(&sub.name, columns.name);
+    inner.put(0, row, &name, columns.name, Tone::Bold);
     match (sub.used_bytes, sub.total_bytes.filter(|total| *total > 0)) {
         (Some(used), Some(total)) => {
             let percent = u128::from(used) * 100 / u128::from(total);
-            let tone = match percent {
+            let bar_tone = match percent {
                 0..=70 => Tone::Green,
                 71..=90 => Tone::Yellow,
                 _ => Tone::Red,
             };
-            let text = format!("{} {percent:>3}%", bar(percent));
-            inner.put(SUB_BAR_X, row, &text, SUB_BAR_WIDTH, tone);
+            let text = format!("{} {percent}%", bar(percent));
+            inner.put(columns.bar, row, &text, SUB_BAR_WIDTH, bar_tone);
         }
-        (None, Some(_)) => inner.put(SUB_BAR_X, row, "—", SUB_BAR_WIDTH, Tone::Dim),
-        (_, None) => inner.put(SUB_BAR_X, row, "без лимита", SUB_BAR_WIDTH, Tone::Dim),
+        (None, Some(_)) => inner.put(columns.bar, row, "—", SUB_BAR_WIDTH, Tone::Dim),
+        (_, None) => inner.put(columns.bar, row, "без лимита", SUB_BAR_WIDTH, Tone::Dim),
     }
-    if let Some(expire) = sub.expire
+    if let Some(at) = columns.expiry
+        && let Some(expire) = sub.expire
         && !is_expired(sub, now)
     {
-        let (text, tone) = render::expiry_text(expire, now, zone);
-        inner.put(SUB_EXPIRY_X, row, &text, SUB_EXPIRY_WIDTH, tone);
+        let (text, expiry_tone) = render::expiry_short(expire, now, zone);
+        inner.put(at, row, &text, SUB_EXPIRY_WIDTH, expiry_tone);
     }
-    let (phrase, tone) = sub_phrase(sub, now, zone);
-    let phrase_width = display_width(&phrase);
-    let at = inner.width.saturating_sub(phrase_width);
-    inner.put(at, row, &phrase, phrase_width, tone);
+    let width = display_width(phrase);
+    let at = inner.width.saturating_sub(width);
+    inner.put(at, row, phrase, width, tone);
 }
 
 /// Последние события в рамке на всё оставшееся место: сколько строк помещается, столько и видно.
@@ -432,6 +474,11 @@ fn nodes_table(
     show_speed: bool,
 ) {
     let room = end - y0;
+    let sub_title = if canvas.width < SUB_TITLE_SCREEN {
+        "Подп."
+    } else {
+        "Подписка"
+    };
     // Внутри рамки: фильтры, заголовки колонок, затем строки.
     let rows = room.saturating_sub(FRAME + 2);
     app.set_rows(rows);
@@ -473,7 +520,7 @@ fn nodes_table(
             };
             inner.line(1, 0, vec![Seg::new(text, tone, 0)]);
         } else {
-            let cols = columns(&shown, &speed, width, app.names);
+            let cols = columns(&shown, &speed, width, app.names, sub_title);
             for (x, col_width, by) in draw_titles(&mut inner, 1, &cols, sort, descending) {
                 found.push(Hit::new(2 + x, y0 + 2, col_width, Target::Sort(by)));
             }
@@ -563,27 +610,42 @@ fn node_details(
     ));
 }
 
-/// Строка «подпись — значение»: подпись серым в колонке фиксированной ширины.
-fn pair(label: &str, value: &str, tone: Tone) -> Vec<Seg> {
-    vec![
-        Seg::new(pad(label, LABEL - GAP), Tone::Dim, 0),
-        Seg::new(value, tone, 0),
-    ]
+/// Строки «подпись — значение» в колонке фиксированной ширины: подпись серым, значение
+/// справа. Значение, которое не помещается, переносится под себя с тем же отступом.
+fn pair(label: &str, value: &str, tone: Tone, width: usize) -> Vec<Vec<Seg>> {
+    let room = width.saturating_sub(LABEL).max(1);
+    value_parts(value, room)
+        .into_iter()
+        .enumerate()
+        .map(|(index, part)| {
+            let lead = if index == 0 {
+                pad(label, LABEL - GAP)
+            } else {
+                " ".repeat(LABEL - GAP)
+            };
+            vec![Seg::new(lead, Tone::Dim, 0), Seg::new(part, tone, 0)]
+        })
+        .collect()
+}
+
+/// Части значения по ширине; пустое значение даёт одну пустую часть, чтобы подпись осталась.
+fn value_parts(value: &str, width: usize) -> Vec<String> {
+    let parts = wrap(value, width, usize::MAX);
+    if parts.is_empty() {
+        vec![String::new()]
+    } else {
+        parts
+    }
 }
 
 /// Строки панели подробностей узла: имя, кнопки, пары «подпись — значение», причина и
 /// ошибка только когда она есть, проверки по одной на строку и тег внизу серым.
 fn node_lines(node: &Node, app: &App, speed: Option<Speed>, width: usize) -> Vec<Vec<Seg>> {
     let (status_text, status_tone) = render::node_status_mark(node.status);
-    let selected = if node.selected {
-        "выбран"
-    } else {
-        "не выбран"
-    };
-    let choice = if node.pinned {
-        "закреплён вручную"
-    } else {
-        "автоматический выбор"
+    let choice = match (node.selected, node.pinned) {
+        (false, _) => "нет",
+        (true, true) => "закреплён",
+        (true, false) => "авто",
     };
     let country = country_code(&node.name).unwrap_or_else(|| "—".to_owned());
     let protocol = node.protocol.as_deref().unwrap_or("—");
@@ -598,23 +660,25 @@ fn node_lines(node: &Node, app: &App, speed: Option<Speed>, width: usize) -> Vec
             Seg::new("[t] тест скорости", Tone::Bold, 0),
             Seg::new("[Esc] назад", Tone::Dim, 1),
         ],
-        pair("Подписка", &node.subscription, Tone::Plain),
-        pair("Страна", &country, Tone::Plain),
-        pair("Статус", status_text, status_tone),
-        pair("Задержка", &latency, delay_tone(node.latency_ms)),
-        pair("Сбои", &node.failures.to_string(), Tone::Plain),
-        pair("Выбор", &format!("{selected}, {choice}"), Tone::Plain),
-        pair("Протокол", protocol, Tone::Plain),
-        pair("Транспорт", transport, Tone::Plain),
-        pair("Безопасность", security, Tone::Plain),
-        pair("Трафик", &traffic, Tone::Dim),
     ];
+    lines.extend(pair("Подписка", &node.subscription, Tone::Plain, width));
+    lines.extend(pair("Страна", &country, Tone::Plain, width));
+    lines.extend(pair("Статус", status_text, status_tone, width));
+    lines.extend(pair("Задержка", &latency, delay_tone(node.latency_ms), width));
+    lines.extend(pair("Сбои", &node.failures.to_string(), Tone::Plain, width));
+    lines.extend(pair("Выбор", choice, Tone::Plain, width));
+    lines.extend(pair("Протокол", protocol, Tone::Plain, width));
+    lines.extend(pair("Транспорт", transport, Tone::Plain, width));
+    lines.extend(pair("Безопасность", security, Tone::Plain, width));
+    lines.extend(pair("Трафик", &traffic, Tone::Dim, width));
     if let Some(speed) = speed {
-        let text = format!("↓ {} ↑ {}", speed_part(speed.down), speed_part(speed.up));
-        lines.push(pair("Скорость", &text, Tone::Plain));
+        let down = speed_part(speed.down);
+        let up = speed_part(speed.up);
+        lines.extend(pair("Скорость ↓", &down, Tone::Plain, width));
+        lines.extend(pair("Скорость ↑", &up, Tone::Plain, width));
     }
     if let Some(reason) = node.last_error.as_deref().and_then(node_reason) {
-        lines.push(pair("Причина", reason, Tone::Red));
+        lines.extend(pair("Причина", reason, Tone::Red, width));
     }
     lines.push(vec![Seg::new("Последние проверки:", Tone::Dim, 0)]);
     lines.extend(check_rows(node, app.now));
@@ -712,7 +776,7 @@ struct Col {
     right: bool,
 }
 
-fn specs(nodes: &[&Node], speed: &str, style: NameStyle) -> Vec<Spec> {
+fn specs(nodes: &[&Node], speed: &str, style: NameStyle, sub_title: &'static str) -> Vec<Spec> {
     let (mut sub, mut name, mut reason) = (0_usize, 0_usize, 0_usize);
     for node in nodes {
         sub = sub.max(display_width(&node.subscription));
@@ -724,9 +788,10 @@ fn specs(nodes: &[&Node], speed: &str, style: NameStyle) -> Vec<Spec> {
                 .map_or(0, display_width),
         );
     }
-    // Имя — по самому длинному имени, но не шире 80; подписка — по своему содержимому.
+    // Имя — по самому длинному имени, но не шире 80; подписка — по содержимому, но не уже
+    // своего заголовка.
     let name = name.clamp(4, 80);
-    let sub = sub.clamp(2, 20);
+    let sub = sub.clamp(display_width(sub_title), 20);
     let reason = reason.min(REASON_MAX);
     let speed_width = if speed.is_empty() {
         0
@@ -745,7 +810,7 @@ fn specs(nodes: &[&Node], speed: &str, style: NameStyle) -> Vec<Spec> {
         spec(Kind::Name, "Узел", name.min(12), name, false),
         spec(Kind::Status, "Статус", STATUS_WIDTH, STATUS_WIDTH, false),
         spec(Kind::Latency, "Задержка", 10, 10, true),
-        spec(Kind::Sub, "Подписка", sub, sub, false),
+        spec(Kind::Sub, sub_title, sub, sub, false),
         spec(Kind::Failures, "Сбои", 5, 5, true),
         spec(Kind::Reason, "Причина", reason.min(12), reason, false),
         spec(Kind::Speed, "Скорость", speed_width, speed_width, false),
@@ -754,10 +819,16 @@ fn specs(nodes: &[&Node], speed: &str, style: NameStyle) -> Vec<Spec> {
 
 /// Берёт колонки, пока помещаются минимальные ширины, и раздаёт остаток сначала имени,
 /// потом причине. Подписка занимает ровно свою ширину.
-fn columns(nodes: &[&Node], speed: &str, width: usize, style: NameStyle) -> Vec<Col> {
+fn columns(
+    nodes: &[&Node],
+    speed: &str,
+    width: usize,
+    style: NameStyle,
+    sub_title: &'static str,
+) -> Vec<Col> {
     let mut chosen: Vec<(Spec, usize)> = Vec::new();
     let mut used = 0;
-    for spec in specs(nodes, speed, style) {
+    for spec in specs(nodes, speed, style, sub_title) {
         if spec.natural == 0 {
             continue;
         }
@@ -925,22 +996,10 @@ pub(super) fn subscriptions(
     end: usize,
     zone: &TimeZone,
 ) {
-    let buttons = vec![
-        (
-            "[u] Обновить".to_owned(),
-            Tone::Bold,
-            Some(Target::UpdateSub),
-        ),
-        ("[m] Маски".to_owned(), Tone::Bold, Some(Target::SubMasks)),
-        ("[ выше".to_owned(), Tone::Plain, Some(Target::SubUp)),
-        ("ниже ]".to_owned(), Tone::Plain, Some(Target::SubDown)),
-    ];
-    chips(canvas, app, top, buttons);
-    let y0 = top + 1;
-    if y0 >= end {
+    if top >= end {
         return;
     }
-    let room = end - y0;
+    let room = end - top;
     let count = app
         .status
         .as_ref()
@@ -949,15 +1008,15 @@ pub(super) fn subscriptions(
     let selected = app.sub_cursor;
     if canvas.width >= SPLIT_MIN {
         let left = canvas.width * 55 / 100;
-        let found = sub_list(canvas, app, (0, y0, left, room), selected);
+        let found = sub_list(canvas, app, (0, top, left, room), selected, zone);
         app.hits.extend(found);
-        let details = (left, y0, canvas.width - left, room);
+        let details = (left, top, canvas.width - left, room);
         sub_details(canvas, app, details, selected, zone);
     } else {
         let list_rows = (count.max(1) + FRAME).min(room);
-        let found = sub_list(canvas, app, (0, y0, canvas.width, list_rows), selected);
+        let found = sub_list(canvas, app, (0, top, canvas.width, list_rows), selected, zone);
         app.hits.extend(found);
-        let panel_top = y0 + list_rows;
+        let panel_top = top + list_rows;
         if end > panel_top + FRAME {
             let details = (0, panel_top, canvas.width, end - panel_top);
             sub_details(canvas, app, details, selected, zone);
@@ -965,13 +1024,14 @@ pub(super) fn subscriptions(
     }
 }
 
-/// Список подписок: имя слева, число живых узлов справа; выбранная строка на всю ширину.
-/// `area` — x, y, ширина и высота панели.
+/// Список подписок: имя слева, состояние одним словом цветом и число живых узлов справа;
+/// выбранная строка на всю ширину. `area` — x, y, ширина и высота панели.
 fn sub_list(
     canvas: &mut Canvas<'_>,
     app: &App,
     area: (usize, usize, usize, usize),
     selected: usize,
+    zone: &TimeZone,
 ) -> Vec<Hit> {
     let (x, y, width, height) = area;
     let subs: &[SubscriptionStatus] = match &app.status {
@@ -998,32 +1058,76 @@ fn sub_list(
         return Vec::new();
     }
     let inner_width = inner.width;
+    let rows: Vec<(&SubscriptionStatus, String, (String, Tone))> = subs
+        .iter()
+        .take(inner_rows)
+        .map(|sub| {
+            let alive = app
+                .nodes
+                .iter()
+                .filter(|node| node.subscription == sub.name && node.status == NodeStatus::Alive)
+                .count();
+            let value = format!("узлов {alive}/{}", sub.nodes);
+            (sub, value, list_status(sub, app.now, zone))
+        })
+        .collect();
+    let value_width = rows
+        .iter()
+        .map(|(_, value, _)| display_width(value))
+        .max()
+        .unwrap_or(0);
+    let status_width = rows
+        .iter()
+        .map(|(_, _, (status, _))| display_width(status))
+        .max()
+        .unwrap_or(0);
+    // Состояние стоит колонкой левее чисел узлов; если на имя не остаётся места, его нет.
+    let status_x = inner_width.saturating_sub(value_width + GAP + status_width);
+    let show_status = status_x >= SUB_LIST_NAME_MIN + GAP;
     let mut found = Vec::new();
-    for (index, sub) in subs.iter().enumerate().take(inner_rows) {
+    for (index, (sub, value, (status, status_tone))) in rows.iter().enumerate() {
         let is_selected = index == selected;
-        let alive = app
-            .nodes
-            .iter()
-            .filter(|node| node.subscription == sub.name && node.status == NodeStatus::Alive)
-            .count();
-        let value = format!("узлов {alive}/{}", sub.nodes);
-        let value_width = display_width(&value);
-        let value_x = inner_width.saturating_sub(value_width);
-        let name_room = value_x.saturating_sub(1);
+        let row_width = display_width(value);
+        let value_x = inner_width.saturating_sub(row_width);
+        let name_room = if show_status {
+            status_x.saturating_sub(GAP)
+        } else {
+            value_x.saturating_sub(GAP)
+        };
         let name = truncate(&sub.name, name_room);
-        let (name_style, value_style) = if is_selected {
+        let (name_style, value_style, status_style) = if is_selected {
             (
                 inner.selected_style(Tone::Bold),
                 inner.selected_style(Tone::Plain),
+                inner.selected_style(*status_tone),
             )
         } else {
-            (inner.style(Tone::Bold), inner.style(Tone::Plain))
+            (
+                inner.style(Tone::Bold),
+                inner.style(Tone::Plain),
+                inner.style(*status_tone),
+            )
         };
         inner.put_style(0, index, &name, name_room, name_style);
-        inner.put_style(value_x, index, &value, value_width, value_style);
+        if show_status {
+            inner.put_style(status_x, index, status, status_width, status_style);
+        }
+        inner.put_style(value_x, index, value, row_width, value_style);
         found.push(Hit::new(x, y + 1 + index, width, Target::SubRow(index)));
     }
     found
+}
+
+/// Состояние подписки в списке одним словом: истёкшая, с ошибкой обновления или как на
+/// обзоре.
+fn list_status(sub: &SubscriptionStatus, now: u64, zone: &TimeZone) -> (String, Tone) {
+    if is_expired(sub, now) {
+        ("истекла".to_owned(), Tone::Red)
+    } else if sub.last_error.is_some() {
+        ("нет связи".to_owned(), Tone::Red)
+    } else {
+        sub_phrase(sub, now, zone)
+    }
 }
 
 /// Подробности выбранной подписки: пары «подпись — значение», затем объявление провайдера
@@ -1049,11 +1153,10 @@ fn sub_details(
         .iter()
         .filter(|node| node.subscription == sub.name && node.status == NodeStatus::Alive)
         .count();
-    let provider = sub
-        .title
-        .as_deref()
-        .filter(|title| !title.is_empty())
-        .unwrap_or("не указан");
+    let provider = match sub.title.as_deref().filter(|title| !title.is_empty()) {
+        Some(title) => display_name(title, app.names),
+        None => "не указан".to_owned(),
+    };
     let (traffic, traffic_tone) = match sub.used_bytes {
         Some(used) => {
             let seg = traffic_seg(used, sub.total_bytes);
@@ -1088,44 +1191,44 @@ fn sub_details(
     let emulation = format!("{} · {}", sub.app, sub.platform);
     let cut = sub.cut.to_string();
     let alive_text = format!("{alive} из {}", sub.nodes);
-    detail(&mut inner, 0, "Провайдер", provider, Tone::Plain);
-    detail(&mut inner, 1, "Эмуляция", &emulation, Tone::Dim);
-    detail(&mut inner, 2, "Трафик", &traffic, traffic_tone);
-    detail(&mut inner, 3, "Срок", &expiry, expiry_tone);
-    detail(&mut inner, 4, "Обновление", &interval, Tone::Plain);
-    detail(&mut inner, 5, "Обновлена", &updated, Tone::Plain);
-    detail(&mut inner, 6, "Узлов живых", &alive_text, Tone::Plain);
-    detail(&mut inner, 7, "Отсечено масками", &cut, Tone::Plain);
-    detail(&mut inner, 8, "Ссылка", &sub.url, Tone::Dim);
-    detail(&mut inner, 9, "Состояние", &phrase, phrase_tone);
-    let mut lines: Vec<Vec<Seg>> = announce_lines(sub, inner_width);
+    let mut row = 0;
+    row += detail(&mut inner, row, "Провайдер", &provider, Tone::Plain);
+    row += detail(&mut inner, row, "Эмуляция", &emulation, Tone::Dim);
+    row += detail(&mut inner, row, "Трафик", &traffic, traffic_tone);
+    row += detail(&mut inner, row, "Срок", &expiry, expiry_tone);
+    row += detail(&mut inner, row, "Обновление", &interval, Tone::Plain);
+    row += detail(&mut inner, row, "Обновлена", &updated, Tone::Plain);
+    row += detail(&mut inner, row, "Узлов живых", &alive_text, Tone::Plain);
+    row += detail(&mut inner, row, "Отсечено масками", &cut, Tone::Plain);
+    row += detail(&mut inner, row, "Ссылка", &sub.url, Tone::Dim);
+    row += detail(&mut inner, row, "Состояние", &phrase, phrase_tone);
+    let mut rest: Vec<Vec<Seg>> = match &sub.announce {
+        Some(announce) => announce_lines(&display_name(announce, app.names), inner_width),
+        None => Vec::new(),
+    };
     match &sub.last_error {
         Some(error) if app.details => {
-            lines.push(vec![Seg::new("Ошибка полностью:", Tone::Red, 0)]);
+            rest.push(vec![Seg::new("Ошибка полностью:", Tone::Red, 0)]);
             for line in wrap(error, inner_width, 4) {
-                lines.push(vec![Seg::new(line, Tone::Red, 0)]);
+                rest.push(vec![Seg::new(line, Tone::Red, 0)]);
             }
         }
-        Some(_) => lines.push(vec![Seg::new(
+        Some(_) => rest.push(vec![Seg::new(
             "Ошибка при обновлении: Enter покажет текст полностью",
             Tone::Red,
             0,
         )]),
-        None => lines.push(vec![Seg::new("Ошибок нет", Tone::Dim, 0)]),
+        None => rest.push(vec![Seg::new("Ошибок нет", Tone::Dim, 0)]),
     }
-    let rows = inner.height;
-    for (row, segs) in lines.into_iter().take(rows.saturating_sub(10)).enumerate() {
-        inner.line(10 + row, 0, segs);
+    for (offset, segs) in rest.into_iter().enumerate() {
+        inner.line(row + offset, 0, segs);
     }
 }
 
-/// Объявление провайдера из последнего ответа: сначала заголовок, потом текст с переносом.
-fn announce_lines(sub: &SubscriptionStatus, width: usize) -> Vec<Vec<Seg>> {
-    let Some(announce) = &sub.announce else {
-        return Vec::new();
-    };
+/// Объявление провайдера: сначала заголовок, потом текст с переносом.
+fn announce_lines(text: &str, width: usize) -> Vec<Vec<Seg>> {
     let mut lines = vec![vec![Seg::new("Объявление провайдера:", Tone::Plain, 0)]];
-    for line in wrap(announce, width, usize::MAX) {
+    for line in wrap(text, width, usize::MAX) {
         lines.push(vec![Seg::new(line, Tone::Dim, 0)]);
     }
     lines
@@ -1138,18 +1241,10 @@ pub(super) fn journal(
     end: usize,
     zone: &TimeZone,
 ) {
-    let label = if app.journal_warnings {
-        "[w] Только предупреждения: да"
-    } else {
-        "[w] Только предупреждения: нет"
-    };
-    let items = vec![(label.to_owned(), Tone::Bold, Some(Target::WarningsToggle))];
-    chips(canvas, app, top, items);
-    let y0 = top + 1;
-    if y0 >= end {
+    if top >= end {
         return;
     }
-    let room = end - y0;
+    let room = end - top;
     let capacity = room.saturating_sub(FRAME);
     let (lines, back) = journal_lines(app, zone, canvas.width.saturating_sub(4), capacity);
     app.journal_back = back;
@@ -1157,7 +1252,10 @@ pub(super) fn journal(
     if is_utc(zone) {
         title.push(Seg::new("время UTC", Tone::Dim, 1));
     }
-    let mut inner = canvas.framed(y0, room, title);
+    if app.journal_warnings {
+        title.push(Seg::new("только предупреждения", Tone::Header, 0));
+    }
+    let mut inner = canvas.framed(top, room, title);
     if lines.is_empty() {
         let text = if app.journal_warnings {
             "предупреждений нет"
@@ -1406,21 +1504,21 @@ fn settings_details(
     }
     row += 1;
     let (value, tone) = list_value(setting, &shown);
-    detail(&mut inner, row, "Сейчас", &value, tone);
-    detail(
+    row += detail(&mut inner, row, "Сейчас", &value, tone);
+    row += detail(
         &mut inner,
-        row + 1,
+        row,
         "По умолчанию",
         setting.default_text(),
         Tone::Plain,
     );
-    detail(&mut inner, row + 2, "Откуда", &shown.source, Tone::Plain);
-    row += 4;
+    row += detail(&mut inner, row, "Откуда", &shown.source, Tone::Plain);
+    row += 1;
     if app.input == InputMode::Field {
         let text = format!("[{}█]", app.field);
-        detail(&mut inner, row, "Новое значение", &text, Tone::Bold);
-        inner.line(row + 1, 0, vec![Seg::new(FIELD_HINT, Tone::Dim, 0)]);
-        row += 2;
+        row += detail(&mut inner, row, "Новое значение", &text, Tone::Bold);
+        inner.line(row, 0, vec![Seg::new(FIELD_HINT, Tone::Dim, 0)]);
+        row += 1;
     } else {
         inner.line(row, 0, vec![Seg::new(action_hint(setting), Tone::Dim, 0)]);
         row += 1;
@@ -1464,11 +1562,16 @@ fn settings_details(
     }
 }
 
-/// Строка панели подробностей: подпись слева, значение с отступом.
-fn detail(inner: &mut Canvas<'_>, row: usize, label: &str, value: &str, tone: Tone) {
+/// Строки панели подробностей: подпись слева, значение с отступом. Значение, которое не
+/// помещается, переносится на следующие строки под ним. Возвращает число занятых строк.
+fn detail(inner: &mut Canvas<'_>, row: usize, label: &str, value: &str, tone: Tone) -> usize {
+    let room = inner.width.saturating_sub(LABEL).max(1);
+    let parts = value_parts(value, room);
     inner.put(0, row, &pad(label, LABEL), LABEL, Tone::Dim);
-    let room = inner.width.saturating_sub(LABEL);
-    inner.put(LABEL, row, value, room, tone);
+    for (index, part) in parts.iter().enumerate() {
+        inner.put(LABEL, row + index, part, room, tone);
+    }
+    parts.len()
 }
 
 /// Варианты уровня журнала в строке: текущий в скобках, каждый нажимается отдельно.
@@ -1540,5 +1643,31 @@ fn settings_text(canvas: &mut Canvas<'_>, app: &App, top: usize) {
     ];
     for (row, (text, tone)) in lines.into_iter().enumerate() {
         canvas.line(top + row, 0, vec![Seg::new(text, tone, 0)]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_overview_columns_do_not_overlap_in_40_62_and_80_column_panels() {
+        // Ширина внутри рамки: у панели 40, 62 и 80 столбцов по две ячейки рамки с каждой стороны.
+        for width in [38, 60, 78] {
+            for phrase_width in [8, 15] {
+                let columns = brief_columns(width, phrase_width);
+                let phrase_at = width - phrase_width;
+                assert!(
+                    columns.bar + SUB_BAR_WIDTH + GAP <= phrase_at,
+                    "{width} {phrase_width}: {columns:?}"
+                );
+                if let Some(expiry) = columns.expiry {
+                    assert!(
+                        expiry + SUB_EXPIRY_WIDTH + GAP <= phrase_at,
+                        "{width} {phrase_width}: {columns:?}"
+                    );
+                }
+            }
+        }
     }
 }
