@@ -1,12 +1,13 @@
-//! Каркас экрана: строка вкладок, шапка с состоянием и текущим узлом, баннер связи,
-//! строка уведомлений и подсказок. Содержимое вкладок — в `pages`.
+//! Каркас экрана: шапка с состоянием туннеля, строка вкладок, баннер связи, строка
+//! состояния и строка клавиш, окна поверх экрана. Содержимое вкладок — в `pages`.
 
 use jiff::tz::TimeZone;
 use ratatui::Frame;
+use ratatui::crossterm::event::KeyCode;
 use raycat_proto::{SubscriptionStatus, XrayStatus};
 
 use super::app::{App, ExcludeDialog, Hit, InputMode, Link, Tab, Target};
-use super::canvas::{Canvas, GAP, Palette, Seg, fit, highlight, wrap};
+use super::canvas::{Canvas, GAP, Palette, Seg, fit, wrap};
 use super::pages;
 use crate::render;
 use crate::term::{Tone, display_width, pad};
@@ -23,6 +24,13 @@ const BAR_CELLS: usize = 10;
 const MIN_SPEED: u64 = 1_000;
 /// Строки, которые всегда остаются телу вкладки.
 pub(super) const BODY_MIN: usize = 3;
+/// Шапка и строка вкладок вверху экрана.
+const HEAD_ROWS: usize = 2;
+/// Окно не шире этого числа ячеек, даже на широком экране.
+const POPUP_MAX: usize = 96;
+/// Ширина колонки клавиш в справке.
+const KEY_COLUMN: usize = 12;
+const SEPARATOR: &str = " · ";
 
 const HELP: [(&str, &str); 20] = [
     ("1–5  Tab", "вкладки; Shift+Tab и ← → — перелистывание"),
@@ -93,19 +101,15 @@ fn compose(canvas: &mut Canvas<'_>, app: &mut App, zone: &TimeZone) {
         canvas.line(0, 0, vec![Seg::new(text, Tone::Yellow, 0)]);
         return;
     }
-    if app.input == InputMode::Help {
-        help(canvas);
-        return;
-    }
     tabs(canvas, app);
     let status = status_rows(app, canvas.width);
-    // Строки состояния и строка подсказок внизу; тело вкладки занимает всё выше них.
-    let bottom_rows = status.len().max(1) + 1;
+    // Строки состояния и строка клавиш внизу; тело вкладки занимает всё между шапкой и ними.
+    let bottom_rows = status.len() + 1;
     let room = canvas.height.saturating_sub(bottom_rows + BODY_MIN);
-    let mut y = 1;
+    let mut y = HEAD_ROWS;
     y += banner(canvas, app, y, room.saturating_sub(y));
     canvas.set_dim(matches!(app.link, Link::Down { .. }));
-    y += header(canvas, app, y, room.saturating_sub(y));
+    header(canvas, app);
 
     let end = canvas.height.saturating_sub(bottom_rows);
     if y < end {
@@ -119,22 +123,71 @@ fn compose(canvas: &mut Canvas<'_>, app: &mut App, zone: &TimeZone) {
     }
     canvas.set_dim(false);
     bottom(canvas, app, status);
+    overlay(canvas, app);
 }
 
-/// Вкладки в первой строке; каждая — область нажатия.
+/// Вкладки во второй строке; каждая — область нажатия. Активная — плашкой акцента.
 fn tabs(canvas: &mut Canvas<'_>, app: &mut App) {
     let mut x = 0;
     for (index, tab) in Tab::ALL.iter().enumerate() {
-        let label = format!(" {} {} ", index + 1, tab.title());
+        let number = index + 1;
+        let title = tab.title();
+        let label = format!(" {number} {title} ");
         let width = display_width(&label);
         if *tab == app.tab {
-            canvas.put_style(x, 0, &label, width, highlight());
+            let style = canvas.accent_badge();
+            canvas.put_style(x, 1, &label, width, style);
         } else {
-            canvas.put(x, 0, &label, width, Tone::Plain);
+            let digit = format!(" {number} ");
+            let digit_width = display_width(&digit);
+            canvas.put(x, 1, &digit, digit_width, Tone::Dim);
+            let name = format!("{title} ");
+            canvas.put(x + digit_width, 1, &name, width - digit_width, Tone::Plain);
         }
-        app.hits.push(Hit::new(x, 0, width, Target::Tab(*tab)));
+        app.hits.push(Hit::new(x, 1, width, Target::Tab(*tab)));
         x += width + 1;
     }
+}
+
+/// Шапка в первой строке: название и состояние туннеля плашками, справа серым режим,
+/// выключатель и время работы. Текущий узел здесь не показывается.
+fn header(canvas: &mut Canvas<'_>, app: &App) {
+    let name = " raycat ";
+    let name_width = display_width(name);
+    let badge = canvas.accent_badge();
+    canvas.put_style(0, 0, name, name_width, badge);
+    let state = tunnel_seg(app);
+    let plaque = format!(" {} ", state.text);
+    let plaque_width = display_width(&plaque);
+    let left = name_width + 1;
+    let style = canvas.plaque(state.tone);
+    canvas.put_style(left, 0, &plaque, plaque_width, style);
+    let left_end = left + plaque_width;
+    let room = canvas.width.saturating_sub(left_end + GAP);
+    let right = header_right(app, room);
+    let right_width = display_width(&right);
+    if right_width > 0 && left_end + GAP + right_width <= canvas.width {
+        canvas.put(canvas.width - right_width, 0, &right, right_width, Tone::Dim);
+    }
+}
+
+/// Серая часть шапки: режим, выключатель и время работы. Что не помещается, уходит первым.
+fn header_right(app: &App, room: usize) -> String {
+    let Some(status) = &app.status else {
+        return String::new();
+    };
+    let mut segs = vec![Seg::new(render::mode_name(status.mode), Tone::Dim, 0)];
+    if let Some(on) = status.kill_switch {
+        let state = if on { "вкл" } else { "выкл" };
+        segs.push(Seg::new(format!("kill switch {state}"), Tone::Dim, 1));
+    }
+    let uptime = status.uptime_secs + app.now.saturating_sub(app.status_at);
+    segs.push(Seg::new(render::span(uptime), Tone::Dim, 2));
+    let kept = fit(segs, room, display_width(SEPARATOR));
+    kept.iter()
+        .map(|seg| seg.text.as_str())
+        .collect::<Vec<_>>()
+        .join(SEPARATOR)
 }
 
 fn banner(canvas: &mut Canvas<'_>, app: &App, y0: usize, limit: usize) -> usize {
@@ -175,15 +228,6 @@ fn banner(canvas: &mut Canvas<'_>, app: &App, y0: usize, limit: usize) -> usize 
     count
 }
 
-/// Общая строка состояния. Узел, задержка и скорость — в карточке обзора.
-fn header(canvas: &mut Canvas<'_>, app: &App, y: usize, limit: usize) -> usize {
-    if limit == 0 {
-        return 0;
-    }
-    header_top(canvas, app, y);
-    1
-}
-
 /// Состояние туннеля: по нему видно, идёт ли трафик через VPN. Связь с демоном — отдельно,
 /// без неё состояния туннеля нет.
 pub(super) fn tunnel_seg(app: &App) -> Seg {
@@ -214,31 +258,6 @@ pub(super) fn xray_segs(xray: &XrayStatus) -> Vec<Seg> {
         segs.push(Seg::new(text, Tone::Yellow, 1));
     }
     segs
-}
-
-fn header_top(canvas: &mut Canvas<'_>, app: &App, y: usize) {
-    let mut segs = vec![Seg::new("raycat", Tone::Bold, 0)];
-    if let Some(status) = &app.status {
-        segs.push(Seg::new(render::mode_name(status.mode), Tone::Plain, 0));
-    }
-    segs.push(tunnel_seg(app));
-    if let Some(status) = &app.status {
-        segs.extend(xray_segs(&status.xray));
-        if let Some(on) = status.kill_switch {
-            let tone = if on { Tone::Green } else { Tone::Dim };
-            segs.push(Seg::new("kill switch ●", tone, 0));
-        }
-    }
-    let end = canvas.chain(y, 0, " · ", segs, canvas.width);
-    let Some(status) = &app.status else {
-        return;
-    };
-    let uptime = status.uptime_secs + app.now.saturating_sub(app.status_at);
-    let text = format!("время работы {}", render::span(uptime));
-    let width = display_width(&text);
-    if end + GAP + width <= canvas.width {
-        canvas.put(canvas.width - width, y, &text, width, Tone::Dim);
-    }
 }
 
 /// Без данных задержка тусклая, иначе цвет по порогам из `render`.
@@ -329,7 +348,7 @@ pub(super) fn sub_phrase(sub: &SubscriptionStatus, now: u64, zone: &TimeZone) ->
     ("работает".to_owned(), Tone::Green)
 }
 
-/// Подсказки «клавиша описание»: клавиша жирным, описание тусклым.
+/// Подсказки «клавиша описание»: клавиша в плашке, описание обычным текстом.
 fn normal_hints(app: &App) -> Vec<Seg> {
     let items: &[(&str, u8)] = match app.tab {
         Tab::Overview => &[
@@ -392,21 +411,85 @@ fn normal_hints(app: &App) -> Vec<Seg> {
         .collect()
 }
 
-fn keys_line(canvas: &mut Canvas<'_>, y: usize, hints: Vec<Seg>) {
-    let kept = fit(hints, canvas.width, GAP);
+/// Ширина подсказки: плашка клавиши с полями и подпись.
+fn hint_width(key: &str, desc: &str) -> usize {
+    display_width(key) + 2 + display_width(desc)
+}
+
+/// Какие подсказки помещаются в ширину: обязательные всегда, остальные по приоритету.
+fn keep_hints(items: &[(&str, &str, u8)], width: usize) -> Vec<bool> {
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    order.sort_by_key(|&index| items[index].2);
+    let mut keep = vec![false; items.len()];
+    let mut used = 0;
+    let mut count = 0;
+    for index in order {
+        let (key, desc, priority) = items[index];
+        let need = hint_width(key, desc) + if count > 0 { GAP } else { 0 };
+        if priority > 0 && used + need > width {
+            break;
+        }
+        used += need;
+        count += 1;
+        keep[index] = true;
+    }
+    keep
+}
+
+/// Клавиша, которую нажимает плашка. Стрелки и пары клавиш плашкой не нажимаются.
+fn key_code(key: &str) -> Option<KeyCode> {
+    match key {
+        "Enter" => Some(KeyCode::Enter),
+        "Esc" => Some(KeyCode::Esc),
+        "End" => Some(KeyCode::End),
+        "Пробел" => Some(KeyCode::Char(' ')),
+        _ => {
+            let mut chars = key.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => Some(KeyCode::Char(c)),
+                _ => None,
+            }
+        }
+    }
+}
+
+/// Строка клавиш: клавиша в плашке, подпись обычным текстом. Клик по плашке работает как
+/// клавиша; пока открыто поле ввода, плашки не нажимаются.
+fn keys_line(canvas: &mut Canvas<'_>, app: &mut App, y: usize, hints: &[Seg]) {
+    let clickable = app.input == InputMode::Normal;
+    let items: Vec<(&str, &str, u8)> = hints
+        .iter()
+        .map(|seg| {
+            let (key, desc) = seg
+                .text
+                .split_once(' ')
+                .unwrap_or((seg.text.as_str(), ""));
+            (key, desc, seg.priority)
+        })
+        .collect();
+    let keep = keep_hints(&items, canvas.width);
+    let style = canvas.key_style();
     let mut x = 0;
-    for (index, seg) in kept.iter().enumerate() {
-        if index > 0 {
+    let mut first = true;
+    for (&(key, desc, _), kept) in items.iter().zip(keep) {
+        if !kept {
+            continue;
+        }
+        if !first {
             x += GAP;
         }
-        let (key, desc) = seg.text.split_once(' ').unwrap_or((seg.text.as_str(), ""));
-        let room = canvas.width.saturating_sub(x);
-        canvas.put(x, y, key, room, Tone::Bold);
-        x += display_width(key);
+        first = false;
+        let chip = format!(" {key} ");
+        let chip_width = display_width(&chip);
+        canvas.put_style(x, y, &chip, chip_width, style);
+        if clickable && let Some(code) = key_code(key) {
+            app.hits.push(Hit::new(x, y, chip_width, Target::Key(code)));
+        }
+        x += chip_width;
         if !desc.is_empty() {
-            let room = canvas.width.saturating_sub(x + 1);
-            canvas.put(x + 1, y, desc, room, Tone::Dim);
-            x += 1 + display_width(desc);
+            let room = canvas.width.saturating_sub(x);
+            canvas.put(x, y, desc, room, Tone::Plain);
+            x += display_width(desc);
         }
     }
 }
@@ -418,18 +501,22 @@ fn filter_hint(app: &App) -> Vec<Seg> {
     ]
 }
 
-fn masks_hint(app: &App) -> Vec<Seg> {
-    vec![
-        Seg::new(format!("скрыть: {}█", app.mask_edit), Tone::Bold, 0),
-        Seg::new(
-            "через запятую, * — любая часть имени; Enter — применить, Esc — отмена",
-            Tone::Dim,
-            1,
-        ),
-    ]
+/// Варианты маски диалога исключения: выбранный отмечен стрелкой.
+fn exclude_options(dialog: &ExcludeDialog) -> String {
+    dialog
+        .choices
+        .iter()
+        .enumerate()
+        .map(|(index, mask)| {
+            let mark = if index == dialog.selected { "►" } else { " " };
+            let number = index + 1;
+            format!("{mark}{number} «{mask}»")
+        })
+        .collect::<Vec<_>>()
+        .join("   ")
 }
 
-/// Итог диалога исключения в строке состояния.
+/// Итог диалога исключения в одну строку окна.
 fn exclude_summary(app: &App, dialog: &ExcludeDialog) -> String {
     if dialog.remove {
         let mask = dialog.choices.first().map_or("", String::as_str);
@@ -450,32 +537,6 @@ fn exclude_summary(app: &App, dialog: &ExcludeDialog) -> String {
     }
 }
 
-/// Варианты маски и клавиши диалога исключения в строке подсказок.
-fn exclude_hint(dialog: &ExcludeDialog) -> String {
-    let options: Vec<String> = dialog
-        .choices
-        .iter()
-        .enumerate()
-        .map(|(index, mask)| {
-            let mark = if index == dialog.selected { "►" } else { " " };
-            format!("{mark}{} «{mask}»", index + 1)
-        })
-        .collect();
-    format!(
-        "{} · Enter — проверить и сохранить · Esc — отмена",
-        options.join("   ")
-    )
-}
-
-/// Подсказка поля правки на вкладке «Настройки».
-fn field_hint() -> Vec<Seg> {
-    vec![Seg::new(
-        "Enter — сохранить · Esc — отмена · например 90s, 5m или 3",
-        Tone::Dim,
-        0,
-    )]
-}
-
 /// Строки состояния над подсказками. Сообщение переносится по словам, но не больше
 /// `STATUS_LINES` строк; пустая строка состояния не даёт ни одной строки.
 fn status_rows(app: &App, width: usize) -> Vec<Seg> {
@@ -489,21 +550,6 @@ fn status_rows(app: &App, width: usize) -> Vec<Seg> {
 
 /// Текст строки состояния и его тон; `None`, когда показывать нечего.
 fn status_text(app: &App) -> Option<(String, Tone)> {
-    if let Some(confirm) = &app.confirm {
-        return Some((confirm.question.clone(), Tone::Yellow));
-    }
-    if let Some(dialog) = &app.exclude {
-        return Some((exclude_summary(app, dialog), Tone::Bold));
-    }
-    if let Some(edit) = &app.sub_edit {
-        let affected = app.sub_affected(&edit.subscription, edit.kind, &edit.text);
-        let text = format!(
-            "Маски {}: {}█ · затронет узлов: {affected}",
-            edit.kind.title(),
-            edit.text
-        );
-        return Some((text, Tone::Bold));
-    }
     if app.saving.is_some() {
         return Some(("* Сохраняю настройки…".to_owned(), Tone::Green));
     }
@@ -533,73 +579,186 @@ fn status_text(app: &App) -> Option<(String, Tone)> {
         );
         return Some((text, Tone::Green));
     }
-    if let Some(notice) = &app.notice {
-        return Some((notice.text.clone(), notice.tone));
-    }
-    if matches!(app.link, Link::Up) {
-        return Some(("готов".to_owned(), Tone::Dim));
-    }
-    None
+    app.notice
+        .as_ref()
+        .map(|notice| (notice.text.clone(), notice.tone))
 }
 
-/// Строки состояния и строка подсказок внизу экрана.
+/// Строки состояния над строкой клавиш; поле фильтра заменяет клавиши.
 fn bottom(canvas: &mut Canvas<'_>, app: &mut App, status: Vec<Seg>) {
     let hints_y = canvas.height.saturating_sub(1);
-    let top = hints_y.saturating_sub(status.len().max(1));
+    let top = hints_y.saturating_sub(status.len());
     for (row, seg) in status.into_iter().enumerate() {
         canvas.line(top + row, 0, vec![seg]);
     }
-    if app.confirm.is_some() {
-        let buttons = vec![
-            (
-                "[Enter] Подтвердить".to_owned(),
-                Tone::Bold,
-                Some(Target::ConfirmYes),
-            ),
-            (
-                "[Esc] Отмена".to_owned(),
-                Tone::Bold,
-                Some(Target::ConfirmNo),
-            ),
-        ];
-        pages::chips(canvas, app, hints_y, buttons);
-    } else if let Some(dialog) = &app.exclude {
-        canvas.line(
-            hints_y,
-            0,
-            vec![Seg::new(exclude_hint(dialog), Tone::Dim, 0)],
-        );
-    } else if app.sub_edit.is_some() {
-        let hint = "Tab — другой список · Enter — проверить и сохранить · Esc — отмена";
-        canvas.line(hints_y, 0, vec![Seg::new(hint, Tone::Dim, 0)]);
-    } else if app.input == InputMode::Filter {
-        canvas.line(hints_y, 0, filter_hint(app));
-    } else if app.input == InputMode::Masks {
-        canvas.line(hints_y, 0, masks_hint(app));
-    } else if app.input == InputMode::Field {
-        canvas.line(hints_y, 0, field_hint());
+    if app.input == InputMode::Filter {
+        let hint = filter_hint(app);
+        canvas.line(hints_y, 0, hint);
     } else {
-        keys_line(canvas, hints_y, normal_hints(app));
+        let hints = normal_hints(app);
+        keys_line(canvas, app, hints_y, &hints);
     }
 }
 
-fn help(canvas: &mut Canvas<'_>) {
-    let title = vec![Seg::new("raycat tui: клавиши", Tone::Header, 0)];
-    canvas.line(0, 0, title);
-    for (row, (keys, text)) in HELP.iter().enumerate() {
-        let segs = vec![
-            Seg::new(pad(keys, 12), Tone::Bold, 0),
-            Seg::new(*text, Tone::Plain, 0),
-        ];
-        canvas.line(2 + row, 0, segs);
+/// Окно поверх экрана: одновременно открыто не больше одного. Нарисовано последним, чтобы
+/// его кнопки были единственными областями нажатия.
+fn overlay(canvas: &mut Canvas<'_>, app: &mut App) {
+    if app.input == InputMode::Help {
+        help_popup(canvas, app);
+    } else if app.confirm.is_some() {
+        confirm_popup(canvas, app);
+    } else if app.exclude.is_some() {
+        exclude_popup(canvas, app);
+    } else if app.input == InputMode::Masks {
+        masks_popup(canvas, app);
+    } else if app.sub_edit.is_some() {
+        sub_popup(canvas, app);
     }
-    let legend = vec![Seg::new("► выбран   * закреплён вручную", Tone::Dim, 0)];
-    canvas.line(3 + HELP.len(), 0, legend);
-    let close = vec![Seg::new("Любая клавиша закрывает справку", Tone::Dim, 0)];
-    canvas.line(5 + HELP.len(), 0, close);
 }
 
-/// Подписи подписок в таблице и подсказках; нужны и вкладкам.
+/// Ширина окна: почти весь экран, но не шире `POPUP_MAX`.
+fn popup_width(canvas: &Canvas<'_>) -> usize {
+    canvas.width.saturating_sub(4).min(POPUP_MAX)
+}
+
+/// Ширина текста внутри окна: рамка и отступ по две ячейки с каждой стороны.
+fn popup_text(canvas: &Canvas<'_>) -> usize {
+    popup_width(canvas).saturating_sub(4)
+}
+
+/// Переносит текст по словам в строки окна одного тона.
+fn wrapped(text: &str, width: usize, tone: Tone) -> Vec<(String, Tone)> {
+    wrap(text, width, usize::MAX)
+        .into_iter()
+        .map(|line| (line, tone))
+        .collect()
+}
+
+/// Окно по центру поверх экрана. Очищает свою область, рисует рамку акцентом, строки и
+/// кнопки-плашки. Кнопки становятся областями нажатия, остальной экран нажатий не принимает.
+fn popup(
+    canvas: &mut Canvas<'_>,
+    app: &mut App,
+    heading: &str,
+    lines: &[(String, Tone)],
+    buttons: &[(&str, Target)],
+) {
+    app.hits.clear();
+    let width = popup_width(canvas);
+    let button_rows = if buttons.is_empty() { 0 } else { 2 };
+    let height = (lines.len() + button_rows + 2).min(canvas.height);
+    let x = (canvas.width - width) / 2;
+    let y = (canvas.height - height) / 2;
+    canvas.clear_rect(x, y, width, height);
+    let border = canvas.active_frame();
+    let title = vec![Seg::new(heading, Tone::Header, 0)];
+    let mut inner = canvas.boxed(x, y, width, height, title, border);
+    for (row, (text, tone)) in lines.iter().enumerate() {
+        inner.line(row, 0, vec![Seg::new(text.as_str(), *tone, 0)]);
+    }
+    let chip = inner.key_style();
+    let row = lines.len() + 1;
+    let mut at = 0;
+    for (label, target) in buttons {
+        let text = format!(" {label} ");
+        let text_width = display_width(&text);
+        inner.put_style(at, row, &text, text_width, chip);
+        app.hits
+            .push(Hit::new(x + 2 + at, y + 1 + row, text_width, *target));
+        at += text_width + GAP;
+    }
+}
+
+fn help_popup(canvas: &mut Canvas<'_>, app: &mut App) {
+    let text_width = popup_text(canvas).saturating_sub(KEY_COLUMN);
+    let mut lines: Vec<(String, Tone)> = Vec::new();
+    for (keys, text) in HELP {
+        for (index, part) in wrap(text, text_width, usize::MAX).into_iter().enumerate() {
+            let lead = if index == 0 {
+                pad(keys, KEY_COLUMN)
+            } else {
+                " ".repeat(KEY_COLUMN)
+            };
+            lines.push((format!("{lead}{part}"), Tone::Plain));
+        }
+    }
+    lines.push((String::new(), Tone::Plain));
+    lines.push((
+        "► выбран   * закреплён вручную".to_owned(),
+        Tone::Dim,
+    ));
+    lines.push(("Любая клавиша закрывает справку".to_owned(), Tone::Dim));
+    popup(canvas, app, "raycat tui: клавиши", &lines, &[]);
+}
+
+fn confirm_popup(canvas: &mut Canvas<'_>, app: &mut App) {
+    let Some(question) = app.confirm.as_ref().map(|confirm| confirm.question.clone()) else {
+        return;
+    };
+    let lines = wrapped(&question, popup_text(canvas), Tone::Plain);
+    let buttons = [
+        ("[Enter] Подтвердить", Target::ConfirmYes),
+        ("[Esc] Отмена", Target::ConfirmNo),
+    ];
+    popup(canvas, app, "Подтверждение", &lines, &buttons);
+}
+
+fn exclude_popup(canvas: &mut Canvas<'_>, app: &mut App) {
+    let Some(dialog) = app.exclude.as_ref() else {
+        return;
+    };
+    let heading = if dialog.remove {
+        "Снять исключение"
+    } else {
+        "Исключить узел"
+    };
+    let mut lines = wrapped(&exclude_summary(app, dialog), popup_text(canvas), Tone::Plain);
+    lines.push((String::new(), Tone::Plain));
+    lines.push((exclude_options(dialog), Tone::Bold));
+    let buttons = [
+        ("[Enter] Проверить и сохранить", Target::Key(KeyCode::Enter)),
+        ("[Esc] Отмена", Target::Key(KeyCode::Esc)),
+    ];
+    popup(canvas, app, heading, &lines, &buttons);
+}
+
+fn masks_popup(canvas: &mut Canvas<'_>, app: &mut App) {
+    let mut lines = wrapped(
+        "Через запятую, * — любая часть имени. Скрытые узлы не попадают в таблицу.",
+        popup_text(canvas),
+        Tone::Dim,
+    );
+    lines.push((String::new(), Tone::Plain));
+    lines.push((format!("скрыть: {}█", app.mask_edit), Tone::Bold));
+    let buttons = [
+        ("[Enter] Применить", Target::Key(KeyCode::Enter)),
+        ("[Esc] Отмена", Target::Key(KeyCode::Esc)),
+    ];
+    popup(canvas, app, "Скрытые узлы", &lines, &buttons);
+}
+
+fn sub_popup(canvas: &mut Canvas<'_>, app: &mut App) {
+    let Some(edit) = app.sub_edit.as_ref() else {
+        return;
+    };
+    let heading = format!("Маски подписки «{}»", edit.subscription);
+    let affected = app.sub_affected(&edit.subscription, edit.kind, &edit.text);
+    let mut lines = vec![
+        (format!("Список: {}", edit.kind.title()), Tone::Plain),
+        ("Tab — другой список".to_owned(), Tone::Dim),
+        (String::new(), Tone::Plain),
+        (format!("{}█", edit.text), Tone::Bold),
+    ];
+    let note = format!("через запятую, * — любая часть имени · затронет узлов: {affected}");
+    lines.extend(wrapped(&note, popup_text(canvas), Tone::Dim));
+    let buttons = [
+        ("[Enter] Проверить и сохранить", Target::Key(KeyCode::Enter)),
+        ("[Esc] Отмена", Target::Key(KeyCode::Esc)),
+    ];
+    popup(canvas, app, &heading, &lines, &buttons);
+}
+
+/// Заголовок подписок в таблице и подсказках; нужен и вкладкам.
 pub(super) fn subscription_title(count: usize) -> Vec<Seg> {
     vec![
         Seg::new("Подписки", Tone::Bold, 0),
@@ -621,7 +780,7 @@ mod tests {
         SettingsView, Status, Tunnel, XHTTP_PROVIDER,
     };
 
-    use super::super::app::{Confirm, Edit, Msg, Setting, Snapshot, Tab};
+    use super::super::app::{Confirm, Edit, InputMode, Msg, Setting, Snapshot, Tab};
     use super::*;
 
     const NOW: u64 = 1_790_596_800;
@@ -780,9 +939,8 @@ mod tests {
     fn the_tab_row_names_every_tab_and_is_clickable() {
         let mut app = sample_app();
         let lines = screen(&mut app, 100, 30);
-        for word in ["1 Обзор", "2 Узлы", "3 Подписки", "4 Журнал", "5 Настройки"]
-        {
-            assert!(lines[0].contains(word), "{word}: {:?}", lines[0]);
+        for word in ["1 Обзор", "2 Узлы", "3 Подписки", "4 Журнал", "5 Настройки"] {
+            assert!(lines[1].contains(word), "{word}: {:?}", lines[1]);
         }
         assert!(
             app.hits
@@ -817,6 +975,23 @@ mod tests {
     }
 
     #[test]
+    fn a_selected_node_row_is_painted_to_the_panel_edges() {
+        let mut app = sample_app();
+        on_nodes(&mut app);
+        let terminal = paint(&mut app, 100, 30, true);
+        let buffer = terminal.backend().buffer();
+        let lines = rows(buffer);
+        let y = lines.iter().position(|line| line.contains("NL-1")).unwrap();
+        for x in 1..99 {
+            assert_eq!(
+                buffer[(x, u16::try_from(y).unwrap())].bg,
+                Color::Indexed(238),
+                "ячейка {x}"
+            );
+        }
+    }
+
+    #[test]
     fn speed_below_one_kilobit_is_a_dash() {
         assert_eq!(speed_label(27, 23), "↓ — ↑ —");
         assert_eq!(speed_label(5_200_000, 300), "↓ 5.2 Мбит/с ↑ —");
@@ -826,7 +1001,7 @@ mod tests {
     fn without_a_daemon_the_banner_sits_under_the_tabs() {
         let mut app = App::new(NOW);
         let lines = screen(&mut app, 80, 20);
-        assert_eq!(lines[1], "raycat · ● подключение…");
+        assert!(lines[0].contains("● подключение…"), "{lines:?}");
         assert!(has_line(&lines, "данных от демона ещё нет"), "{lines:?}");
         assert!(lines.last().unwrap().contains("q выход"));
 
@@ -835,12 +1010,13 @@ mod tests {
             retry_in: Duration::from_secs(2),
         });
         let lines = screen(&mut app, 80, 20);
+        assert!(lines[0].contains("● нет связи с демоном"), "{lines:?}");
+        assert!(lines[1].contains("2 Узлы"), "{lines:?}");
         assert_eq!(
-            lines[1],
+            lines[2],
             "демон недоступен: демон не запущен: сокета /run/raycat/raycat.sock нет"
         );
-        assert_eq!(lines[2], "повторное подключение через 2 с");
-        assert_eq!(lines[3], "raycat · ● нет связи с демоном");
+        assert_eq!(lines[3], "повторное подключение через 2 с");
     }
 
     #[test]
@@ -853,8 +1029,8 @@ mod tests {
         let terminal = paint(&mut app, 80, 24, false);
         let buffer = terminal.backend().buffer();
         let lines = rows(buffer);
-        assert_eq!(lines[1], "демон недоступен: обрыв связи");
-        assert_eq!(lines[2], "повторное подключение через 1 с");
+        assert_eq!(lines[2], "демон недоступен: обрыв связи");
+        assert_eq!(lines[3], "повторное подключение через 1 с");
         assert!(has_line(&lines, "NL-1"));
         let dimmed = |y: u16| buffer[(0, y)].style().add_modifier.contains(Modifier::DIM);
         assert!(!dimmed(1));
@@ -862,7 +1038,7 @@ mod tests {
     }
 
     #[test]
-    fn a_lost_link_shows_in_the_header_in_red() {
+    fn a_lost_link_shows_in_the_header_as_a_red_plaque() {
         let mut app = sample_app();
         app.apply(Msg::Down {
             reason: "обрыв связи".to_owned(),
@@ -871,12 +1047,10 @@ mod tests {
         let terminal = paint(&mut app, 80, 24, true);
         let buffer = terminal.backend().buffer();
         let lines = rows(buffer);
-        assert!(
-            lines[3].starts_with("raycat · шлюз · ● нет связи с демоном"),
-            "{lines:?}"
-        );
-        assert_eq!(buffer[(16, 3)].symbol(), "●");
-        assert_eq!(buffer[(16, 3)].style().fg, Some(Color::LightRed));
+        assert!(lines[0].contains("raycat"), "{lines:?}");
+        assert!(lines[0].contains("● нет связи с демоном"), "{lines:?}");
+        assert_eq!(buffer[(10, 0)].symbol(), "●");
+        assert_eq!(buffer[(10, 0)].style().bg, Some(Color::Indexed(203)));
     }
 
     #[test]
@@ -887,10 +1061,10 @@ mod tests {
             retry_in: Duration::from_secs(1),
         });
         let lines = screen(&mut app, 44, 20);
-        assert!(lines[1].starts_with("демон недоступен: слово"));
-        assert!(lines[2].starts_with("слово"));
-        assert!(lines[3].ends_with('…'), "{:?}", lines[3]);
-        assert_eq!(lines[4], "повторное подключение через 1 с");
+        assert!(lines[2].starts_with("демон недоступен: слово"));
+        assert!(lines[3].starts_with("слово"));
+        assert!(lines[4].ends_with('…'), "{:?}", lines[4]);
+        assert_eq!(lines[5], "повторное подключение через 1 с");
     }
 
     #[test]
@@ -900,7 +1074,7 @@ mod tests {
         for line in &lines {
             assert!(display_width(line) <= 44, "{line:?}");
         }
-        assert!(lines[0].contains("1 Обзор"));
+        assert!(lines[1].contains("1 Обзор"));
         assert!(lines.last().unwrap().contains("? справка"));
         assert!(lines.last().unwrap().contains("q выход"));
     }
@@ -929,12 +1103,13 @@ mod tests {
     }
 
     #[test]
-    fn help_replaces_the_screen_and_lists_the_new_keys() {
+    fn help_is_a_window_over_the_screen_and_lists_the_new_keys() {
         let mut app = sample_app();
         press(&mut app, KeyCode::Char('?'));
-        let lines = screen(&mut app, 80, 24);
-        assert_eq!(lines[0], "raycat tui: клавиши");
+        let lines = screen(&mut app, 80, 40);
         let text = lines.join("\n");
+        assert!(text.contains("raycat tui: клавиши"), "{text}");
+        assert!(text.contains("2 Узлы"), "окно не закрывает экран: {text}");
         for word in ["Enter", "PgUp", "Shift+Tab", "Esc", "Ctrl+C", "закрепить"] {
             assert!(text.contains(word), "{word}: {text}");
         }
@@ -943,6 +1118,14 @@ mod tests {
         for line in &narrow {
             assert!(display_width(line) <= 44, "{line:?}");
         }
+    }
+
+    #[test]
+    fn any_key_closes_the_help_window() {
+        let mut app = sample_app();
+        press(&mut app, KeyCode::Char('?'));
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.input, InputMode::Normal);
     }
 
     #[test]
@@ -961,16 +1144,10 @@ mod tests {
     }
 
     #[test]
-    fn the_status_line_says_ready_only_when_connected_and_idle() {
-        let mut app = App::new(NOW);
-        assert_eq!(screen(&mut app, 80, 20)[18], "");
-        let app = &mut sample_app();
-        assert_eq!(screen(app, 80, 20)[18], "готов");
-        app.apply(Msg::Down {
-            reason: "обрыв связи".to_owned(),
-            retry_in: Duration::from_secs(1),
-        });
-        assert_eq!(screen(app, 80, 20)[18], "");
+    fn the_status_line_has_no_ready_word_when_idle() {
+        let mut app = sample_app();
+        let lines = screen(&mut app, 80, 20);
+        assert!(!has_line(&lines, "готов"), "{lines:?}");
     }
 
     #[test]
@@ -1004,8 +1181,9 @@ mod tests {
         status.kill_switch = None;
         let mut app = app_with(status, sample_nodes());
         let lines = screen(&mut app, 80, 20);
-        assert!(lines[1].starts_with("raycat · прокси · ● VPN работает"));
-        assert!(!lines[1].contains("kill switch"));
+        assert!(lines[0].contains("● VPN работает"), "{lines:?}");
+        assert!(lines[0].contains("прокси"), "{lines:?}");
+        assert!(!lines[0].contains("kill switch"), "{lines:?}");
     }
 
     #[test]
@@ -1023,15 +1201,15 @@ mod tests {
         status.node = None;
         let mut app = app_with(status, Vec::new());
         let lines = screen(&mut app, 80, 20);
-        assert!(lines[1].contains("● xray не запущен"), "{lines:?}");
+        assert!(lines[0].contains("● xray не запущен"), "{lines:?}");
         assert!(has_line(&lines, "узел не выбран"), "{lines:?}");
 
         let mut status = sample_status();
         status.xray.restarts = 2;
         let mut app = app_with(status, sample_nodes());
         let lines = screen(&mut app, 80, 20);
-        assert!(lines[1].contains("● VPN работает"), "{lines:?}");
-        assert!(lines[1].contains("xray перезапускался: 2"), "{lines:?}");
+        assert!(lines[0].contains("● VPN работает"), "{lines:?}");
+        assert!(has_line(&lines, "xray перезапускался: 2"), "{lines:?}");
     }
 
     #[test]
@@ -1042,7 +1220,7 @@ mod tests {
         status.tunnel = Tunnel::XrayStuck;
         let mut app = app_with(status, sample_nodes());
         let lines = screen(&mut app, 80, 20);
-        assert!(lines[1].contains("● xray не отвечает"), "{lines:?}");
+        assert!(lines[0].contains("● xray не отвечает"), "{lines:?}");
     }
 
     #[test]
@@ -1076,11 +1254,11 @@ mod tests {
         let terminal = paint(&mut app, 80, 24, true);
         let buffer = terminal.backend().buffer();
         let lines = rows(buffer);
-        assert_eq!(lines[1], "демон недоступен: raycat не запущен");
-        assert_eq!(lines[2], "Запустите службу: sudo systemctl start raycat");
-        assert_eq!(lines[3], "повторное подключение через 1 с");
-        assert_eq!(buffer[(0, 1)].style().fg, Some(Color::LightRed));
-        assert_ne!(buffer[(0, 2)].style().fg, Some(Color::LightRed));
+        assert_eq!(lines[2], "демон недоступен: raycat не запущен");
+        assert_eq!(lines[3], "Запустите службу: sudo systemctl start raycat");
+        assert_eq!(lines[4], "повторное подключение через 1 с");
+        assert_eq!(buffer[(0, 2)].style().fg, Some(Color::Indexed(203)));
+        assert_ne!(buffer[(0, 3)].style().fg, Some(Color::Indexed(203)));
     }
 
     #[test]
@@ -1134,15 +1312,17 @@ mod tests {
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(0, 3)].symbol(), "╭");
         assert_eq!(buffer[(79, 3)].symbol(), "╮");
-        assert_eq!(buffer[(0, 3)].style().fg, Some(Color::DarkGray));
+        assert_eq!(buffer[(0, 3)].style().fg, Some(Color::Indexed(240)));
     }
 
     #[test]
-    fn the_header_hides_the_uptime_when_it_does_not_fit() {
+    fn the_header_drops_its_right_part_first_when_narrow() {
         let mut app = sample_app();
-        app.set_now(NOW);
-        let lines = screen(&mut app, 60, 20);
-        assert!(!lines[1].contains("время работы"), "{:?}", lines[1]);
+        let wide = screen(&mut app, 100, 20);
+        assert!(wide[0].contains("kill switch вкл"), "{wide:?}");
+        assert!(wide[0].contains("шлюз"), "{wide:?}");
+        let narrow = screen(&mut app, 44, 20);
+        assert!(!narrow[0].contains("kill switch"), "{narrow:?}");
     }
 
     fn text(value: &str) -> SettingValue {
@@ -1184,33 +1364,57 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_settings_tab_shows_each_value_with_its_source_and_hint() {
-        let mut app = sample_app();
-        press(&mut app, KeyCode::Char('5'));
+    fn on_settings(app: &mut App) {
+        press(app, KeyCode::Char('5'));
         app.apply(Msg::Settings(Ok(settings_view())));
-        let lines = screen(&mut app, 100, 30);
+    }
+
+    #[test]
+    fn the_settings_tab_shows_a_list_and_the_details_of_the_chosen_row() {
+        let mut app = sample_app();
+        on_settings(&mut app);
+        let lines = screen(&mut app, 120, 30);
         for word in [
             "Россия напрямую",
-            "[вкл]",
-            "[3]",
-            "[как у провайдера]",
-            "error  [warn]  info  debug",
+            "● вкл",
+            "как у провайдера",
+            "warn",
+            "Подключение",
+            "Выбор узла",
+            "Система",
+            "Вид",
+            "Сейчас",
+            "По умолчанию",
             "из файла",
-            "по умолчанию",
             "российские домены и подсети идут напрямую",
             "Файл настроек: не найден",
-            "Остальные настройки — в файле, raycat config покажет итог",
+            "Остальное в файле, raycat config покажет итог",
         ] {
             assert!(has_line(&lines, word), "{word}: {lines:?}");
         }
     }
 
     #[test]
+    fn the_selected_setting_row_is_painted_to_the_panel_edges() {
+        let mut app = sample_app();
+        on_settings(&mut app);
+        let terminal = paint(&mut app, 100, 30, true);
+        let buffer = terminal.backend().buffer();
+        let lines = rows(buffer);
+        let y = lines
+            .iter()
+            .position(|line| line.contains("Россия напрямую"))
+            .unwrap();
+        let y = u16::try_from(y).unwrap();
+        for x in 1..54 {
+            assert_eq!(buffer[(x, y)].bg, Color::Indexed(238), "ячейка {x}");
+        }
+    }
+
+    #[test]
     fn a_field_shows_its_text_with_a_cursor_and_what_keys_do() {
         let mut app = sample_app();
-        press(&mut app, KeyCode::Char('5'));
-        app.apply(Msg::Settings(Ok(settings_view())));
+        on_settings(&mut app);
         app.setting_cursor = Setting::CheckInterval.row();
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Char('9'));
@@ -1223,7 +1427,7 @@ mod tests {
     }
 
     #[test]
-    fn a_question_takes_the_status_line_and_offers_two_buttons() {
+    fn a_question_is_a_window_with_two_buttons() {
         let mut app = sample_app();
         let edit = Edit {
             changes: Vec::new(),
@@ -1236,24 +1440,23 @@ mod tests {
             edit,
         });
         let lines = screen(&mut app, 100, 24);
-        assert!(lines[22].contains("xray перезапустится"), "{lines:?}");
-        assert!(lines[23].contains("[Enter] Подтвердить"), "{lines:?}");
-        assert!(lines[23].contains("[Esc] Отмена"), "{lines:?}");
+        assert!(has_line(&lines, "xray перезапустится"), "{lines:?}");
+        assert!(has_line(&lines, "[Enter] Подтвердить"), "{lines:?}");
+        assert!(has_line(&lines, "[Esc] Отмена"), "{lines:?}");
         assert!(app.hits.iter().any(|hit| hit.target == Target::ConfirmYes));
         assert!(app.hits.iter().any(|hit| hit.target == Target::ConfirmNo));
     }
 
     #[test]
-    fn a_narrow_settings_tab_keeps_names_and_values_and_drops_the_source_first() {
+    fn a_narrow_settings_tab_keeps_names_and_values_and_drops_the_details() {
         let mut app = sample_app();
-        press(&mut app, KeyCode::Char('5'));
-        app.apply(Msg::Settings(Ok(settings_view())));
+        on_settings(&mut app);
         let lines = screen(&mut app, 44, 30);
-        for word in ["Россия напрямую", "[вкл]", "[как у провайдера]", "[warn]"]
-        {
+        for word in ["Россия напрямую", "● вкл", "как у провайдера", "warn"] {
             assert!(has_line(&lines, word), "{word}: {lines:?}");
         }
         assert!(!has_line(&lines, "из файла"), "{lines:?}");
+        assert!(has_line(&lines, "Файл настроек"), "{lines:?}");
         assert!(
             lines.iter().all(|line| display_width(line) <= 44),
             "{lines:?}"
@@ -1350,6 +1553,7 @@ mod tests {
     #[test]
     fn the_layout_stays_inside_the_terminal_on_every_tab() {
         let mut app = sample_app();
+        on_settings(&mut app);
         for key in ['1', '2', '3', '4', '5'] {
             press(&mut app, KeyCode::Char(key));
             for (width, height) in [(44_u16, 12_u16), (80, 20), (120, 40)] {
@@ -1445,7 +1649,7 @@ mod tests {
             screens.push(screen(&mut app, 100, 30));
         }
         press(&mut app, KeyCode::Char('?'));
-        screens.push(screen(&mut app, 80, 24));
+        screens.push(screen(&mut app, 80, 40));
         press(&mut app, KeyCode::Char('?'));
         press(&mut app, KeyCode::Char('2'));
         press(&mut app, KeyCode::Enter);

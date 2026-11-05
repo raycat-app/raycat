@@ -13,7 +13,23 @@ use crate::util::sanitize;
 
 pub(super) const GAP: usize = 2;
 
-/// Цвета по тонам. Без цвета (`NO_COLOR`) остаются только жирный и тусклый.
+/// Акцент: активная панель, активная вкладка, шапка.
+const ACCENT: u8 = 80;
+/// Фон выделенной строки.
+const SELECTED: u8 = 238;
+/// Рамка обычной панели.
+const BORDER: u8 = 240;
+/// Второстепенный текст.
+const SECONDARY: u8 = 245;
+const GREEN: u8 = 78;
+const YELLOW: u8 = 221;
+const RED: u8 = 203;
+/// Фон плашки клавиши.
+const KEY: u8 = 250;
+/// Тёмный текст на цветной плашке.
+const INK: u8 = 16;
+
+/// Цвета по тонам. Без цвета (`NO_COLOR`) остаются только жирный, тусклый и обратный.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Palette {
     color: bool,
@@ -24,8 +40,12 @@ impl Palette {
         Self { color }
     }
 
-    fn tint(self, style: Style, color: Color) -> Style {
-        if self.color { style.fg(color) } else { style }
+    fn tint(self, style: Style, color: u8) -> Style {
+        if self.color {
+            style.fg(Color::Indexed(color))
+        } else {
+            style
+        }
     }
 
     fn style(self, tone: Tone) -> Style {
@@ -34,26 +54,63 @@ impl Palette {
         match tone {
             Tone::Plain => base,
             Tone::Bold => bold,
+            Tone::Dim if self.color => base.fg(Color::Indexed(SECONDARY)),
             Tone::Dim => base.add_modifier(Modifier::DIM),
-            Tone::Header => self.tint(bold, Color::LightGreen),
-            Tone::Green => self.tint(base, Color::LightGreen),
-            Tone::Yellow => self.tint(base, Color::LightYellow),
-            Tone::Red => self.tint(bold, Color::LightRed),
+            Tone::Header => self.tint(bold, ACCENT),
+            Tone::Green => self.tint(base, GREEN),
+            Tone::Yellow => self.tint(base, YELLOW),
+            Tone::Red => self.tint(bold, RED),
         }
     }
 
     fn border(self) -> Style {
         if self.color {
-            Style::new().fg(Color::DarkGray)
+            Style::new().fg(Color::Indexed(BORDER))
         } else {
             Style::new().add_modifier(Modifier::DIM)
         }
     }
+
+    fn active_border(self) -> Style {
+        if self.color {
+            Style::new().fg(Color::Indexed(ACCENT))
+        } else {
+            Style::new().add_modifier(Modifier::BOLD)
+        }
+    }
+
+    /// Плашка: тёмный текст на цветном фоне.
+    fn badge(self, bg: u8) -> Style {
+        if self.color {
+            Style::new()
+                .fg(Color::Indexed(INK))
+                .bg(Color::Indexed(bg))
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+        }
+    }
+
+    /// Выделение: фон на всю строку, цвета текста сохраняются.
+    fn selected(self, style: Style) -> Style {
+        if self.color {
+            style
+                .bg(Color::Indexed(SELECTED))
+                .add_modifier(Modifier::BOLD)
+        } else {
+            style.add_modifier(Modifier::REVERSED | Modifier::BOLD)
+        }
+    }
 }
 
-/// Стиль выделенной строки: цвета тонов в ней не нужны, читаемость важнее.
-pub(super) fn highlight() -> Style {
-    Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+/// Цвет плашки состояния туннеля: зелёный, жёлтый или красный; остальное — серое.
+fn plaque_color(tone: Tone) -> u8 {
+    match tone {
+        Tone::Green => GREEN,
+        Tone::Yellow => YELLOW,
+        Tone::Red => RED,
+        _ => SECONDARY,
+    }
 }
 
 /// Кусок строки одного тона.
@@ -208,13 +265,44 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    fn chrome(&self) -> Style {
+    /// Рамка обычной панели.
+    pub(super) fn chrome(&self) -> Style {
         let style = self.palette.border();
         if self.dim {
             style.add_modifier(Modifier::DIM)
         } else {
             style
         }
+    }
+
+    /// Рамка активной панели и окна.
+    pub(super) fn active_frame(&self) -> Style {
+        self.palette.active_border()
+    }
+
+    /// Плашка акцентом: активная вкладка и название программы.
+    pub(super) fn accent_badge(&self) -> Style {
+        self.palette.badge(ACCENT)
+    }
+
+    /// Плашка клавиши в нижней строке и кнопки окон.
+    pub(super) fn key_style(&self) -> Style {
+        self.palette.badge(KEY)
+    }
+
+    /// Плашка состояния туннеля: цвет по тону.
+    pub(super) fn plaque(&self, tone: Tone) -> Style {
+        self.palette.badge(plaque_color(tone))
+    }
+
+    /// Фон выделенной строки без цвета текста.
+    pub(super) fn selected(&self) -> Style {
+        self.palette.selected(Style::new())
+    }
+
+    /// Текст выделенной строки: цвет тона остаётся, фон и жирность добавляются.
+    pub(super) fn selected_style(&self, tone: Tone) -> Style {
+        self.palette.selected(self.style(tone))
     }
 
     /// Прямоугольник внутри текущей области; размер обрезается по ней.
@@ -243,30 +331,53 @@ impl<'a> Canvas<'a> {
         }
     }
 
-    /// Рамка на всю ширину строк `y..y + height` с заголовком в верхней линии. Возвращает
-    /// область внутри рамки с отступом в одну ячейку с каждой стороны.
-    pub(super) fn framed(&mut self, y: usize, height: usize, title: Vec<Seg>) -> Canvas<'_> {
-        let width = self.width;
+    /// Рамка прямоугольника `width × height` в точке `x, y` с заголовком в верхней линии.
+    /// Возвращает область внутри рамки с отступом в одну ячейку с каждой стороны и
+    /// в две ячейки по бокам.
+    pub(super) fn boxed(
+        &mut self,
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+        title: Vec<Seg>,
+        border: Style,
+    ) -> Canvas<'_> {
         if height >= 2 && width >= 8 {
-            let border = self.chrome();
             let edge = "─".repeat(width - 2);
+            let right = x + width - 1;
             if title.is_empty() {
-                self.put_style(0, y, &format!("╭{edge}╮"), width, border);
+                self.put_style(x, y, &format!("╭{edge}╮"), width, border);
             } else {
-                self.put_style(0, y, "╭─", 2, border);
-                let end = self.chain(y, 3, " · ", title, width - 4);
+                self.put_style(x, y, "╭─", 2, border);
+                let end = self.chain(y, x + 3, " · ", title, x + width - 4);
                 self.put_style(end, y, " ", 1, border);
-                let fill = (width - 2).saturating_sub(end);
+                let fill = (x + width - 2).saturating_sub(end);
                 self.put_style(end + 1, y, &"─".repeat(fill), fill, border);
-                self.put_style(width - 1, y, "╮", 1, border);
+                self.put_style(right, y, "╮", 1, border);
             }
             for row in y + 1..y + height - 1 {
-                self.put_style(0, row, "│", 1, border);
-                self.put_style(width - 1, row, "│", 1, border);
+                self.put_style(x, row, "│", 1, border);
+                self.put_style(right, row, "│", 1, border);
             }
-            self.put_style(0, y + height - 1, &format!("╰{edge}╯"), width, border);
+            self.put_style(x, y + height - 1, &format!("╰{edge}╯"), width, border);
         }
-        self.sub(2, y + 1, width.saturating_sub(4), height.saturating_sub(2))
+        self.sub(x + 2, y + 1, width.saturating_sub(4), height.saturating_sub(2))
+    }
+
+    /// Рамка на всю ширину строк `y..y + height` обычным цветом. Возвращает область внутри.
+    pub(super) fn framed(&mut self, y: usize, height: usize, title: Vec<Seg>) -> Canvas<'_> {
+        let width = self.width;
+        let border = self.chrome();
+        self.boxed(0, y, width, height, title, border)
+    }
+
+    /// Очищает прямоугольник: под окном не должно остаться следов экрана.
+    pub(super) fn clear_rect(&mut self, x: usize, y: usize, width: usize, height: usize) {
+        let blank = " ".repeat(width);
+        for row in y..y + height {
+            self.put_style(x, row, &blank, width, Style::reset());
+        }
     }
 
     pub(super) fn put_style(&mut self, x: usize, y: usize, text: &str, max: usize, style: Style) {
@@ -403,6 +514,18 @@ mod tests {
     }
 
     #[test]
+    fn a_box_away_from_the_left_edge_draws_inside_its_own_corners() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 12, 3));
+        {
+            let mut canvas = Canvas::new(&mut buffer, Palette::new(false));
+            let border = canvas.chrome();
+            let _inner = canvas.boxed(4, 0, 8, 3, Vec::new(), border);
+        }
+        assert_eq!(row(&buffer, 0), "    ╭──────╮");
+        assert_eq!(row(&buffer, 2), "    ╰──────╯");
+    }
+
+    #[test]
     fn chain_joins_pieces_with_a_separator_and_reports_the_end() {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 12, 1));
         let mut canvas = Canvas::new(&mut buffer, Palette::new(false));
@@ -413,7 +536,7 @@ mod tests {
 
     #[test]
     fn borders_are_grey_with_color_and_dim_without() {
-        assert_eq!(Palette::new(true).border().fg, Some(Color::DarkGray));
+        assert_eq!(Palette::new(true).border().fg, Some(Color::Indexed(240)));
         assert_eq!(Palette::new(false).border().fg, None);
         assert!(
             Palette::new(false)
@@ -421,6 +544,26 @@ mod tests {
                 .add_modifier
                 .contains(Modifier::DIM)
         );
+    }
+
+    #[test]
+    fn a_selected_row_is_painted_edge_to_edge() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 1));
+        let mut canvas = Canvas::new(&mut buffer, Palette::new(true));
+        canvas.fill(0, canvas.selected());
+        canvas.put_style(2, 0, "ab", 2, canvas.selected_style(Tone::Green));
+        for x in 0..10 {
+            assert_eq!(buffer[(x, 0)].bg, Color::Indexed(238), "ячейка {x}");
+        }
+        assert_eq!(buffer[(2, 0)].fg, Color::Indexed(78));
+    }
+
+    #[test]
+    fn a_selected_row_without_color_is_reversed() {
+        let plain = Palette::new(false);
+        let selected = plain.selected(Style::new());
+        assert!(selected.add_modifier.contains(Modifier::REVERSED));
+        assert_eq!(selected.bg, None);
     }
 
     #[test]
@@ -486,8 +629,8 @@ mod tests {
         assert_eq!(plain.style(Tone::Red).fg, None);
         assert!(plain.style(Tone::Red).add_modifier.contains(Modifier::BOLD));
         let colored = Palette::new(true);
-        assert_eq!(colored.style(Tone::Green).fg, Some(Color::LightGreen));
-        assert_eq!(colored.style(Tone::Red).fg, Some(Color::LightRed));
+        assert_eq!(colored.style(Tone::Green).fg, Some(Color::Indexed(78)));
+        assert_eq!(colored.style(Tone::Red).fg, Some(Color::Indexed(203)));
     }
 
     #[test]

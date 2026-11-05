@@ -5,8 +5,8 @@
 use jiff::tz::TimeZone;
 use raycat_proto::{Node, NodeCheck, NodeStatus, SubscriptionStatus};
 
-use super::app::{App, Hit, InputMode, LEVELS, Setting, SortBy, Target};
-use super::canvas::{Canvas, GAP, Seg, highlight, wrap};
+use super::app::{App, Hit, InputMode, LEVELS, Setting, Shown, SortBy, Target};
+use super::canvas::{Canvas, GAP, Seg, wrap};
 use super::view::{
     delay_tone, is_expired, speed_label, sub_phrase, subscription_title, traffic_seg, tunnel_hint,
     tunnel_seg, xray_segs,
@@ -24,6 +24,31 @@ const REASON_MAX: usize = 40;
 const NODE_HEADER_ROWS: usize = 2;
 /// Сколько символов масок видно на панели фильтров.
 const HIDDEN_WIDTH: usize = 24;
+
+/// Разделы вкладки «Настройки» в порядке показа. Заголовок раздела — строка списка,
+/// которую выбор клавишами пропускает.
+const SECTIONS: [(&str, &[Setting]); 4] = [
+    ("Подключение", &[Setting::RuDirect, Setting::KillSwitch]),
+    (
+        "Выбор узла",
+        &[
+            Setting::CheckInterval,
+            Setting::Failures,
+            Setting::SwitchGain,
+            Setting::ReturnDelay,
+        ],
+    ),
+    ("Система", &[Setting::Xhttp, Setting::LogLevel]),
+    ("Вид", &[Setting::Names]),
+];
+/// Ниже этой ширины правая панель подробностей не помещается: её текст идёт строками
+/// под списком.
+const SPLIT_MIN: usize = 90;
+/// Строки под списком на узкой ширине: пояснение, действие, файл и примечание.
+const NARROW_ROWS: usize = 4;
+/// Ширина подписи в панели подробностей.
+const LABEL: usize = 17;
+const FIELD_HINT: &str = "Enter — сохранить · Esc — отмена · например 90s, 5m или 3";
 
 pub(super) type Chip = (String, Tone, Option<Target>);
 
@@ -285,6 +310,14 @@ fn nodes_table(canvas: &mut Canvas<'_>, app: &mut App, y0: usize, end: usize) {
     let full = canvas.width;
     let width = full.saturating_sub(4);
     let mut found = Vec::new();
+    // Выделенная строка закрашивается от края до края панели, рамку не трогает.
+    if !app.visible.is_empty()
+        && let Some(row) = app.cursor.checked_sub(app.offset).filter(|row| *row < rows)
+    {
+        let blank = " ".repeat(full.saturating_sub(2));
+        let style = canvas.selected();
+        canvas.put_style(1, y0 + 2 + row, &blank, full.saturating_sub(2), style);
+    }
     {
         let shown: Vec<&Node> = app
             .visible
@@ -327,11 +360,10 @@ fn nodes_title(app: &App) -> Vec<Seg> {
         .iter()
         .filter(|&&index| app.nodes.get(index).is_some_and(|node| !node.excluded))
         .count();
-    let mut segs = vec![Seg::new(
-        format!("Узлы · {usable} из {total}"),
-        Tone::Bold,
-        0,
-    )];
+    let mut segs = vec![
+        Seg::new("Узлы", Tone::Header, 0),
+        Seg::new(format!("{usable} из {total}"), Tone::Dim, 0),
+    ];
     if excluded > 0 {
         segs.push(Seg::new(format!("({excluded} исключено)"), Tone::Dim, 2));
     }
@@ -647,6 +679,8 @@ fn cell(kind: Kind, node: &Node, speed: &str, style: NameStyle, excluded: bool) 
     }
 }
 
+/// Строка таблицы. Выделенная строка закрашивается внутри панели, а её края до рамки
+/// кладёт вызывающий; ячейкам добавляется фон и жирность, цвета статуса остаются.
 fn draw_row(
     canvas: &mut Canvas<'_>,
     y: usize,
@@ -656,9 +690,8 @@ fn draw_row(
     (current, excluded): (bool, bool),
     style: NameStyle,
 ) {
-    let marked = highlight();
     if current {
-        canvas.fill(y, marked);
+        canvas.fill(y, canvas.selected());
     }
     let mut x = 0;
     for col in cols {
@@ -669,11 +702,12 @@ fn draw_row(
         } else {
             0
         };
-        if current {
-            canvas.put_style(x + shift, y, &text, col.width, marked);
+        let cell_style = if current {
+            canvas.selected_style(tone)
         } else {
-            canvas.put(x + shift, y, &text, col.width, tone);
-        }
+            canvas.style(tone)
+        };
+        canvas.put_style(x + shift, y, &text, col.width, cell_style);
         x += col.width + GAP;
     }
 }
@@ -1028,116 +1062,257 @@ fn journal_lines(
     (lines, back)
 }
 
-/// Ширина названия строки и значения; источник идёт сразу за значением.
-const SETTING_TITLE: usize = 23;
-const SETTING_VALUE: usize = 26;
-/// Ниже этой ширины между названием и значением один пробел.
-const NARROW: usize = 60;
-/// Четыре уровня журнала в строке: `error  [warn]  info  debug`.
-const LEVEL_CHOICES: usize = 26;
+/// Строки списка «Настроек»: заголовки разделов и сами настройки.
+#[derive(Debug, Clone, Copy)]
+enum Row {
+    Head(&'static str),
+    Item(Setting),
+}
 
-/// Вкладка «Настройки»: строки демона и вида TUI. Каждая строка — две строки экрана:
-/// название, значение и источник, под ними пояснение или ошибка. Внизу — файл настроек.
+fn list_rows() -> Vec<Row> {
+    let mut rows = Vec::new();
+    for (heading, settings) in SECTIONS {
+        rows.push(Row::Head(heading));
+        rows.extend(settings.iter().map(|setting| Row::Item(*setting)));
+    }
+    rows
+}
+
+/// Переключатели показываются как `● вкл` и `○ выкл`; остальные значения обычным текстом.
+fn is_switch(setting: Setting) -> bool {
+    matches!(setting, Setting::RuDirect | Setting::KillSwitch)
+}
+
+/// Значение строки в списке и его тон.
+fn list_value(setting: Setting, shown: &Shown) -> (String, Tone) {
+    if !shown.enabled {
+        return (shown.value.clone(), Tone::Dim);
+    }
+    if is_switch(setting) {
+        return if shown.value == "вкл" {
+            ("● вкл".to_owned(), Tone::Green)
+        } else {
+            ("○ выкл".to_owned(), Tone::Dim)
+        };
+    }
+    (shown.value.clone(), Tone::Plain)
+}
+
+/// Что делает клавиша действия над выбранной строкой.
+fn action_hint(setting: Setting) -> &'static str {
+    match setting {
+        Setting::LogLevel => "Enter — следующий уровень",
+        _ if is_switch(setting) || setting == Setting::Names => "Пробел — переключить",
+        _ => "Enter — изменить",
+    }
+}
+
+/// Вкладка «Настройки»: слева список по разделам, справа подробности выбранной строки.
+/// На узком экране подробности идут строками под списком.
 pub(super) fn settings(canvas: &mut Canvas<'_>, app: &mut App, top: usize, end: usize) {
-    if end <= top + 1 {
+    let wide = canvas.width >= SPLIT_MIN;
+    let text_rows = if wide { 0 } else { NARROW_ROWS };
+    if end < top + 3 + text_rows {
         return;
     }
-    let rows = (end - top - 1) / 2;
-    app.keep_setting_visible(rows);
-    let first = app.setting_offset;
-    for (index, setting) in Setting::ALL.iter().enumerate().skip(first).take(rows) {
-        let y = top + (index - first) * 2;
-        setting_row(canvas, app, index, *setting, y);
+    let height = end - top;
+    let list_height = height - text_rows;
+    let list_width = if wide {
+        canvas.width * 55 / 100
+    } else {
+        canvas.width
+    };
+    settings_list(canvas, app, top, list_width, list_height);
+    if wide {
+        let details_width = canvas.width - list_width;
+        settings_details(canvas, app, top, list_width, details_width, height);
+    } else {
+        settings_text(canvas, app, top + list_height);
     }
-    settings_footer(canvas, app, end - 1);
 }
 
-fn setting_row(canvas: &mut Canvas<'_>, app: &mut App, index: usize, setting: Setting, y: usize) {
-    let selected = index == app.setting_cursor;
-    let shown = app.shown(setting);
-    let editing = selected && app.input == InputMode::Field;
-    let plain = if selected {
-        highlight()
-    } else {
-        canvas.style(Tone::Plain)
-    };
-    let bold = if selected {
-        highlight()
-    } else {
-        canvas.style(Tone::Bold)
-    };
-    let dim = if selected {
-        highlight()
-    } else {
-        canvas.style(Tone::Dim)
-    };
-    let title_style = if shown.enabled { bold } else { dim };
-    canvas.put_style(0, y, if selected { "► " } else { "  " }, 2, plain);
-    canvas.put_style(2, y, setting.title(), SETTING_TITLE, title_style);
-    let gap = if canvas.width < NARROW { 1 } else { GAP };
-    let value_x = 2 + SETTING_TITLE + gap;
-    let value_room = canvas.width.saturating_sub(value_x);
-    if setting == Setting::LogLevel && shown.enabled && value_room >= LEVEL_CHOICES {
-        level_choices(canvas, app, &shown.value, y, value_x, selected);
-    } else {
-        let text = if editing {
-            format!("[{}█]", app.field)
-        } else if shown.enabled {
-            format!("[{}]", shown.value)
-        } else {
-            shown.value.clone()
-        };
-        let width = display_width(&text).min(value_room);
-        let style = if shown.enabled { bold } else { dim };
-        canvas.put_style(value_x, y, &text, value_room, style);
-        if shown.enabled {
-            app.hits
-                .push(Hit::new(value_x, y, width, Target::SettingCell(index)));
-        }
-    }
-    // Источник скрывается первым, когда на строке не хватает места.
-    let source_x = value_x + SETTING_VALUE + GAP;
-    let source_room = canvas.width.saturating_sub(source_x);
-    if display_width(&shown.source) <= source_room {
-        canvas.put_style(source_x, y, &shown.source, source_room, dim);
-    }
-    let error = app
-        .setting_error
-        .as_ref()
-        .filter(|(row, _)| *row == index)
-        .map(|(_, text)| text.clone());
-    // Пояснение скрывается, когда не помещается: ошибка показывается всегда.
-    let (text, tone) = match error {
-        Some(text) => (text, Tone::Red),
-        None if display_width(setting.hint()) + 2 <= canvas.width => {
-            (setting.hint().to_owned(), Tone::Dim)
-        }
-        None => (String::new(), Tone::Dim),
-    };
-    let style = if selected {
-        highlight()
-    } else {
-        canvas.style(tone)
-    };
-    let room = canvas.width.saturating_sub(2);
-    canvas.put_style(2, y + 1, &text, room, style);
-    // Значение и уровни регистрируются раньше строки: при нажатии выигрывает точная область.
-    app.hits
-        .push(Hit::new(0, y, canvas.width, Target::SettingRow(index)));
-    app.hits
-        .push(Hit::new(0, y + 1, canvas.width, Target::SettingRow(index)));
-}
-
-/// Четыре уровня журнала в строке; текущий в скобках, каждый нажимается отдельно.
-fn level_choices(
+/// Список настроек в рамке: разделы серым, строки с названием слева и значением справа.
+/// Выбранная строка закрашена на всю ширину панели.
+fn settings_list(
     canvas: &mut Canvas<'_>,
     app: &mut App,
-    current: &str,
-    y: usize,
-    x: usize,
-    selected: bool,
+    top: usize,
+    width: usize,
+    height: usize,
 ) {
-    let mut at = x;
+    let rows = list_rows();
+    let inner_rows = height - 2;
+    // Прокрутка идёт по настройкам; заголовки разделов занимают строки сверх этого числа.
+    app.keep_setting_visible(inner_rows.saturating_sub(SECTIONS.len()).max(1));
+    let first = rows
+        .iter()
+        .position(|row| matches!(row, Row::Item(setting) if setting.row() == app.setting_offset))
+        .unwrap_or(0);
+    let start = if first > 0 && matches!(rows.get(first - 1), Some(Row::Head(_))) {
+        first - 1
+    } else {
+        first
+    };
+    let cursor = app.setting_cursor;
+    let visible = &rows[start..];
+    if let Some(row) = visible
+        .iter()
+        .take(inner_rows)
+        .position(|row| matches!(row, Row::Item(setting) if setting.row() == cursor))
+    {
+        let blank = " ".repeat(width - 2);
+        let style = canvas.selected();
+        canvas.put_style(1, top + 1 + row, &blank, width - 2, style);
+    }
+    let border = canvas.active_frame();
+    let title = vec![Seg::new("Настройки", Tone::Header, 0)];
+    let mut inner = canvas.boxed(0, top, width, height, title, border);
+    let inner_width = inner.width;
+    for (row, entry) in visible.iter().take(inner_rows).enumerate() {
+        match *entry {
+            Row::Head(heading) => inner.line(row, 0, vec![Seg::new(heading, Tone::Dim, 0)]),
+            Row::Item(setting) => {
+                let selected = setting.row() == cursor;
+                let shown = app.shown(setting);
+                let (value, tone) = list_value(setting, &shown);
+                let value_width = display_width(&value);
+                let x = inner_width.saturating_sub(value_width);
+                let name_room = x.saturating_sub(1);
+                let name = truncate(setting.title(), name_room);
+                let name_tone = if shown.enabled {
+                    Tone::Plain
+                } else {
+                    Tone::Dim
+                };
+                let (name_style, value_style) = if selected {
+                    (
+                        inner.selected_style(name_tone),
+                        inner.selected_style(tone),
+                    )
+                } else {
+                    (inner.style(name_tone), inner.style(tone))
+                };
+                inner.put_style(0, row, &name, name_room, name_style);
+                inner.put_style(x, row, &value, value_width, value_style);
+                if shown.enabled {
+                    app.hits.push(Hit::new(
+                        2 + x,
+                        top + 1 + row,
+                        value_width,
+                        Target::SettingCell(setting.row()),
+                    ));
+                }
+                app.hits.push(Hit::new(
+                    0,
+                    top + 1 + row,
+                    width,
+                    Target::SettingRow(setting.row()),
+                ));
+            }
+        }
+    }
+}
+
+/// Панель подробностей выбранной строки: пояснение, значения, действие, поле правки,
+/// варианты уровня журнала и внизу путь к файлу настроек.
+fn settings_details(
+    canvas: &mut Canvas<'_>,
+    app: &mut App,
+    top: usize,
+    left: usize,
+    width: usize,
+    height: usize,
+) {
+    let Some(setting) = Setting::ALL.get(app.setting_cursor).copied() else {
+        return;
+    };
+    let shown = app.shown(setting);
+    let border = canvas.chrome();
+    let title = vec![Seg::new(setting.title(), Tone::Bold, 0)];
+    let mut inner = canvas.boxed(left, top, width, height, title, border);
+    let inner_width = inner.width;
+    let mut row = 0;
+    for line in wrap(setting.hint(), inner_width, 2) {
+        inner.line(row, 0, vec![Seg::new(line, Tone::Plain, 0)]);
+        row += 1;
+    }
+    row += 1;
+    let (value, tone) = list_value(setting, &shown);
+    detail(&mut inner, row, "Сейчас", &value, tone);
+    detail(
+        &mut inner,
+        row + 1,
+        "По умолчанию",
+        setting.default_text(),
+        Tone::Plain,
+    );
+    detail(&mut inner, row + 2, "Откуда", &shown.source, Tone::Plain);
+    row += 4;
+    if app.input == InputMode::Field {
+        let text = format!("[{}█]", app.field);
+        detail(&mut inner, row, "Новое значение", &text, Tone::Bold);
+        inner.line(row + 1, 0, vec![Seg::new(FIELD_HINT, Tone::Dim, 0)]);
+        row += 2;
+    } else {
+        inner.line(row, 0, vec![Seg::new(action_hint(setting), Tone::Dim, 0)]);
+        row += 1;
+    }
+    if setting == Setting::LogLevel && shown.enabled {
+        row += 1;
+        level_choices(&mut inner, app, &shown.value, row, (left + 2, top + 1));
+        row += 1;
+    }
+    if let Some((_, error)) = app
+        .setting_error
+        .as_ref()
+        .filter(|(index, _)| *index == setting.row())
+    {
+        row += 1;
+        for line in wrap(error, inner_width, 2) {
+            inner.line(row, 0, vec![Seg::new(line, Tone::Red, 0)]);
+            row += 1;
+        }
+    }
+    if let Some(footer) = inner.height.checked_sub(2) {
+        let path = if app.settings_path.is_empty() {
+            "не найден".to_owned()
+        } else {
+            app.settings_path.clone()
+        };
+        inner.line(
+            footer,
+            0,
+            vec![Seg::new(format!("Файл настроек: {path}"), Tone::Dim, 0)],
+        );
+        inner.line(
+            footer + 1,
+            0,
+            vec![Seg::new(
+                "Остальное в файле, raycat config покажет итог",
+                Tone::Dim,
+                0,
+            )],
+        );
+    }
+}
+
+/// Строка панели подробностей: подпись слева, значение с отступом.
+fn detail(inner: &mut Canvas<'_>, row: usize, label: &str, value: &str, tone: Tone) {
+    inner.put(0, row, &pad(label, LABEL), LABEL, Tone::Dim);
+    let room = inner.width.saturating_sub(LABEL);
+    inner.put(LABEL, row, value, room, tone);
+}
+
+/// Варианты уровня журнала в строке: текущий в скобках, каждый нажимается отдельно.
+/// `origin` — экранные координаты левого верхнего угла области внутри рамки.
+fn level_choices(
+    inner: &mut Canvas<'_>,
+    app: &mut App,
+    current: &str,
+    row: usize,
+    origin: (usize, usize),
+) {
+    let mut at = 0;
     for level in LEVELS {
         let chosen = current == level;
         let text = if chosen {
@@ -1146,32 +1321,56 @@ fn level_choices(
             level.to_owned()
         };
         let width = display_width(&text);
-        let style = match (selected, chosen) {
-            (true, _) => highlight(),
-            (false, true) => canvas.style(Tone::Bold),
-            (false, false) => canvas.style(Tone::Dim),
-        };
-        canvas.put_style(at, y, &text, width, style);
-        app.hits
-            .push(Hit::new(at, y, width, Target::SettingLevel(level)));
+        let tone = if chosen { Tone::Bold } else { Tone::Dim };
+        inner.put(at, row, &text, width, tone);
+        app.hits.push(Hit::new(
+            origin.0 + at,
+            origin.1 + row,
+            width,
+            Target::SettingLevel(level),
+        ));
         at += width + GAP;
     }
 }
 
-/// Путь к файлу настроек и напоминание, что остальное читается через `raycat config`.
-fn settings_footer(canvas: &mut Canvas<'_>, app: &App, y: usize) {
+/// Узкий экран: подробности строками под списком — пояснение или ошибка, действие,
+/// файл настроек и примечание.
+fn settings_text(canvas: &mut Canvas<'_>, app: &App, top: usize) {
+    let Some(setting) = Setting::ALL.get(app.setting_cursor).copied() else {
+        return;
+    };
+    let error = app
+        .setting_error
+        .as_ref()
+        .filter(|(index, _)| *index == app.setting_cursor)
+        .map(|(_, text)| text.clone());
+    let (first, first_tone) = match error {
+        Some(text) => (text, Tone::Red),
+        None => (setting.hint().to_owned(), Tone::Dim),
+    };
+    let (action, action_tone) = if app.input == InputMode::Field {
+        (
+            format!("Новое значение: [{}█] · {FIELD_HINT}", app.field),
+            Tone::Bold,
+        )
+    } else {
+        (action_hint(setting).to_owned(), Tone::Dim)
+    };
     let path = if app.settings_path.is_empty() {
         "не найден".to_owned()
     } else {
         app.settings_path.clone()
     };
-    let segs = vec![
-        Seg::new(format!("Файл настроек: {path}"), Tone::Dim, 0),
-        Seg::new(
-            "Остальные настройки — в файле, raycat config покажет итог",
+    let lines = [
+        (first, first_tone),
+        (action, action_tone),
+        (format!("Файл настроек: {path}"), Tone::Dim),
+        (
+            "Остальное в файле, raycat config покажет итог".to_owned(),
             Tone::Dim,
-            1,
         ),
     ];
-    canvas.line(y, 0, segs);
+    for (row, (text, tone)) in lines.into_iter().enumerate() {
+        canvas.line(top + row, 0, vec![Seg::new(text, tone, 0)]);
+    }
 }
