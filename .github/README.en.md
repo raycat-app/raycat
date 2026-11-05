@@ -11,7 +11,6 @@
 For chosen containers, the whole server or your home network.
 
 [![Version](https://img.shields.io/github/v/release/raycat-app/raycat?include_prereleases&style=flat-square&label=version&color=2d333b)](https://github.com/raycat-app/raycat/releases)
-[![Build](https://img.shields.io/github/actions/workflow/status/raycat-app/raycat/ci.yml?branch=main&style=flat-square&label=build)](https://github.com/raycat-app/raycat/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/Rust-1.88%2B-2d333b?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Platforms](https://img.shields.io/badge/Linux-x86__64%20·%20arm64%20·%20armv7-2d333b?style=flat-square&logo=linux&logoColor=white)](https://github.com/raycat-app/raycat/releases)
 [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2d333b?style=flat-square&logo=docker&logoColor=white)](https://github.com/raycat-app/raycat/pkgs/container/raycat)
@@ -31,7 +30,7 @@ For chosen containers, the whole server or your home network.
 
 raycat obtains a VPN subscription from your provider and maintains a tunnel on a Linux server. Traffic from selected containers, the whole server or devices on your home network is routed through the VPN without configuring individual applications.
 
-The subscription is requested the same way Happ (Windows and Android) and INCY (Android) request it, so raycat also works with providers that only serve their own apps. The tunnel is built on [Xray-core](https://github.com/XTLS/Xray-core). raycat supports backup subscriptions, automatic node selection on failure, excluding nodes by mask and direct access to Russian resources. When no nodes are available, the kill switch keeps traffic from leaving outside the VPN.
+The subscription is requested the same way Happ (Windows and Android) and INCY (Android) request it, so raycat also works with providers that only serve their own apps. The tunnel is built on [Xray-core](https://github.com/XTLS/Xray-core). raycat supports backup subscriptions, automatic node selection on failure, excluding nodes by mask and direct access to Russian resources. When no nodes are available, the killswitch blocks traffic outside the VPN.
 
 > [!NOTE]
 > No stable version has been released yet. Until then, use the `ghcr.io/raycat-app/raycat:dev` image and install with `--channel dev`.
@@ -108,7 +107,7 @@ sudo raycat tui
 | **Home network** | raycat in the host network, the server set as the gateway on devices | `type = "gateway"`, `lan = true` |
 
 > [!IMPORTANT]
-> The kill switch applies in `gateway` mode: without the tunnel, traffic and DNS queries do not leave. In `proxy` mode, programs that do not use the proxy connect directly.
+> The killswitch applies in `gateway` mode: without the tunnel, traffic and DNS queries do not leave. In `proxy` mode, programs that do not use the proxy connect directly.
 
 Builds are available for x86_64, arm64 and armv7, including Raspberry Pi.
 
@@ -256,16 +255,6 @@ gh attestation verify oci://ghcr.io/raycat-app/raycat:latest --repo raycat-app/r
 ```
 
 </details>
-
-<p align="right"><a href="#raycat">back to top</a></p>
-
-## Roadmap
-
-- [x] A gateway for containers, the server and the home network
-- [x] Happ and INCY request formats with automatic profile updates
-- [x] A terminal interface with mouse support and settings applied without a restart
-- [ ] The first stable version, 0.1.0
-- [ ] Version 1.0
 
 <p align="right"><a href="#raycat">back to top</a></p>
 
