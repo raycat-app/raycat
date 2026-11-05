@@ -25,6 +25,8 @@ use crate::util::sanitize;
 use super::prefs::{Prefs, split_masks};
 
 pub(super) const LOG_CAP: usize = 200;
+/// Сколько последних замеров скорости хранит график на вкладке «Обзор».
+pub(super) const SPEED_POINTS: usize = 120;
 const TEXT_WIDTH: usize = 400;
 const NOTICE_SECS: u64 = 8;
 const RESULT_SECS: u64 = 20;
@@ -74,7 +76,6 @@ pub(super) enum Target {
     SubRow(usize),
     Pin,
     Autoselect,
-    UpdateAll,
     UpdateSub,
     DeadToggle,
     SubFilter,
@@ -83,8 +84,6 @@ pub(super) enum Target {
     ExcludedToggle,
     Sort(SortBy),
     HiddenEdit,
-    /// Тест скорости через текущий узел.
-    Speed,
     /// Тест скорости через узел, открытый в подробностях.
     SpeedNode,
     /// Строка «Настроек»: выбор клавишами и кликом по названию или пояснению.
@@ -699,6 +698,10 @@ pub(super) struct App {
     pub(super) tab: Tab,
     /// Открыта панель подробностей узла или подписки.
     pub(super) details: bool,
+    /// Подробности узла показаны окном поверх таблицы (узкий экран): клик мимо закрывает.
+    pub(super) details_window: bool,
+    /// Последние замеры скорости выбранного узла для графика; не больше `SPEED_POINTS`.
+    pub(super) speeds: VecDeque<Speed>,
     /// Сколько строк прокручено вниз в подробностях узла (после шапки с кнопками).
     pub(super) details_offset: usize,
     /// Позиция курсора среди видимых узлов.
@@ -777,6 +780,8 @@ impl App {
             input: InputMode::Normal,
             tab: Tab::Overview,
             details: false,
+            details_window: false,
+            speeds: VecDeque::new(),
             details_offset: 0,
             cursor: 0,
             offset: 0,
@@ -947,6 +952,8 @@ impl App {
             self.input = InputMode::Normal;
         } else if self.sub_edit.is_some() {
             self.close_sub_edit();
+        } else if self.details && self.details_window {
+            self.details = false;
         }
     }
 
@@ -966,7 +973,6 @@ impl App {
             Target::SubRow(index) => self.sub_cursor = index.min(self.last_sub()),
             Target::Pin => return self.pin_current(),
             Target::Autoselect => return self.unpin(),
-            Target::UpdateAll => return self.start_update(None),
             Target::UpdateSub => return self.update_selected(),
             Target::DeadToggle => self.toggle_dead(),
             Target::SubFilter => self.next_subscription(),
@@ -975,7 +981,6 @@ impl App {
             Target::ExcludedToggle => self.toggle_excluded(),
             Target::Sort(by) => self.sort_click(by),
             Target::HiddenEdit => self.start_masks(),
-            Target::Speed => return self.speedtest(None),
             Target::SpeedNode => return self.speed_selected(),
             Target::SettingRow(index) => self.select_setting(index),
             Target::SettingCell(index) => {
@@ -1170,7 +1175,18 @@ impl App {
         self.status_at = self.now;
         self.nodes = snapshot.nodes.nodes;
         self.measure(snapshot.at);
+        if let Some(speed) = self.speed() {
+            self.push_speed(speed);
+        }
         self.refilter();
+    }
+
+    /// Добавляет замер в график; самый старый уходит, когда буфер полон.
+    fn push_speed(&mut self, speed: Speed) {
+        if self.speeds.len() >= SPEED_POINTS {
+            self.speeds.pop_front();
+        }
+        self.speeds.push_back(speed);
     }
 
     /// Смена узла и уменьшение счётчика (перезапуск xray) начинают измерение заново.
@@ -1187,13 +1203,18 @@ impl App {
             {
                 Some(meter.advance(at, uplink, downlink))
             }
-            (Some((node, uplink, downlink)), _) => Some(Meter::start(node, at, uplink, downlink)),
+            (Some((node, uplink, downlink)), _) => {
+                // Другой узел или перезапуск счётчиков: прошлые замеры к нему не относятся.
+                self.speeds.clear();
+                Some(Meter::start(node, at, uplink, downlink))
+            }
         };
     }
 
     fn on_down(&mut self, reason: &str, retry_in: Duration) {
         // После обрыва интервал до следующего снимка не говорит о скорости.
         self.meter = None;
+        self.speeds.clear();
         let (cause, hint) = split_lines(reason);
         let cause = clip(cause);
         if !matches!(self.link, Link::Down { .. }) {
@@ -1720,6 +1741,7 @@ impl App {
     }
 
     fn move_to(&mut self, index: usize) {
+        self.details_offset = 0;
         self.cursor = index.min(self.visible.len().saturating_sub(1));
         self.cursor_id = self.current().map(|node| node.id.clone());
         self.scroll_to_cursor();
@@ -3619,6 +3641,19 @@ mod tests {
             Some(Effect::SavePrefs(_))
         ));
         assert_eq!(app.shown(Setting::Names).source, "вид TUI");
+    }
+
+    #[test]
+    fn the_speed_history_never_grows_past_its_limit() {
+        let mut app = App::new(NOW);
+        for bits in 0..170_u64 {
+            app.push_speed(Speed {
+                down: bits,
+                up: bits,
+            });
+        }
+        assert_eq!(app.speeds.len(), SPEED_POINTS);
+        assert_eq!(app.speeds.front().map(|speed| speed.down), Some(50));
     }
 
     #[test]

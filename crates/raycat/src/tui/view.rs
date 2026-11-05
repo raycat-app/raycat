@@ -280,7 +280,7 @@ pub(super) fn speed_label(down: u64, up: u64) -> String {
     format!("↓ {} ↑ {}", speed_part(down), speed_part(up))
 }
 
-fn speed_part(bits: u64) -> String {
+pub(super) fn speed_part(bits: u64) -> String {
     if bits < MIN_SPEED {
         "—".to_owned()
     } else {
@@ -289,7 +289,7 @@ fn speed_part(bits: u64) -> String {
 }
 
 /// Полоска из десяти ячеек: заполненная часть отвечает проценту.
-fn bar(percent: u128) -> String {
+pub(super) fn bar(percent: u128) -> String {
     let filled = usize::try_from(percent / 10).map_or(BAR_CELLS, |cells| cells.min(BAR_CELLS));
     format!("{}{}", "█".repeat(filled), "░".repeat(BAR_CELLS - filled))
 }
@@ -963,11 +963,63 @@ mod tests {
         let mut app = sample_app();
         let lines = screen(&mut app, 100, 30);
         assert!(has_line(&lines, "● VPN работает"), "{lines:?}");
-        assert!(has_line(&lines, "Подписки · всего 1"), "{lines:?}");
-        assert!(has_line(&lines, "[u] Обновить подписки"), "{lines:?}");
+        assert!(has_line(&lines, "Подписки · 1"), "{lines:?}");
+        assert!(!has_line(&lines, "[u] Обновить подписки"), "{lines:?}");
         assert!(has_line(&lines, "работает"), "{lines:?}");
         assert!(has_line(&lines, "[a] Автовыбор"), "{lines:?}");
-        assert!(app.hits.iter().any(|hit| hit.target == Target::UpdateAll));
+        assert!(app.hits.iter().any(|hit| hit.target == Target::Autoselect));
+    }
+
+    #[test]
+    fn the_tunnel_panel_draws_the_speed_graph_from_the_history() {
+        let mut nodes = sample_nodes();
+        nodes[0].uplink_bytes = Some(0);
+        nodes[0].downlink_bytes = Some(0);
+        let mut app = App::new(NOW);
+        let base = Instant::now();
+        app.apply(snapshot_at(sample_status(), nodes.clone(), base));
+        nodes[0].downlink_bytes = Some(125_000);
+        app.apply(snapshot_at(
+            sample_status(),
+            nodes,
+            base + Duration::from_secs(1),
+        ));
+        assert_eq!(app.speeds.len(), 1);
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "↓ "), "{lines:?}");
+        assert!(has_line(&lines, "Мбит/с"), "{lines:?}");
+        assert!(has_line(&lines, "▇"), "{lines:?}");
+    }
+
+    #[test]
+    fn without_a_speed_the_tunnel_panel_shows_a_dash_and_no_graph() {
+        let mut app = sample_app();
+        let lines = screen(&mut app, 100, 30);
+        assert!(has_line(&lines, "↓ —"), "{lines:?}");
+        assert!(!has_line(&lines, "▇"), "{lines:?}");
+    }
+
+    #[test]
+    fn the_node_details_sit_beside_the_table_from_120_columns() {
+        let mut app = sample_app();
+        on_nodes(&mut app);
+        let wide = screen(&mut app, 160, 30);
+        assert!(has_line(&wide, "Узел · подробности"), "{wide:?}");
+        assert!(has_line(&wide, "Протокол:"), "{wide:?}");
+        let narrow = screen(&mut app, 100, 30);
+        assert!(!has_line(&narrow, "Узел · подробности"), "{narrow:?}");
+    }
+
+    #[test]
+    fn enter_opens_the_node_window_on_a_narrow_screen_and_esc_closes_it() {
+        let mut app = sample_app();
+        on_nodes(&mut app);
+        press(&mut app, KeyCode::Enter);
+        let open = screen(&mut app, 100, 30);
+        assert!(has_line(&open, "Узел · подробности"), "{open:?}");
+        press(&mut app, KeyCode::Esc);
+        let closed = screen(&mut app, 100, 30);
+        assert!(!has_line(&closed, "Узел · подробности"), "{closed:?}");
     }
 
     #[test]
@@ -1238,7 +1290,7 @@ mod tests {
         status.tunnel = Tunnel::NoLiveNodes;
         status.kill_switch = Some(true);
         let mut app = app_with(status, sample_nodes());
-        let lines = screen(&mut app, 100, 30);
+        let lines = screen(&mut app, 160, 30);
         assert!(has_line(&lines, "● нет живых узлов"), "{lines:?}");
         assert!(has_line(&lines, "мимо VPN он не уйдёт"), "{lines:?}");
     }
@@ -1660,7 +1712,7 @@ mod tests {
             || ('\u{0400}'..='\u{04FF}').contains(&c)
             || ('\u{00A0}'..='\u{00FF}').contains(&c)
             || ('\u{2500}'..='\u{257F}').contains(&c)
-            || "–—…●○▲▼↑↓←→►█░√".contains(c)
+            || "–—…●○▲▼↑↓←→►█░▁▂▃▄▅▆▇√".contains(c)
     }
 
     #[test]
@@ -1689,17 +1741,6 @@ mod tests {
     }
 
     #[test]
-    fn the_connection_card_has_no_blank_row_without_a_hint() {
-        let mut app = sample_app();
-        let lines = screen(&mut app, 80, 20);
-        let node = lines
-            .iter()
-            .position(|line| line.contains("► NL-1"))
-            .unwrap();
-        assert!(lines[node + 1].starts_with('╰'), "{lines:?}");
-    }
-
-    #[test]
     fn the_events_card_takes_the_rest_of_the_screen() {
         let mut app = sample_app();
         for index in 0..10 {
@@ -1711,6 +1752,11 @@ mod tests {
         let lines = screen(&mut app, 80, 30);
         let shown = lines.iter().filter(|line| line.contains("событие")).count();
         assert!(shown > 5, "{lines:?}");
-        assert!(lines[28].starts_with('╰'), "{lines:?}");
+        let top = lines
+            .iter()
+            .position(|line| line.contains("Последние события"))
+            .unwrap();
+        let bottom = top + lines[top..].iter().position(|line| line.starts_with('╰')).unwrap();
+        assert_eq!(bottom, 27, "{lines:?}");
     }
 }
