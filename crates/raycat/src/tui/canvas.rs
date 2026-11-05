@@ -13,23 +13,36 @@ use crate::util::sanitize;
 
 pub(super) const GAP: usize = 2;
 
-/// Акцент: активная панель, активная вкладка, шапка.
-const ACCENT: u8 = 80;
-/// Фон выделенной строки.
-const SELECTED: u8 = 238;
-/// Рамка обычной панели.
-const BORDER: u8 = 240;
-/// Второстепенный текст.
-const SECONDARY: u8 = 245;
-const GREEN: u8 = 78;
-const YELLOW: u8 = 221;
-const RED: u8 = 203;
-/// Фон плашки клавиши.
-const KEY: u8 = 250;
-/// Тёмный текст на цветной плашке.
-const INK: u8 = 16;
+// Палитра из 256 цветов: truecolor через ssh и `docker exec` не определить. Один акцент,
+// три смысловых цвета одной светлоты и серые ступени. Цветных плашек с фоном нет: фон
+// только у выделенной строки.
 
-/// Цвета по тонам. Без цвета (`NO_COLOR`) остаются только жирный, тусклый и обратный.
+/// Акцент: название программы, активная вкладка, рамка панели в фокусе, кнопки.
+const ACCENT: u8 = 111;
+/// Фон выделенной строки.
+const SELECTED: u8 = 236;
+/// Рамки, разделители, пустая часть полоски.
+const BORDER: u8 = 239;
+/// Второстепенный текст и подписи.
+const SECONDARY: u8 = 245;
+const GREEN: u8 = 114;
+const YELLOW: u8 = 222;
+const RED: u8 = 210;
+/// Клавиши в подсказках.
+const BRIGHT: u8 = 255;
+
+/// Заполненная и пустая части полоски.
+pub(super) const GAUGE_FULL: char = '━';
+pub(super) const GAUGE_EMPTY: char = '─';
+
+/// Сколько из `cells` ячеек полоски заполнено при `percent` процентах.
+pub(super) fn gauge_cells(percent: u128, cells: usize) -> usize {
+    let total = u128::try_from(cells).unwrap_or(0);
+    usize::try_from(percent.min(100) * total / 100).map_or(cells, |filled| filled.min(cells))
+}
+
+/// Цвета по тонам. Без цвета (`NO_COLOR`) остаются только жирный, тусклый, подчёркнутый
+/// и обратный.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Palette {
     color: bool,
@@ -79,16 +92,28 @@ impl Palette {
         }
     }
 
-    /// Плашка: тёмный текст на цветном фоне.
-    fn badge(self, bg: u8) -> Style {
-        if self.color {
-            Style::new()
-                .fg(Color::Indexed(INK))
-                .bg(Color::Indexed(bg))
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD)
-        }
+    /// Состояние туннеля в шапке: цвет тона и жирный, без фона.
+    fn state(self, tone: Tone) -> Style {
+        let color = match tone {
+            Tone::Green => GREEN,
+            Tone::Yellow => YELLOW,
+            Tone::Red => RED,
+            _ => SECONDARY,
+        };
+        self.tint(Style::new().add_modifier(Modifier::BOLD), color)
+    }
+
+    /// Активная вкладка: акцент, жирный и подчёркивание.
+    fn active_tab(self) -> Style {
+        self.tint(
+            Style::new().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            ACCENT,
+        )
+    }
+
+    /// Клавиша в подсказке: ярко-белая и жирная. Подпись рядом — серая.
+    fn key(self) -> Style {
+        self.tint(Style::new().add_modifier(Modifier::BOLD), BRIGHT)
     }
 
     /// Выделение: фон на всю строку, цвета текста сохраняются.
@@ -100,16 +125,6 @@ impl Palette {
         } else {
             style.add_modifier(Modifier::REVERSED | Modifier::BOLD)
         }
-    }
-}
-
-/// Цвет плашки состояния туннеля: зелёный, жёлтый или красный; остальное — серое.
-fn plaque_color(tone: Tone) -> u8 {
-    match tone {
-        Tone::Green => GREEN,
-        Tone::Yellow => YELLOW,
-        Tone::Red => RED,
-        _ => SECONDARY,
     }
 }
 
@@ -280,19 +295,36 @@ impl<'a> Canvas<'a> {
         self.palette.active_border()
     }
 
-    /// Плашка акцентом: активная вкладка и название программы.
-    pub(super) fn accent_badge(&self) -> Style {
-        self.palette.badge(ACCENT)
+    /// Название программы в шапке и кнопки окон: акцент, жирный.
+    pub(super) fn accent(&self) -> Style {
+        self.palette.style(Tone::Header)
     }
 
-    /// Плашка клавиши в нижней строке и кнопки окон.
+    /// Активная вкладка.
+    pub(super) fn active_tab(&self) -> Style {
+        self.palette.active_tab()
+    }
+
+    /// Клавиша в подсказках нижней строки и в строке фильтров.
     pub(super) fn key_style(&self) -> Style {
-        self.palette.badge(KEY)
+        self.palette.key()
     }
 
-    /// Плашка состояния туннеля: цвет по тону.
-    pub(super) fn plaque(&self, tone: Tone) -> Style {
-        self.palette.badge(plaque_color(tone))
+    /// Состояние туннеля в шапке: цвет по тону.
+    pub(super) fn state(&self, tone: Tone) -> Style {
+        self.palette.state(tone)
+    }
+
+    /// Полоска на `cells` ячеек: заполненная часть цветом тона, пустая — цветом рамки.
+    /// Без цвета заполненная часть жирная, пустая тусклая: их различает и толщина линии.
+    pub(super) fn gauge(&mut self, x: usize, y: usize, percent: u128, cells: usize, tone: Tone) {
+        let filled = gauge_cells(percent, cells);
+        let full: String = std::iter::repeat_n(GAUGE_FULL, filled).collect();
+        let empty: String = std::iter::repeat_n(GAUGE_EMPTY, cells - filled).collect();
+        let style = self.style(tone).add_modifier(Modifier::BOLD);
+        self.put_style(x, y, &full, filled, style);
+        let rest = self.chrome();
+        self.put_style(x + filled, y, &empty, cells - filled, rest);
     }
 
     /// Фон выделенной строки без цвета текста.
@@ -541,7 +573,7 @@ mod tests {
 
     #[test]
     fn borders_are_grey_with_color_and_dim_without() {
-        assert_eq!(Palette::new(true).border().fg, Some(Color::Indexed(240)));
+        assert_eq!(Palette::new(true).border().fg, Some(Color::Indexed(239)));
         assert_eq!(Palette::new(false).border().fg, None);
         assert!(
             Palette::new(false)
@@ -558,9 +590,9 @@ mod tests {
         canvas.fill(0, canvas.selected());
         canvas.put_style(2, 0, "ab", 2, canvas.selected_style(Tone::Green));
         for x in 0..10 {
-            assert_eq!(buffer[(x, 0)].bg, Color::Indexed(238), "ячейка {x}");
+            assert_eq!(buffer[(x, 0)].bg, Color::Indexed(236), "ячейка {x}");
         }
-        assert_eq!(buffer[(2, 0)].fg, Color::Indexed(78));
+        assert_eq!(buffer[(2, 0)].fg, Color::Indexed(114));
     }
 
     #[test]
@@ -634,8 +666,8 @@ mod tests {
         assert_eq!(plain.style(Tone::Red).fg, None);
         assert!(plain.style(Tone::Red).add_modifier.contains(Modifier::BOLD));
         let colored = Palette::new(true);
-        assert_eq!(colored.style(Tone::Green).fg, Some(Color::Indexed(78)));
-        assert_eq!(colored.style(Tone::Red).fg, Some(Color::Indexed(203)));
+        assert_eq!(colored.style(Tone::Green).fg, Some(Color::Indexed(114)));
+        assert_eq!(colored.style(Tone::Red).fg, Some(Color::Indexed(210)));
     }
 
     #[test]
@@ -656,5 +688,41 @@ mod tests {
                 .add_modifier
                 .contains(Modifier::DIM)
         );
+    }
+
+    #[test]
+    fn a_gauge_fills_its_share_in_the_tone_and_leaves_the_rest_in_the_border_color() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 1));
+        {
+            let mut canvas = Canvas::new(&mut buffer, Palette::new(true));
+            canvas.gauge(0, 0, 34, 10, Tone::Green);
+        }
+        assert_eq!(row(&buffer, 0), "━━━───────");
+        assert_eq!(buffer[(0, 0)].fg, Color::Indexed(114));
+        assert_eq!(buffer[(3, 0)].fg, Color::Indexed(239));
+        assert_eq!(gauge_cells(0, 10), 0);
+        assert_eq!(gauge_cells(100, 10), 10);
+        assert_eq!(gauge_cells(250, 10), 10);
+    }
+
+    #[test]
+    fn nothing_but_the_selected_row_has_a_background() {
+        let colored = Palette::new(true);
+        for tone in [Tone::Green, Tone::Yellow, Tone::Red, Tone::Dim] {
+            assert_eq!(colored.state(tone).bg, None);
+        }
+        assert_eq!(colored.active_tab().bg, None);
+        assert!(
+            colored
+                .active_tab()
+                .add_modifier
+                .contains(Modifier::UNDERLINED)
+        );
+        assert_eq!(colored.key().bg, None);
+        assert_eq!(colored.state(Tone::Red).fg, Some(Color::Indexed(210)));
+        let plain = Palette::new(false);
+        assert_eq!(plain.state(Tone::Green).fg, None);
+        assert_eq!(plain.active_tab().fg, None);
+        assert_eq!(plain.key().fg, None);
     }
 }

@@ -301,7 +301,7 @@ impl Setting {
     pub(super) fn title(self) -> &'static str {
         match self {
             Self::RuDirect => "Россия напрямую",
-            Self::KillSwitch => "Kill switch",
+            Self::KillSwitch => "Killswitch",
             Self::CheckInterval => "Проверка узлов каждые",
             Self::Failures => "Сбоев до переключения",
             Self::SwitchGain => "Порог переключения",
@@ -368,7 +368,7 @@ impl Setting {
     /// Что спросить до сохранения, даже если xray не перезапустится.
     fn warning(self, value: &SettingValue) -> Option<&'static str> {
         if self == Self::KillSwitch && *value == SettingValue::Bool(false) {
-            Some("Выключить kill switch: трафик пойдёт мимо VPN, если связь пропадёт")
+            Some("Выключить killswitch: трафик пойдёт мимо VPN, если связь пропадёт")
         } else {
             None
         }
@@ -2088,7 +2088,7 @@ impl App {
             let text = if self.view.is_none() {
                 "Настройки демона ещё не получены"
             } else if setting == Setting::KillSwitch {
-                "Kill switch меняется только в режиме шлюза"
+                "Killswitch меняется только в режиме шлюза"
             } else {
                 "Этой настройки нет в ответе демона"
             };
