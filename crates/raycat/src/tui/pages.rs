@@ -24,17 +24,17 @@ const REASON_MAX: usize = 40;
 const NODE_HEADER_ROWS: usize = 2;
 /// Сколько символов масок видно в строке фильтров.
 const HIDDEN_WIDTH: usize = 24;
-/// Высота панелей «Туннель» и «Подписки» на обзоре: рамка, узел, задержка, две строки скорости.
-const TUNNEL_ROWS: usize = FRAME + 4;
+/// Высота панелей «Туннель» и «Подписки» на обзоре: рамка, узел и график в
+/// `2 * GRAPH_ROWS` строк.
+const TUNNEL_ROWS: usize = FRAME + 1 + 2 * GRAPH_ROWS;
 /// Ширина подписи скорости в панели туннеля, например `↓ 43,5 Мбит/с`.
 const SPEED_LABEL: usize = 16;
 /// Меньше стольких столбцов график не рисуется: он исчезает первым на узком экране.
 const GRAPH_MIN: usize = 3;
-/// Строка приёма в панели туннеля; отдача — под ней. Над чертой между ними график приёма
-/// в `DOWN_GRAPH_ROWS` строк, под ней график отдачи в `UP_GRAPH_ROWS`.
-const DOWN_ROW: usize = 2;
-const DOWN_GRAPH_ROWS: usize = 2;
-const UP_GRAPH_ROWS: usize = 1;
+/// Строки графика по каждую сторону от черты: приём над ней, отдача под ней.
+const GRAPH_ROWS: usize = 2;
+/// Строка приёма в панели туннеля, последняя над чертой; отдача — первая под ней.
+const DOWN_ROW: usize = GRAPH_ROWS;
 /// Имя узла в панели туннеля не короче этого, пока справа есть что убрать.
 const NAME_MIN: usize = 12;
 const DOT: &str = " · ";
@@ -239,24 +239,27 @@ fn speed_row(inner: &mut Canvas<'_>, row: usize, arrow: &str, bits: Option<u64>)
     inner.line(row, 0, vec![Seg::new(label, Tone::Plain, 0)]);
 }
 
-/// График справа от скоростей, как сеть в btop: приём растёт вверх в двух строках над
-/// чертой, отдача — вниз в строке под ней. У каждой стороны свой масштаб: отдача обычно
-/// в сотни раз меньше приёма и иначе не была бы видна.
+/// График справа от скоростей, как сеть в btop, зеркально относительно черты между
+/// строками скорости: приём растёт вверх, отдача вниз, обе на `GRAPH_ROWS` строк. Масштаб
+/// общий, как у btop с синхронизацией: высоты сторон можно сравнивать.
 fn speed_graph(inner: &mut Canvas<'_>, app: &App) {
     let cells = inner.width.saturating_sub(SPEED_LABEL + GAP);
     if cells < GRAPH_MIN || app.speeds.is_empty() {
         return;
     }
-    let down: Vec<u64> = app.speeds.iter().map(|speed| speed.down).collect();
-    let up: Vec<u64> = app.speeds.iter().map(|speed| speed.up).collect();
+    let shown = app.speeds.len().saturating_sub(cells * 2);
+    let recent = app.speeds.iter().skip(shown);
+    let down: Vec<u64> = recent.clone().map(|speed| speed.down).collect();
+    let up: Vec<u64> = recent.map(|speed| speed.up).collect();
+    let max = down.iter().chain(&up).copied().max().unwrap_or(0);
     let x = SPEED_LABEL + GAP;
+    let top = DOWN_ROW + 1 - GRAPH_ROWS;
     let style = inner.graph(true);
-    let top = DOWN_ROW + 1 - DOWN_GRAPH_ROWS;
-    for (index, row) in graph_up(&down, cells, DOWN_GRAPH_ROWS).iter().enumerate() {
+    for (index, row) in graph_up(&down, cells, GRAPH_ROWS, max).iter().enumerate() {
         inner.put_style(x, top + index, row, cells, style);
     }
     let style = inner.graph(false);
-    for (index, row) in graph_down(&up, cells, UP_GRAPH_ROWS).iter().enumerate() {
+    for (index, row) in graph_down(&up, cells, GRAPH_ROWS, max).iter().enumerate() {
         inner.put_style(x, DOWN_ROW + 1 + index, row, cells, style);
     }
 }
@@ -266,11 +269,11 @@ fn speed_graph(inner: &mut Canvas<'_>, app: &App) {
 const BRAILLE_LEFT: [u32; 4] = [0x40, 0x04, 0x02, 0x01];
 const BRAILLE_RIGHT: [u32; 4] = [0x80, 0x20, 0x10, 0x08];
 
-/// Уровни последних замеров в точках, от 0 до `dots`: высота относительно наибольшего из
-/// показанных, с округлением; ненулевой замер — хотя бы одна точка. В ячейке два замера.
-fn graph_levels(values: &[u64], cells: usize, dots: usize) -> Vec<usize> {
+/// Уровни последних замеров в точках, от 0 до `dots`: высота относительно `max`, с
+/// округлением; ненулевой замер — хотя бы одна точка. В ячейке два замера.
+fn graph_levels(values: &[u64], cells: usize, dots: usize, max: u64) -> Vec<usize> {
     let shown = &values[values.len().saturating_sub(cells * 2)..];
-    let max = u128::from(shown.iter().copied().max().unwrap_or(0));
+    let max = u128::from(max);
     let scale = u128::try_from(dots).unwrap_or(0);
     shown
         .iter()
@@ -286,8 +289,8 @@ fn graph_levels(values: &[u64], cells: usize, dots: usize) -> Vec<usize> {
 
 /// График точками Брайля, как в btop, растущий вверх: `rows` строк сверху вниз. В ячейке
 /// два замера (левый и правый столбец) и четыре точки по высоте.
-fn graph_up(values: &[u64], cells: usize, rows: usize) -> Vec<String> {
-    let levels = graph_levels(values, cells, rows * 4);
+fn graph_up(values: &[u64], cells: usize, rows: usize, max: u64) -> Vec<String> {
+    let levels = graph_levels(values, cells, rows * 4, max);
     (0..rows)
         .map(|row| {
             // Сколько точек графика ниже этой строки.
@@ -298,8 +301,8 @@ fn graph_up(values: &[u64], cells: usize, rows: usize) -> Vec<String> {
 }
 
 /// То же, растущее вниз от верхнего края: `rows` строк сверху вниз.
-fn graph_down(values: &[u64], cells: usize, rows: usize) -> Vec<String> {
-    let levels = graph_levels(values, cells, rows * 4);
+fn graph_down(values: &[u64], cells: usize, rows: usize, max: u64) -> Vec<String> {
+    let levels = graph_levels(values, cells, rows * 4, max);
     (0..rows)
         .map(|row| braille_row(&levels, row * 4, true))
         .collect()
@@ -1792,23 +1795,25 @@ mod tests {
     #[test]
     fn the_download_graph_grows_up_in_two_rows_and_keeps_the_latest_values() {
         // Полный левый столбец и половина правого: внизу всё, вверху только левый.
-        assert_eq!(graph_up(&[8, 4], 1, 2), ["⡇", "⣿"]);
-        assert_eq!(graph_up(&[0, 0], 1, 2), [" ", " "]);
+        assert_eq!(graph_up(&[8, 4], 1, 2, 8), ["⡇", "⣿"]);
+        assert_eq!(graph_up(&[0, 0], 1, 2, 0), [" ", " "]);
         // Маленький замер рядом с большим — одна точка, а не пустота.
-        assert_eq!(graph_up(&[1, 100], 1, 2), ["⢸", "⣸"]);
+        assert_eq!(graph_up(&[1, 100], 1, 2, 100), ["⢸", "⣸"]);
         // Видны только последние замеры: по два на ячейку.
-        assert_eq!(graph_up(&[8, 0, 0, 8, 8], 1, 2), ["⣿", "⣿"]);
+        assert_eq!(graph_up(&[8, 0, 0, 8, 8], 1, 2, 8), ["⣿", "⣿"]);
         // Нечётное число замеров: последняя ячейка с одним левым столбцом.
-        assert_eq!(graph_up(&[8, 8, 8], 2, 2), ["⣿⡇", "⣿⡇"]);
+        assert_eq!(graph_up(&[8, 8, 8], 2, 2, 8), ["⣿⡇", "⣿⡇"]);
     }
 
     #[test]
     fn the_upload_graph_grows_down_from_the_top_of_its_row() {
         // Левый столбец целиком, правый — две верхние точки.
-        assert_eq!(graph_down(&[4, 2], 1, 1), ["⡟"]);
+        assert_eq!(graph_down(&[4, 2], 1, 1, 4), ["⡟"]);
         // Одна точка сверху слева и полный правый столбец.
-        assert_eq!(graph_down(&[1, 4], 1, 1), ["⢹"]);
-        assert_eq!(graph_down(&[0, 0], 1, 1), [" "]);
+        assert_eq!(graph_down(&[1, 4], 1, 1, 4), ["⢹"]);
+        assert_eq!(graph_down(&[0, 0], 1, 1, 0), [" "]);
+        // Общий масштаб: та же отдача рядом с вдвое большим приёмом вдвое ниже.
+        assert_eq!(graph_down(&[1, 4], 1, 1, 8), ["⠙"]);
     }
 
     #[test]
