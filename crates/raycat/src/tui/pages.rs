@@ -217,7 +217,10 @@ fn node_row(inner: &mut Canvas<'_>, app: &App, node: &CurrentNode, xray: &XraySt
     segs.extend(xray_segs(xray));
     let room = inner.width.saturating_sub(NAME_MIN + GAP);
     let kept = fit(segs, room, display_width(DOT));
-    let right = kept.iter().map(|seg| display_width(&seg.text)).sum::<usize>()
+    let right = kept
+        .iter()
+        .map(|seg| display_width(&seg.text))
+        .sum::<usize>()
         + display_width(DOT) * kept.len().saturating_sub(1);
     let at = inner.width.saturating_sub(right);
     inner.chain(0, at, DOT, kept, inner.width);
@@ -321,7 +324,11 @@ fn braille_row(levels: &[usize], skip: usize, downward: bool) -> String {
 fn dots(column: &[u32; 4], count: usize, downward: bool) -> u32 {
     let take = count.min(4);
     if downward {
-        column.iter().rev().take(take).fold(0, |bits, dot| bits | dot)
+        column
+            .iter()
+            .rev()
+            .take(take)
+            .fold(0, |bits, dot| bits | dot)
     } else {
         column.iter().take(take).fold(0, |bits, dot| bits | dot)
     }
