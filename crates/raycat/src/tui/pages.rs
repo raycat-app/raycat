@@ -200,55 +200,59 @@ fn tunnel_panel(
     if let Some(hint) = tunnel_hint(app) {
         inner.line(2, 0, vec![Seg::new(hint, Tone::Dim, 0)]);
     } else {
-        let down: Vec<u64> = app.speeds.iter().map(|speed| speed.down).collect();
-        let up: Vec<u64> = app.speeds.iter().map(|speed| speed.up).collect();
         let now = app.speed();
-        let down_row = (2, "↓", true);
-        let up_row = (3, "↑", false);
-        speed_row(&mut inner, down_row, now.map(|speed| speed.down), &down);
-        speed_row(&mut inner, up_row, now.map(|speed| speed.up), &up);
+        speed_row(&mut inner, 2, "↓", now.map(|speed| speed.down));
+        speed_row(&mut inner, 3, "↑", now.map(|speed| speed.up));
+        if now.is_some() {
+            let down: Vec<u64> = app.speeds.iter().map(|speed| speed.down).collect();
+            speed_graph(&mut inner, 2, &down);
+        }
     }
 }
 
-/// Строка скорости: стрелка, значение и график за последние замеры. Нет замера — `—`.
-/// График приёма акцентом, отдачи серым: приём обычно и есть то, на что смотрят.
-fn speed_row(
-    inner: &mut Canvas<'_>,
-    (row, arrow, main): (usize, &str, bool),
-    bits: Option<u64>,
-    history: &[u64],
-) {
+/// Строка скорости: стрелка и значение. Нет замера — `—`.
+fn speed_row(inner: &mut Canvas<'_>, row: usize, arrow: &str, bits: Option<u64>) {
     let Some(bits) = bits else {
         inner.line(row, 0, vec![Seg::new(format!("{arrow} —"), Tone::Dim, 0)]);
         return;
     };
     let label = pad(&format!("{arrow} {}", speed_part(bits)), SPEED_LABEL);
     inner.line(row, 0, vec![Seg::new(label, Tone::Plain, 0)]);
-    let cells = inner.width.saturating_sub(SPEED_LABEL + GAP);
-    if cells >= GRAPH_MIN && !history.is_empty() {
-        let style = inner.graph(main);
-        let graph = sparkline(history, cells);
-        inner.put_style(SPEED_LABEL + GAP, row, &graph, cells, style);
-    }
 }
 
-/// Столбики по последним значениям: высота относительно самого большого из них, с
-/// округлением. Три уровня `_ ▄ █`: из тонких столбиков `▁▂▃▅▆▇` в шрифте консоли Windows
-/// нет ни одного, вместо них там квадраты.
-fn sparkline(values: &[u64], cells: usize) -> String {
-    const BARS: [char; 3] = ['_', '▄', '█'];
+/// График приёма справа от обеих строк скорости, высотой в две строки. Приём — то, на
+/// что смотрят; отдача почти всегда около нуля и остаётся числом.
+fn speed_graph(inner: &mut Canvas<'_>, top: usize, history: &[u64]) {
+    let cells = inner.width.saturating_sub(SPEED_LABEL + GAP);
+    if cells < GRAPH_MIN || history.is_empty() {
+        return;
+    }
+    let (upper, lower) = sparkline(history, cells);
+    let style = inner.graph();
+    inner.put_style(SPEED_LABEL + GAP, top, &upper, cells, style);
+    inner.put_style(SPEED_LABEL + GAP, top + 1, &lower, cells, style);
+}
+
+/// Столбики по последним значениям в две строки: верхняя и нижняя. Высота относительно
+/// самого большого значения, пять уровней с округлением. Только `▄` и `█`: тонких
+/// столбиков `▁▂▃▅▆▇` в шрифте консоли Windows нет, вместо них там квадраты.
+fn sparkline(values: &[u64], cells: usize) -> (String, String) {
     let shown = &values[values.len().saturating_sub(cells)..];
     let max = u128::from(shown.iter().copied().max().unwrap_or(0));
     shown
         .iter()
         .map(|&value| {
-            // Все нули: делить не на что, график на нижнем уровне.
-            let level = (u128::from(value) * 2 + max / 2)
-                .checked_div(max)
-                .map_or(0, |level| usize::try_from(level).unwrap_or(2));
-            BARS[level.min(2)]
+            // Все нули: делить не на что, столбика нет.
+            let level = (u128::from(value) * 4 + max / 2).checked_div(max);
+            match level {
+                None | Some(0) => (' ', ' '),
+                Some(1) => (' ', '▄'),
+                Some(2) => (' ', '█'),
+                Some(3) => ('▄', '█'),
+                Some(_) => ('█', '█'),
+            }
         })
-        .collect()
+        .unzip()
 }
 
 /// Панель подписок на обзоре: по строке на подписку, колонки совпадают у всех строк.
@@ -1698,10 +1702,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_speed_graph_has_three_levels_and_keeps_the_latest_values() {
-        assert_eq!(sparkline(&[0, 50, 100], 10), "_▄█");
-        assert_eq!(sparkline(&[0, 0], 10), "__");
-        assert_eq!(sparkline(&[100, 0, 20, 100], 2), "_█");
+    fn the_speed_graph_has_five_levels_in_two_rows_and_keeps_the_latest_values() {
+        let pair = |upper: &str, lower: &str| (upper.to_owned(), lower.to_owned());
+        let levels = sparkline(&[0, 25, 50, 75, 100], 10);
+        assert_eq!(levels, pair("   ▄█", " ▄███"));
+        assert_eq!(sparkline(&[0, 0], 10), pair("  ", "  "));
+        assert_eq!(sparkline(&[100, 0, 20, 100], 2), pair(" █", "▄█"));
     }
 
     #[test]
