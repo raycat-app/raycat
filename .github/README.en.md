@@ -32,9 +32,6 @@ raycat obtains a VPN subscription from your provider and maintains a tunnel on a
 
 The subscription is requested the same way Happ (Windows and Android) and INCY (Android) request it, so raycat also works with providers that only serve their own apps. The tunnel is built on [Xray-core](https://github.com/XTLS/Xray-core). raycat supports backup subscriptions, automatic node selection on failure, excluding nodes by mask and direct access to Russian resources. When no nodes are available, the killswitch blocks traffic outside the VPN.
 
-> [!NOTE]
-> No stable version has been released yet. Until then, use the `ghcr.io/raycat-app/raycat:dev` image and install with `--channel dev`.
-
 ## Installation
 
 ### Docker
