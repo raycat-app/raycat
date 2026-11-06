@@ -1,9 +1,13 @@
 name: Безопасность
 
+# Правка только документации и картинок README кода не меняет: анализ не запускается.
+# Ежедневный запуск по расписанию проверяет всё равно.
 on:
   push:
     branches: [main]
+    paths-ignore: ["**/*.md", ".github/assets/**"]
   pull_request:
+    paths-ignore: ["**/*.md", ".github/assets/**"]
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
