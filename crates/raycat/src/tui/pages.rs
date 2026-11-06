@@ -242,11 +242,10 @@ fn sparkline(values: &[u64], cells: usize) -> String {
     shown
         .iter()
         .map(|&value| {
-            let level = if max == 0 {
-                0
-            } else {
-                usize::try_from((u128::from(value) * 2 + max / 2) / max).unwrap_or(2)
-            };
+            // Все нули: делить не на что, график на нижнем уровне.
+            let level = (u128::from(value) * 2 + max / 2)
+                .checked_div(max)
+                .map_or(0, |level| usize::try_from(level).unwrap_or(2));
             BARS[level.min(2)]
         })
         .collect()
