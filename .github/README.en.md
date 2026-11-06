@@ -117,43 +117,26 @@ Builds are available for x86_64, arm64 and armv7, including Raspberry Pi.
 
 `raycat tui` shows the status, nodes, subscriptions, log and settings on one screen and supports a mouse. The main settings can be changed directly in the interface.
 
-<div align="center">
-  <img src="assets/tui-nodes.png" alt="raycat tui: nodes" width="820">
-</div>
+<p align="center">
+  <img src="assets/tui-nodes.png" alt="raycat tui: nodes" width="49%">
+  <img src="assets/tui-settings.png" alt="raycat tui: settings" width="49%">
+</p>
 
-<details>
-<summary><b>The Settings tab</b></summary>
+The main actions are available both in the interface and from the command line:
 
-<br>
-
-<img src="assets/tui-settings.png" alt="raycat tui: settings" width="820">
-
-</details>
-
-<br>
-
-| Key | Tab | Actions |
+| Action | In `raycat tui` | Command |
 | --- | --- | --- |
-| <kbd>1</kbd> | Overview | tunnel status, updating subscriptions, speed test |
-| <kbd>2</kbd> | Nodes | pin <kbd>p</kbd>, exclude <kbd>x</kbd>, hide unavailable <kbd>d</kbd>, speed test <kbd>t</kbd> |
-| <kbd>3</kbd> | Subscriptions | masks <kbd>m</kbd> and order <kbd>[</kbd> <kbd>]</kbd> |
-| <kbd>4</kbd> | Log | events, warnings only <kbd>w</kbd> |
-| <kbd>5</kbd> | Settings | changing the main parameters |
+| Tunnel and subscription status | tab <kbd>1</kbd> | `raycat status` |
+| List of nodes | tab <kbd>2</kbd> | `raycat nodes` |
+| Pin a node | <kbd>p</kbd> | `raycat use <node>` |
+| Return to automatic selection | <kbd>a</kbd> | `raycat use auto` |
+| Update subscriptions | <kbd>u</kbd> | `raycat update` |
+| Speed test | <kbd>s</kbd>, for the selected node <kbd>t</kbd> | `raycat speedtest` |
+| Exclude a node from automatic selection | <kbd>x</kbd> | a `deny` mask in the settings file |
+| Change settings | tab <kbd>5</kbd> | the settings file and `raycat reload` |
+| Check the settings file | — | `raycat check` |
 
-The same actions are available from the command line:
-
-| Command | Purpose |
-| --- | --- |
-| `raycat status` | tunnel status, current node, subscriptions |
-| `raycat nodes` | list of nodes |
-| `raycat use <node>`, `raycat use auto` | pin a node, return to automatic selection |
-| `raycat update` | update subscriptions now |
-| `raycat speedtest` | speed test through the VPN |
-| `raycat check` | check the settings file |
-| `raycat config` | effective settings, with secrets hidden |
-| `raycat reload` | apply changes to the settings file |
-
-Full list of commands: `raycat --help`.
+Press <kbd>?</kbd> in the interface for the other keys, and run `raycat --help` for the other commands.
 
 <p align="right"><a href="#raycat">back to top</a></p>
 
