@@ -28,6 +28,8 @@ const SECONDARY: u8 = 245;
 const GREEN: u8 = 114;
 const YELLOW: u8 = 222;
 const RED: u8 = 210;
+/// График отдачи: приглушённый лавандовый, рядом с акцентом приёма.
+const UPLOAD: u8 = 146;
 /// Клавиши в подсказках.
 const BRIGHT: u8 = 255;
 
@@ -111,9 +113,9 @@ impl Palette {
         )
     }
 
-    /// График скорости: акцентом, обычным начертанием.
-    fn graph(self) -> Style {
-        self.tint(Style::new(), ACCENT)
+    /// График скорости обычным начертанием: приём акцентом, отдача своим цветом.
+    fn graph(self, down: bool) -> Style {
+        self.tint(Style::new(), if down { ACCENT } else { UPLOAD })
     }
 
     /// Клавиша в подсказке: ярко-белая и жирная. Подпись рядом — серая.
@@ -310,9 +312,9 @@ impl<'a> Canvas<'a> {
         self.palette.active_tab()
     }
 
-    /// График скорости.
-    pub(super) fn graph(&self) -> Style {
-        let style = self.palette.graph();
+    /// График скорости: `down` — приём, иначе отдача.
+    pub(super) fn graph(&self, down: bool) -> Style {
+        let style = self.palette.graph(down);
         if self.dim {
             style.add_modifier(Modifier::DIM)
         } else {
@@ -721,11 +723,15 @@ mod tests {
     }
 
     #[test]
-    fn the_speed_graph_is_in_the_accent_and_never_bold() {
-        let colored = Palette::new(true).graph();
-        assert_eq!(colored.fg, Some(Color::Indexed(111)));
-        assert!(!colored.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(Palette::new(false).graph(), Style::new());
+    fn the_speed_graph_has_a_color_per_direction_and_is_never_bold() {
+        let colored = Palette::new(true);
+        assert_eq!(colored.graph(true).fg, Some(Color::Indexed(111)));
+        assert_eq!(colored.graph(false).fg, Some(Color::Indexed(146)));
+        for down in [true, false] {
+            let style = colored.graph(down);
+            assert!(!style.add_modifier.contains(Modifier::BOLD), "{down}");
+            assert_eq!(Palette::new(false).graph(down), Style::new());
+        }
     }
 
     #[test]

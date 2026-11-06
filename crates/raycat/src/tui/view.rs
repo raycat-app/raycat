@@ -1033,6 +1033,14 @@ mod tests {
     }
 
     #[test]
+    fn the_latency_and_the_choice_sit_at_the_right_of_the_node_row() {
+        let mut app = sample_app();
+        let lines = screen(&mut app, 100, 30);
+        let row = lines.iter().find(|line| line.contains("► NL-1")).unwrap();
+        assert!(row.contains("31 мс · закреплён │"), "{lines:?}");
+    }
+
+    #[test]
     fn without_a_speed_the_tunnel_panel_shows_a_dash_and_no_graph() {
         let mut app = sample_app();
         let lines = screen(&mut app, 100, 30);
