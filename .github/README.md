@@ -22,7 +22,7 @@
 
 <br>
 
-<img src="assets/tui.png" alt="raycat tui: обзор" width="820">
+<img src="assets/tui.png" alt="raycat tui: обзор" width="100%">
 
 </div>
 
@@ -99,12 +99,13 @@ sudo raycat tui
 
 ## Режимы работы
 
-| Через VPN | Способ запуска | Параметры |
-| --- | --- | --- |
-| **Выбранные контейнеры** | raycat в Docker, у контейнеров `network_mode: service:raycat` | `type = "gateway"` |
-| **Весь сервер** | raycat как служба systemd | `type = "gateway"` |
-| **Отдельные программы** | прокси HTTP и SOCKS5 на `127.0.0.1:7890` | `type = "proxy"` |
-| **Домашняя сеть** | raycat в сети хоста, сервер указан шлюзом на устройствах | `type = "gateway"`, `lan = true` |
+<table>
+<tr><th width="260">Через VPN</th><th width="470">Способ запуска</th><th width="270">Параметры</th></tr>
+<tr><td><b>Выбранные контейнеры</b></td><td>raycat в Docker, у контейнеров <code>network_mode: service:raycat</code></td><td><code>type = "gateway"</code></td></tr>
+<tr><td><b>Весь сервер</b></td><td>raycat как служба systemd</td><td><code>type = "gateway"</code></td></tr>
+<tr><td><b>Отдельные программы</b></td><td>прокси HTTP и SOCKS5 на <code>127.0.0.1:7890</code></td><td><code>type = "proxy"</code></td></tr>
+<tr><td><b>Домашняя сеть</b></td><td>raycat в сети хоста, сервер указан шлюзом на устройствах</td><td><code>type = "gateway"</code>, <code>lan = true</code></td></tr>
+</table>
 
 > [!IMPORTANT]
 > Killswitch действует в режиме `gateway`: без туннеля трафик и DNS-запросы не выходят наружу. В режиме `proxy` программы, не использующие прокси, обращаются в сеть напрямую.
@@ -124,17 +125,18 @@ sudo raycat tui
 
 Основные действия доступны и в интерфейсе, и из командной строки:
 
-| Действие | В `raycat tui` | Команда |
-| --- | --- | --- |
-| Состояние туннеля и подписок | вкладка <kbd>1</kbd> | `raycat status` |
-| Список узлов | вкладка <kbd>2</kbd> | `raycat nodes` |
-| Закрепить узел | <kbd>p</kbd> | `raycat use <узел>` |
-| Вернуть автоматический выбор | <kbd>a</kbd> | `raycat use auto` |
-| Обновить подписки | <kbd>u</kbd> | `raycat update` |
-| Проверить скорость | <kbd>s</kbd>, для выбранного узла <kbd>t</kbd> | `raycat speedtest` |
-| Исключить узел из автовыбора | <kbd>x</kbd> | маска `deny` в файле настроек |
-| Изменить настройки | вкладка <kbd>5</kbd> | файл настроек и `raycat reload` |
-| Проверить файл настроек | — | `raycat check` |
+<table>
+<tr><th width="360">Действие</th><th width="300">В <code>raycat tui</code></th><th width="340">Команда</th></tr>
+<tr><td>Состояние туннеля и подписок</td><td>вкладка <kbd>1</kbd></td><td><code>raycat status</code></td></tr>
+<tr><td>Список узлов</td><td>вкладка <kbd>2</kbd></td><td><code>raycat nodes</code></td></tr>
+<tr><td>Закрепить узел</td><td><kbd>p</kbd></td><td><code>raycat use &lt;узел&gt;</code></td></tr>
+<tr><td>Вернуть автоматический выбор</td><td><kbd>a</kbd></td><td><code>raycat use auto</code></td></tr>
+<tr><td>Обновить подписки</td><td><kbd>u</kbd></td><td><code>raycat update</code></td></tr>
+<tr><td>Проверить скорость</td><td><kbd>s</kbd>, для выбранного узла <kbd>t</kbd></td><td><code>raycat speedtest</code></td></tr>
+<tr><td>Исключить узел из автовыбора</td><td><kbd>x</kbd></td><td>маска <code>deny</code> в файле настроек</td></tr>
+<tr><td>Изменить настройки</td><td>вкладка <kbd>5</kbd></td><td>файл настроек и <code>raycat reload</code></td></tr>
+<tr><td>Проверить файл настроек</td><td>—</td><td><code>raycat check</code></td></tr>
+</table>
 
 Остальные клавиши показывает <kbd>?</kbd> в интерфейсе, остальные команды — `raycat --help`.
 
@@ -195,14 +197,15 @@ lan = true
 
 Переопределяют значения из файла настроек, что удобно в Docker.
 
-| Переменная | Параметр |
-| --- | --- |
-| `RAYCAT_SUBSCRIPTION`, `RAYCAT_SUBSCRIPTION_FILE` | ссылка первой подписки или файл с ней |
-| `RAYCAT_APP`, `RAYCAT_PLATFORM` | приложение и платформа первой подписки |
-| `RAYCAT_MODE`, `RAYCAT_KILL_SWITCH`, `RAYCAT_LAN`, `RAYCAT_LISTEN` | режим работы |
-| `RAYCAT_PROXY_AUTH`, `RAYCAT_PROXY_AUTH_FILE` | логин и пароль прокси |
-| `RAYCAT_SEED`, `RAYCAT_LOG` | устройство и уровень журнала |
-| `RAYCAT_CONFIG`, `RAYCAT_STATE_DIR`, `RAYCAT_SOCKET` | пути |
+<table>
+<tr><th width="560">Переменная</th><th width="440">Параметр</th></tr>
+<tr><td><code>RAYCAT_SUBSCRIPTION</code>, <code>RAYCAT_SUBSCRIPTION_FILE</code></td><td>ссылка первой подписки или файл с ней</td></tr>
+<tr><td><code>RAYCAT_APP</code>, <code>RAYCAT_PLATFORM</code></td><td>приложение и платформа первой подписки</td></tr>
+<tr><td><code>RAYCAT_MODE</code>, <code>RAYCAT_KILL_SWITCH</code>, <code>RAYCAT_LAN</code>, <code>RAYCAT_LISTEN</code></td><td>режим работы</td></tr>
+<tr><td><code>RAYCAT_PROXY_AUTH</code>, <code>RAYCAT_PROXY_AUTH_FILE</code></td><td>логин и пароль прокси</td></tr>
+<tr><td><code>RAYCAT_SEED</code>, <code>RAYCAT_LOG</code></td><td>устройство и уровень журнала</td></tr>
+<tr><td><code>RAYCAT_CONFIG</code>, <code>RAYCAT_STATE_DIR</code>, <code>RAYCAT_SOCKET</code></td><td>пути</td></tr>
+</table>
 
 </details>
 

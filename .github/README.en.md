@@ -22,7 +22,7 @@ For chosen containers, the whole server or your home network.
 
 <br>
 
-<img src="assets/tui.png" alt="raycat tui: overview" width="820">
+<img src="assets/tui.png" alt="raycat tui: overview" width="100%">
 
 </div>
 
@@ -99,12 +99,13 @@ sudo raycat tui
 
 ## Modes
 
-| Through the VPN | How to run | Settings |
-| --- | --- | --- |
-| **Selected containers** | raycat in Docker, containers with `network_mode: service:raycat` | `type = "gateway"` |
-| **The whole server** | raycat as a systemd service | `type = "gateway"` |
-| **Individual programs** | an HTTP and SOCKS5 proxy on `127.0.0.1:7890` | `type = "proxy"` |
-| **Home network** | raycat in the host network, the server set as the gateway on devices | `type = "gateway"`, `lan = true` |
+<table>
+<tr><th width="260">Through the VPN</th><th width="470">How to run</th><th width="270">Settings</th></tr>
+<tr><td><b>Selected containers</b></td><td>raycat in Docker, containers with <code>network_mode: service:raycat</code></td><td><code>type = "gateway"</code></td></tr>
+<tr><td><b>The whole server</b></td><td>raycat as a systemd service</td><td><code>type = "gateway"</code></td></tr>
+<tr><td><b>Individual programs</b></td><td>an HTTP and SOCKS5 proxy on <code>127.0.0.1:7890</code></td><td><code>type = "proxy"</code></td></tr>
+<tr><td><b>Home network</b></td><td>raycat in the host network, the server set as the gateway on devices</td><td><code>type = "gateway"</code>, <code>lan = true</code></td></tr>
+</table>
 
 > [!IMPORTANT]
 > The killswitch applies in `gateway` mode: without the tunnel, traffic and DNS queries do not leave. In `proxy` mode, programs that do not use the proxy connect directly.
@@ -124,17 +125,18 @@ Builds are available for x86_64, arm64 and armv7, including Raspberry Pi.
 
 The main actions are available both in the interface and from the command line:
 
-| Action | In `raycat tui` | Command |
-| --- | --- | --- |
-| Tunnel and subscription status | tab <kbd>1</kbd> | `raycat status` |
-| List of nodes | tab <kbd>2</kbd> | `raycat nodes` |
-| Pin a node | <kbd>p</kbd> | `raycat use <node>` |
-| Return to automatic selection | <kbd>a</kbd> | `raycat use auto` |
-| Update subscriptions | <kbd>u</kbd> | `raycat update` |
-| Speed test | <kbd>s</kbd>, for the selected node <kbd>t</kbd> | `raycat speedtest` |
-| Exclude a node from automatic selection | <kbd>x</kbd> | a `deny` mask in the settings file |
-| Change settings | tab <kbd>5</kbd> | the settings file and `raycat reload` |
-| Check the settings file | — | `raycat check` |
+<table>
+<tr><th width="360">Action</th><th width="300">In <code>raycat tui</code></th><th width="340">Command</th></tr>
+<tr><td>Tunnel and subscription status</td><td>tab <kbd>1</kbd></td><td><code>raycat status</code></td></tr>
+<tr><td>List of nodes</td><td>tab <kbd>2</kbd></td><td><code>raycat nodes</code></td></tr>
+<tr><td>Pin a node</td><td><kbd>p</kbd></td><td><code>raycat use &lt;node&gt;</code></td></tr>
+<tr><td>Return to automatic selection</td><td><kbd>a</kbd></td><td><code>raycat use auto</code></td></tr>
+<tr><td>Update subscriptions</td><td><kbd>u</kbd></td><td><code>raycat update</code></td></tr>
+<tr><td>Speed test</td><td><kbd>s</kbd>, for the selected node <kbd>t</kbd></td><td><code>raycat speedtest</code></td></tr>
+<tr><td>Exclude a node from automatic selection</td><td><kbd>x</kbd></td><td>a <code>deny</code> mask in the settings file</td></tr>
+<tr><td>Change settings</td><td>tab <kbd>5</kbd></td><td>the settings file and <code>raycat reload</code></td></tr>
+<tr><td>Check the settings file</td><td>—</td><td><code>raycat check</code></td></tr>
+</table>
 
 Press <kbd>?</kbd> in the interface for the other keys, and run `raycat --help` for the other commands.
 
@@ -195,14 +197,15 @@ On the device or in your router's DHCP, set the server's address as the gateway 
 
 These override values from the settings file, which is convenient in Docker.
 
-| Variable | Parameter |
-| --- | --- |
-| `RAYCAT_SUBSCRIPTION`, `RAYCAT_SUBSCRIPTION_FILE` | the link of the first subscription, or a file with it |
-| `RAYCAT_APP`, `RAYCAT_PLATFORM` | the app and platform of the first subscription |
-| `RAYCAT_MODE`, `RAYCAT_KILL_SWITCH`, `RAYCAT_LAN`, `RAYCAT_LISTEN` | the operating mode |
-| `RAYCAT_PROXY_AUTH`, `RAYCAT_PROXY_AUTH_FILE` | the proxy login and password |
-| `RAYCAT_SEED`, `RAYCAT_LOG` | the device and the log level |
-| `RAYCAT_CONFIG`, `RAYCAT_STATE_DIR`, `RAYCAT_SOCKET` | paths |
+<table>
+<tr><th width="560">Variable</th><th width="440">Parameter</th></tr>
+<tr><td><code>RAYCAT_SUBSCRIPTION</code>, <code>RAYCAT_SUBSCRIPTION_FILE</code></td><td>the link of the first subscription, or a file with it</td></tr>
+<tr><td><code>RAYCAT_APP</code>, <code>RAYCAT_PLATFORM</code></td><td>the app and platform of the first subscription</td></tr>
+<tr><td><code>RAYCAT_MODE</code>, <code>RAYCAT_KILL_SWITCH</code>, <code>RAYCAT_LAN</code>, <code>RAYCAT_LISTEN</code></td><td>the operating mode</td></tr>
+<tr><td><code>RAYCAT_PROXY_AUTH</code>, <code>RAYCAT_PROXY_AUTH_FILE</code></td><td>the proxy login and password</td></tr>
+<tr><td><code>RAYCAT_SEED</code>, <code>RAYCAT_LOG</code></td><td>the device and the log level</td></tr>
+<tr><td><code>RAYCAT_CONFIG</code>, <code>RAYCAT_STATE_DIR</code>, <code>RAYCAT_SOCKET</code></td><td>paths</td></tr>
+</table>
 
 </details>
 
