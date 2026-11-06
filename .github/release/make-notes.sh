@@ -4,10 +4,10 @@
 #   make-notes.sh stable <версия> <владелец/репозиторий> <с какого тега изменения или пусто> <версия dev-сборки>
 #   make-notes.sh xray <версия> <владелец/репозиторий> <прошлая stable> <коммит main с .github/versions.toml>
 #
-# Вид как у README проекта: изменения в раскрывающемся блоке, каждая группа («Новое»,
-# «Исправления»…) свёрнута отдельно и показывает число пунктов; установка — команды и
-# таблица на всю ширину (страница выпуска шире README, поэтому колонки с запасом);
-# проверка подлинности свёрнута.
+# Вид: одна строка о выпуске, затем разделы «Изменения», «Установка» и «Проверка
+# подлинности» — заголовки со стрелкой (<summary><h2>), первые два открыты. Группы
+# изменений («Новое», «Исправления»…) — свёрнутые заголовки поменьше с числом пунктов.
+# Установка — один блок команд с подписями.
 set -euo pipefail
 
 kind=${1:?не указан вид выпуска}
@@ -21,7 +21,7 @@ if [ -z "$changes" ]; then
   changes="Изменений нет."
 fi
 
-# Группы «### Название» из notes.sh — в свёрнутые блоки «Название · число пунктов».
+# Группы «### Название» из notes.sh — в свёрнутые заголовки «Название · число пунктов».
 fold_groups() {
   awk '
     { line[NR] = $0 }
@@ -37,7 +37,7 @@ fold_groups() {
           if (group > 0) print "\n</details>\n"
           group++
           print "<details>"
-          print "<summary>" title[group] " · " count[group] "</summary>"
+          print "<summary><h3>" title[group] " · " count[group] "</h3></summary>"
           continue
         }
         print line[i]
@@ -48,7 +48,7 @@ fold_groups() {
 
 IFS= read -r -d '' changes_block <<'EOF' || true
 <details open>
-<summary><b>Изменения@SINCE@</b></summary>
+<summary><h2>Изменения@SINCE@</h2></summary>
 
 @CHANGES@
 
@@ -56,22 +56,26 @@ IFS= read -r -d '' changes_block <<'EOF' || true
 EOF
 
 IFS= read -r -d '' install_block <<'EOF' || true
-## Установка
+<details open>
+<summary><h2>Установка</h2></summary>
 
 ```sh
+# Docker (также @ALSO@)
 docker pull @IMAGE@:@VERSION@
+
+# Docker для процессоров без AES, например Raspberry Pi 3 и 4 (также @ALSO_NOAES@)
+docker pull @IMAGE@:@VERSION@-noaes
+
+# служба на сервере: установщик сам выберет архив под процессор
 curl -fsSL https://raw.githubusercontent.com/@REPO@/main/deploy/install.sh | sudo sh -s -- --version @VERSION@
 ```
 
-<table>
-<tr><th width="500">Что</th><th width="1500">Где взять</th></tr>
-<tr><td><b>Образ Docker</b></td><td><code>@IMAGE@:@VERSION@</code>@ALSO@</td></tr>
-<tr><td><b>Образ без аппаратного AES</b></td><td><code>@IMAGE@:@VERSION@-noaes</code>@ALSO_NOAES@ — для Raspberry Pi 3 и 4 и других процессоров без AES</td></tr>
-<tr><td><b>Архивы</b></td><td>файлы выпуска ниже: x86_64, aarch64 и armv7; для процессоров без AES — с <code>-noaes</code> в имени</td></tr>@NOAES_ROW@
-</table>
+Архивы для x86_64, aarch64 и armv7 — в файлах выпуска ниже, для процессоров без AES — с `-noaes` в имени.@NOAES_NOTE@
+
+</details>
 
 <details>
-<summary><b>Проверка подлинности</b></summary>
+<summary><h2>Проверка подлинности</h2></summary>
 
 ```sh
 sha256sum -c SHA256SUMS
@@ -84,10 +88,10 @@ EOF
 
 case $kind in
   dev)
-    intro="Предварительная сборка канала dev: её ставят на канарейку до выхода в stable. Для рабочих серверов берите stable."
+    intro="Предварительная сборка канала dev для проверки перед stable. Для рабочих серверов берите stable."
     template="$intro"$'\n\n'"$changes_block"$'\n'"$install_block"
-    also=", также <code>:dev</code>"
-    also_noaes=", также <code>:dev-noaes</code>"
+    also=":dev"
+    also_noaes=":dev-noaes"
     ;;
   xray)
     [ -n "$since" ] && [ -n "$extra" ] || {
@@ -97,18 +101,18 @@ case $kind in
     intro="Обновление xray до @XRAY@. Сам raycat не менялся: его файлы те же, что в @PREVIOUS@, заменён только xray."
     intro+=$'\n\n'"Версия xray взята из .github/versions.toml коммита @COMMIT@. Релиз xray: https://github.com/XTLS/Xray-core/releases/tag/v@XRAY@"
     template="$intro"$'\n\n'"$install_block"
-    also=", также <code>:latest</code> и <code>:@MINOR@</code>"
-    also_noaes=", также <code>:latest-noaes</code>"
+    also=":latest и :@MINOR@"
+    also_noaes=":latest-noaes"
     ;;
   stable)
     [ -n "$extra" ] || {
       echo "ОШИБКА: для stable нужна версия dev-сборки" >&2
       exit 1
     }
-    intro="Стабильный выпуск. Это та же сборка, что прошла канал dev (\`@DEV_VERSION@\`) и выдержала срок: файлы и образы не пересобирались."
+    intro="Стабильная версия @VERSION@ — та же сборка, что прошла канал dev как \`@DEV_VERSION@\`."
     template="$intro"$'\n\n'"$changes_block"$'\n'"$install_block"
-    also=", также <code>:latest</code> и <code>:@MINOR@</code>"
-    also_noaes=", также <code>:latest-noaes</code>"
+    also=":latest и :@MINOR@"
+    also_noaes=":latest-noaes"
     ;;
   *)
     echo "ОШИБКА: вид выпуска: dev, stable или xray" >&2
@@ -126,9 +130,9 @@ minor=${version%.*}
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 xray_version=$(sed -n '/^\[xray\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' "$dir/../versions.toml")
 noaes_version=$(sed -n '/^\[xray\.noaes\]$/,/^\[/ s/^version = "\(.*\)"/\1/p' "$dir/../versions.toml")
-noaes_row=
+noaes_note=
 if [ "$noaes_version" != "$xray_version" ]; then
-  noaes_row=$'\n'"<tr><td><b>Версия xray</b></td><td>основная сборка на xray $xray_version, сборка <code>-noaes</code> — на xray $noaes_version</td></tr>"
+  noaes_note=" Сборка \`-noaes\` собрана на xray $noaes_version, основная — на xray $xray_version."
 fi
 
 folded=$(printf '%s\n' "$changes" | fold_groups)
@@ -137,7 +141,7 @@ folded=$(printf '%s\n' "$changes" | fold_groups)
 # Сначала то, что само содержит плейсхолдеры (@MINOR@ в also), потом остальное.
 text=${template//@ALSO@/"$also"}
 text=${text//@ALSO_NOAES@/"$also_noaes"}
-text=${text//@NOAES_ROW@/"$noaes_row"}
+text=${text//@NOAES_NOTE@/"$noaes_note"}
 text=${text//@SINCE@/"$since_text"}
 text=${text//@VERSION@/"$version"}
 text=${text//@MINOR@/"$minor"}
