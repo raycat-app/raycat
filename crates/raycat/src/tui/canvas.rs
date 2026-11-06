@@ -111,14 +111,9 @@ impl Palette {
         )
     }
 
-    /// График скорости: приём акцентом, отдача серым, обычным начертанием.
-    fn graph(self, main: bool) -> Style {
-        match (self.color, main) {
-            (true, true) => Style::new().fg(Color::Indexed(ACCENT)),
-            (true, false) => Style::new().fg(Color::Indexed(SECONDARY)),
-            (false, true) => Style::new(),
-            (false, false) => Style::new().add_modifier(Modifier::DIM),
-        }
+    /// График скорости: акцентом, обычным начертанием.
+    fn graph(self) -> Style {
+        self.tint(Style::new(), ACCENT)
     }
 
     /// Клавиша в подсказке: ярко-белая и жирная. Подпись рядом — серая.
@@ -315,9 +310,9 @@ impl<'a> Canvas<'a> {
         self.palette.active_tab()
     }
 
-    /// График скорости: `main` — приём (акцентом), иначе отдача (серым).
-    pub(super) fn graph(&self, main: bool) -> Style {
-        let style = self.palette.graph(main);
+    /// График скорости.
+    pub(super) fn graph(&self) -> Style {
+        let style = self.palette.graph();
         if self.dim {
             style.add_modifier(Modifier::DIM)
         } else {
@@ -726,19 +721,11 @@ mod tests {
     }
 
     #[test]
-    fn the_speed_graph_is_never_bold() {
-        for color in [true, false] {
-            for main in [true, false] {
-                let style = Palette::new(color).graph(main);
-                assert!(
-                    !style.add_modifier.contains(Modifier::BOLD),
-                    "{color} {main}"
-                );
-            }
-        }
-        let colored = Palette::new(true);
-        assert_eq!(colored.graph(true).fg, Some(Color::Indexed(111)));
-        assert_eq!(colored.graph(false).fg, Some(Color::Indexed(245)));
+    fn the_speed_graph_is_in_the_accent_and_never_bold() {
+        let colored = Palette::new(true).graph();
+        assert_eq!(colored.fg, Some(Color::Indexed(111)));
+        assert!(!colored.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(Palette::new(false).graph(), Style::new());
     }
 
     #[test]

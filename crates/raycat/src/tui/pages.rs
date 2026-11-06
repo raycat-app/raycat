@@ -200,55 +200,87 @@ fn tunnel_panel(
     if let Some(hint) = tunnel_hint(app) {
         inner.line(2, 0, vec![Seg::new(hint, Tone::Dim, 0)]);
     } else {
-        let down: Vec<u64> = app.speeds.iter().map(|speed| speed.down).collect();
-        let up: Vec<u64> = app.speeds.iter().map(|speed| speed.up).collect();
         let now = app.speed();
-        let down_row = (2, "↓", true);
-        let up_row = (3, "↑", false);
-        speed_row(&mut inner, down_row, now.map(|speed| speed.down), &down);
-        speed_row(&mut inner, up_row, now.map(|speed| speed.up), &up);
+        speed_row(&mut inner, 2, "↓", now.map(|speed| speed.down));
+        speed_row(&mut inner, 3, "↑", now.map(|speed| speed.up));
+        if now.is_some() {
+            let down: Vec<u64> = app.speeds.iter().map(|speed| speed.down).collect();
+            speed_graph(&mut inner, 2, &down);
+        }
     }
 }
 
-/// Строка скорости: стрелка, значение и график за последние замеры. Нет замера — `—`.
-/// График приёма акцентом, отдачи серым: приём обычно и есть то, на что смотрят.
-fn speed_row(
-    inner: &mut Canvas<'_>,
-    (row, arrow, main): (usize, &str, bool),
-    bits: Option<u64>,
-    history: &[u64],
-) {
+/// Строка скорости: стрелка и значение. Нет замера — `—`.
+fn speed_row(inner: &mut Canvas<'_>, row: usize, arrow: &str, bits: Option<u64>) {
     let Some(bits) = bits else {
         inner.line(row, 0, vec![Seg::new(format!("{arrow} —"), Tone::Dim, 0)]);
         return;
     };
     let label = pad(&format!("{arrow} {}", speed_part(bits)), SPEED_LABEL);
     inner.line(row, 0, vec![Seg::new(label, Tone::Plain, 0)]);
-    let cells = inner.width.saturating_sub(SPEED_LABEL + GAP);
-    if cells >= GRAPH_MIN && !history.is_empty() {
-        let style = inner.graph(main);
-        let graph = sparkline(history, cells);
-        inner.put_style(SPEED_LABEL + GAP, row, &graph, cells, style);
-    }
 }
 
-/// Столбики по последним значениям: высота относительно самого большого из них, с
-/// округлением. Три уровня `_ ▄ █`: из тонких столбиков `▁▂▃▅▆▇` в шрифте консоли Windows
-/// нет ни одного, вместо них там квадраты.
-fn sparkline(values: &[u64], cells: usize) -> String {
-    const BARS: [char; 3] = ['_', '▄', '█'];
-    let shown = &values[values.len().saturating_sub(cells)..];
+/// График приёма справа от обеих строк скорости, высотой в две строки. Приём — то, на
+/// что смотрят; отдача почти всегда около нуля и остаётся числом.
+fn speed_graph(inner: &mut Canvas<'_>, top: usize, history: &[u64]) {
+    let cells = inner.width.saturating_sub(SPEED_LABEL + GAP);
+    if cells < GRAPH_MIN || history.is_empty() {
+        return;
+    }
+    let (upper, lower) = sparkline(history, cells);
+    let style = inner.graph();
+    inner.put_style(SPEED_LABEL + GAP, top, &upper, cells, style);
+    inner.put_style(SPEED_LABEL + GAP, top + 1, &lower, cells, style);
+}
+
+/// Точки шрифта Брайля снизу вверх: левый и правый столбец ячейки.
+const BRAILLE_LEFT: [u32; 4] = [0x40, 0x04, 0x02, 0x01];
+const BRAILLE_RIGHT: [u32; 4] = [0x80, 0x20, 0x10, 0x08];
+/// Точек по высоте в двух строках графика.
+const GRAPH_DOTS: u128 = 8;
+
+/// График по последним значениям точками Брайля, как в btop: в ячейке два замера (левый
+/// и правый столбец точек) и четыре точки по высоте, в двух строках — восемь уровней.
+/// Высота относительно самого большого значения; ненулевой замер — хотя бы одна точка.
+/// Возвращает верхнюю и нижнюю строки.
+fn sparkline(values: &[u64], cells: usize) -> (String, String) {
+    let shown = &values[values.len().saturating_sub(cells * 2)..];
     let max = u128::from(shown.iter().copied().max().unwrap_or(0));
-    shown
+    let levels: Vec<usize> = shown
         .iter()
         .map(|&value| {
-            // Все нули: делить не на что, график на нижнем уровне.
-            let level = (u128::from(value) * 2 + max / 2)
+            // Все нули: делить не на что, точек нет.
+            let level = (u128::from(value) * GRAPH_DOTS + max / 2)
                 .checked_div(max)
-                .map_or(0, |level| usize::try_from(level).unwrap_or(2));
-            BARS[level.min(2)]
+                .map_or(0, |level| usize::try_from(level).unwrap_or(8));
+            if value > 0 { level.max(1) } else { level }
         })
-        .collect()
+        .collect();
+    levels
+        .chunks(2)
+        .map(|pair| {
+            let left = pair.first().copied().unwrap_or(0);
+            let right = pair.get(1).copied().unwrap_or(0);
+            let lower = dots(&BRAILLE_LEFT, left) | dots(&BRAILLE_RIGHT, right);
+            let upper = dots(&BRAILLE_LEFT, left.saturating_sub(4))
+                | dots(&BRAILLE_RIGHT, right.saturating_sub(4));
+            (braille(upper), braille(lower))
+        })
+        .unzip()
+}
+
+/// Нижние `count` точек столбца (не больше четырёх).
+fn dots(column: &[u32; 4], count: usize) -> u32 {
+    column.iter().take(count).fold(0, |bits, dot| bits | dot)
+}
+
+/// Символ Брайля по точкам; пустая ячейка — пробел.
+fn braille(bits: u32) -> char {
+    if bits == 0 {
+        ' '
+    } else {
+        char::from_u32(0x2800 + bits).unwrap_or(' ')
+    }
 }
 
 /// Панель подписок на обзоре: по строке на подписку, колонки совпадают у всех строк.
@@ -1698,10 +1730,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_speed_graph_has_three_levels_and_keeps_the_latest_values() {
-        assert_eq!(sparkline(&[0, 50, 100], 10), "_▄█");
-        assert_eq!(sparkline(&[0, 0], 10), "__");
-        assert_eq!(sparkline(&[100, 0, 20, 100], 2), "_█");
+    fn the_speed_graph_has_five_levels_in_two_rows_and_keeps_the_latest_values() {
+        let pair = |upper: &str, lower: &str| (upper.to_owned(), lower.to_owned());
+        // Полный левый столбец и половина правого: внизу всё, вверху только левый.
+        assert_eq!(sparkline(&[8, 4], 1), pair("⡇", "⣿"));
+        assert_eq!(sparkline(&[0, 0], 1), pair(" ", " "));
+        // Маленький замер рядом с большим — одна точка, а не пустота.
+        assert_eq!(sparkline(&[1, 100], 1), pair("⢸", "⣸"));
+        // Видны только последние замеры: по два на ячейку.
+        assert_eq!(sparkline(&[8, 0, 0, 8, 8], 1), pair("⣿", "⣿"));
+        // Нечётное число замеров: последняя ячейка с одним левым столбцом.
+        assert_eq!(sparkline(&[8, 8, 8], 2), pair("⣿⡇", "⣿⡇"));
     }
 
     #[test]
