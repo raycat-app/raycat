@@ -233,26 +233,54 @@ fn speed_graph(inner: &mut Canvas<'_>, top: usize, history: &[u64]) {
     inner.put_style(SPEED_LABEL + GAP, top + 1, &lower, cells, style);
 }
 
-/// Столбики по последним значениям в две строки: верхняя и нижняя. Высота относительно
-/// самого большого значения, пять уровней с округлением. Только `▄` и `█`: тонких
-/// столбиков `▁▂▃▅▆▇` в шрифте консоли Windows нет, вместо них там квадраты.
+/// Точки шрифта Брайля снизу вверх: левый и правый столбец ячейки.
+const BRAILLE_LEFT: [u32; 4] = [0x40, 0x04, 0x02, 0x01];
+const BRAILLE_RIGHT: [u32; 4] = [0x80, 0x20, 0x10, 0x08];
+/// Точек по высоте в двух строках графика.
+const GRAPH_DOTS: u128 = 8;
+
+/// График по последним значениям точками Брайля, как в btop: в ячейке два замера (левый
+/// и правый столбец точек) и четыре точки по высоте, в двух строках — восемь уровней.
+/// Высота относительно самого большого значения; ненулевой замер — хотя бы одна точка.
+/// Возвращает верхнюю и нижнюю строки.
 fn sparkline(values: &[u64], cells: usize) -> (String, String) {
-    let shown = &values[values.len().saturating_sub(cells)..];
+    let shown = &values[values.len().saturating_sub(cells * 2)..];
     let max = u128::from(shown.iter().copied().max().unwrap_or(0));
-    shown
+    let levels: Vec<usize> = shown
         .iter()
         .map(|&value| {
-            // Все нули: делить не на что, столбика нет.
-            let level = (u128::from(value) * 4 + max / 2).checked_div(max);
-            match level {
-                None | Some(0) => (' ', ' '),
-                Some(1) => (' ', '▄'),
-                Some(2) => (' ', '█'),
-                Some(3) => ('▄', '█'),
-                Some(_) => ('█', '█'),
-            }
+            // Все нули: делить не на что, точек нет.
+            let level = (u128::from(value) * GRAPH_DOTS + max / 2)
+                .checked_div(max)
+                .map_or(0, |level| usize::try_from(level).unwrap_or(8));
+            if value > 0 { level.max(1) } else { level }
+        })
+        .collect();
+    levels
+        .chunks(2)
+        .map(|pair| {
+            let left = pair.first().copied().unwrap_or(0);
+            let right = pair.get(1).copied().unwrap_or(0);
+            let lower = dots(&BRAILLE_LEFT, left) | dots(&BRAILLE_RIGHT, right);
+            let upper = dots(&BRAILLE_LEFT, left.saturating_sub(4))
+                | dots(&BRAILLE_RIGHT, right.saturating_sub(4));
+            (braille(upper), braille(lower))
         })
         .unzip()
+}
+
+/// Нижние `count` точек столбца (не больше четырёх).
+fn dots(column: &[u32; 4], count: usize) -> u32 {
+    column.iter().take(count).fold(0, |bits, dot| bits | dot)
+}
+
+/// Символ Брайля по точкам; пустая ячейка — пробел.
+fn braille(bits: u32) -> char {
+    if bits == 0 {
+        ' '
+    } else {
+        char::from_u32(0x2800 + bits).unwrap_or(' ')
+    }
 }
 
 /// Панель подписок на обзоре: по строке на подписку, колонки совпадают у всех строк.
@@ -1704,10 +1732,15 @@ mod tests {
     #[test]
     fn the_speed_graph_has_five_levels_in_two_rows_and_keeps_the_latest_values() {
         let pair = |upper: &str, lower: &str| (upper.to_owned(), lower.to_owned());
-        let levels = sparkline(&[0, 25, 50, 75, 100], 10);
-        assert_eq!(levels, pair("   ▄█", " ▄███"));
-        assert_eq!(sparkline(&[0, 0], 10), pair("  ", "  "));
-        assert_eq!(sparkline(&[100, 0, 20, 100], 2), pair(" █", "▄█"));
+        // Полный левый столбец и половина правого: внизу всё, вверху только левый.
+        assert_eq!(sparkline(&[8, 4], 1), pair("⡇", "⣿"));
+        assert_eq!(sparkline(&[0, 0], 1), pair(" ", " "));
+        // Маленький замер рядом с большим — одна точка, а не пустота.
+        assert_eq!(sparkline(&[1, 100], 1), pair("⢸", "⣸"));
+        // Видны только последние замеры: по два на ячейку.
+        assert_eq!(sparkline(&[8, 0, 0, 8, 8], 1), pair("⣿", "⣿"));
+        // Нечётное число замеров: последняя ячейка с одним левым столбцом.
+        assert_eq!(sparkline(&[8, 8, 8], 2), pair("⣿⡇", "⣿⡇"));
     }
 
     #[test]

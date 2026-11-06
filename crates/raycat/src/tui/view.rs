@@ -1027,7 +1027,7 @@ mod tests {
         let lines = screen(&mut app, 100, 30);
         assert!(has_line(&lines, "↓ "), "{lines:?}");
         assert!(has_line(&lines, "Мбит/с"), "{lines:?}");
-        assert!(has_line(&lines, "█"), "{lines:?}");
+        assert!(has_line(&lines, "⣿"), "{lines:?}");
     }
 
     #[test]
@@ -1035,7 +1035,7 @@ mod tests {
         let mut app = sample_app();
         let lines = screen(&mut app, 100, 30);
         assert!(has_line(&lines, "↓ —"), "{lines:?}");
-        let graph = has_line(&lines, "█") || has_line(&lines, "▄");
+        let graph = lines.iter().flat_map(|line| line.chars()).any(is_braille);
         assert!(!graph, "{lines:?}");
     }
 
@@ -2056,14 +2056,20 @@ mod tests {
         assert!(has_line(&lines, "ХВОСТ"), "{lines:?}");
     }
 
-    /// Символы, которые есть в шрифте консоли Windows: ASCII, кириллица, Latin-1, рамки и
-    /// символы того же набора, которыми пользуется TUI.
+    /// Символы, которые консоль Windows показывает: ASCII, кириллица, Latin-1, рамки,
+    /// точки Брайля (их нет в Consolas, но консоль берёт их из запасного шрифта, как у
+    /// btop; проверено в cmd) и символы того же набора, которыми пользуется TUI.
     fn in_console_font(c: char) -> bool {
         c.is_ascii()
             || ('\u{0400}'..='\u{04FF}').contains(&c)
             || ('\u{00A0}'..='\u{00FF}').contains(&c)
             || ('\u{2500}'..='\u{257F}').contains(&c)
+            || is_braille(c)
             || "–—…●○▲▼↑↓←→►█▄░√".contains(c)
+    }
+
+    fn is_braille(c: char) -> bool {
+        ('\u{2801}'..='\u{28FF}').contains(&c)
     }
 
     #[test]
