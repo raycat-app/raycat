@@ -1027,7 +1027,7 @@ mod tests {
         let lines = screen(&mut app, 100, 30);
         assert!(has_line(&lines, "↓ "), "{lines:?}");
         assert!(has_line(&lines, "Мбит/с"), "{lines:?}");
-        assert!(has_line(&lines, "▇"), "{lines:?}");
+        assert!(has_line(&lines, "█"), "{lines:?}");
     }
 
     #[test]
@@ -1035,7 +1035,8 @@ mod tests {
         let mut app = sample_app();
         let lines = screen(&mut app, 100, 30);
         assert!(has_line(&lines, "↓ —"), "{lines:?}");
-        assert!(!has_line(&lines, "▇"), "{lines:?}");
+        let graph = has_line(&lines, "█") || has_line(&lines, "▄");
+        assert!(!graph, "{lines:?}");
     }
 
     #[test]
@@ -2062,7 +2063,7 @@ mod tests {
             || ('\u{0400}'..='\u{04FF}').contains(&c)
             || ('\u{00A0}'..='\u{00FF}').contains(&c)
             || ('\u{2500}'..='\u{257F}').contains(&c)
-            || "–—…●○▲▼↑↓←→►█░▁▂▃▄▅▆▇√".contains(c)
+            || "–—…●○▲▼↑↓←→►█▄░√".contains(c)
     }
 
     #[test]
