@@ -3,10 +3,10 @@
 //! в `App::hits` уже после рисования, чтобы не держать заимствования на время цикла.
 
 use jiff::tz::TimeZone;
-use raycat_proto::{Node, NodeStatus, SubscriptionStatus};
+use raycat_proto::{CurrentNode, Node, NodeStatus, SubscriptionStatus, XrayStatus};
 
 use super::app::{App, Hit, InputMode, LEVELS, NODE_SPLIT, Setting, Shown, SortBy, Speed, Target};
-use super::canvas::{Canvas, GAP, Seg, wrap};
+use super::canvas::{Canvas, GAP, Seg, fit, wrap};
 use super::view::{
     BAR_CELLS, brief_phrase, delay_tone, is_expired, speed_label, speed_part, sub_phrase,
     subscription_title, traffic_seg, tunnel_hint, xray_segs,
@@ -30,6 +30,14 @@ const TUNNEL_ROWS: usize = FRAME + 4;
 const SPEED_LABEL: usize = 16;
 /// Меньше стольких столбцов график не рисуется: он исчезает первым на узком экране.
 const GRAPH_MIN: usize = 3;
+/// Строка приёма в панели туннеля; отдача — под ней. Над чертой между ними график приёма
+/// в `DOWN_GRAPH_ROWS` строк, под ней график отдачи в `UP_GRAPH_ROWS`.
+const DOWN_ROW: usize = 2;
+const DOWN_GRAPH_ROWS: usize = 2;
+const UP_GRAPH_ROWS: usize = 1;
+/// Имя узла в панели туннеля не короче этого, пока справа есть что убрать.
+const NAME_MIN: usize = 12;
+const DOT: &str = " · ";
 /// Ниже этой ширины панели идут друг под другом.
 const SPLIT_MIN: usize = 90;
 /// Ширина окна подробностей узла не больше этого числа ячеек.
@@ -177,37 +185,48 @@ fn tunnel_panel(
         return;
     };
     if let Some(node) = &status.node {
-        let name = format!("► {}", display_name(&node.name, app.names));
-        inner.line(0, 0, vec![Seg::new(name, Tone::Bold, 0)]);
-        let choice = if node.pinned {
-            "закреплён"
-        } else {
-            "авто"
-        };
-        let mut segs = vec![
-            Seg::new(
-                render::latency_text(node.latency_ms),
-                delay_tone(node.latency_ms),
-                0,
-            ),
-            Seg::new(choice, Tone::Dim, 1),
-        ];
-        segs.extend(xray_segs(&status.xray));
-        inner.line(1, 0, segs);
+        node_row(&mut inner, app, node, &status.xray);
     } else {
         inner.line(0, 0, vec![Seg::new("узел не выбран", Tone::Yellow, 0)]);
     }
     if let Some(hint) = tunnel_hint(app) {
-        inner.line(2, 0, vec![Seg::new(hint, Tone::Dim, 0)]);
+        inner.line(1, 0, vec![Seg::new(hint, Tone::Dim, 0)]);
     } else {
         let now = app.speed();
-        speed_row(&mut inner, 2, "↓", now.map(|speed| speed.down));
-        speed_row(&mut inner, 3, "↑", now.map(|speed| speed.up));
+        speed_row(&mut inner, DOWN_ROW, "↓", now.map(|speed| speed.down));
+        speed_row(&mut inner, DOWN_ROW + 1, "↑", now.map(|speed| speed.up));
         if now.is_some() {
-            let down: Vec<u64> = app.speeds.iter().map(|speed| speed.down).collect();
-            speed_graph(&mut inner, 2, &down);
+            speed_graph(&mut inner, app);
         }
     }
+}
+
+/// Первая строка панели туннеля: узел слева, справа задержка, выбор и перезапуски xray.
+/// Справа уходит лишнее по приоритету, имя узла сокращается последним.
+fn node_row(inner: &mut Canvas<'_>, app: &App, node: &CurrentNode, xray: &XrayStatus) {
+    let choice = if node.pinned {
+        "закреплён"
+    } else {
+        "авто"
+    };
+    let latency = render::latency_text(node.latency_ms);
+    let mut segs = vec![
+        Seg::new(latency, delay_tone(node.latency_ms), 0),
+        Seg::new(choice, Tone::Dim, 1),
+    ];
+    segs.extend(xray_segs(xray));
+    let room = inner.width.saturating_sub(NAME_MIN + GAP);
+    let kept = fit(segs, room, display_width(DOT));
+    let right = kept
+        .iter()
+        .map(|seg| display_width(&seg.text))
+        .sum::<usize>()
+        + display_width(DOT) * kept.len().saturating_sub(1);
+    let at = inner.width.saturating_sub(right);
+    inner.chain(0, at, DOT, kept, inner.width);
+    let name = format!("► {}", display_name(&node.name, app.names));
+    let room = at.saturating_sub(GAP);
+    inner.put(0, 0, &truncate(&name, room), room, Tone::Bold);
 }
 
 /// Строка скорости: стрелка и значение. Нет замера — `—`.
@@ -220,58 +239,99 @@ fn speed_row(inner: &mut Canvas<'_>, row: usize, arrow: &str, bits: Option<u64>)
     inner.line(row, 0, vec![Seg::new(label, Tone::Plain, 0)]);
 }
 
-/// График приёма справа от обеих строк скорости, высотой в две строки. Приём — то, на
-/// что смотрят; отдача почти всегда около нуля и остаётся числом.
-fn speed_graph(inner: &mut Canvas<'_>, top: usize, history: &[u64]) {
+/// График справа от скоростей, как сеть в btop: приём растёт вверх в двух строках над
+/// чертой, отдача — вниз в строке под ней. У каждой стороны свой масштаб: отдача обычно
+/// в сотни раз меньше приёма и иначе не была бы видна.
+fn speed_graph(inner: &mut Canvas<'_>, app: &App) {
     let cells = inner.width.saturating_sub(SPEED_LABEL + GAP);
-    if cells < GRAPH_MIN || history.is_empty() {
+    if cells < GRAPH_MIN || app.speeds.is_empty() {
         return;
     }
-    let (upper, lower) = sparkline(history, cells);
-    let style = inner.graph();
-    inner.put_style(SPEED_LABEL + GAP, top, &upper, cells, style);
-    inner.put_style(SPEED_LABEL + GAP, top + 1, &lower, cells, style);
+    let down: Vec<u64> = app.speeds.iter().map(|speed| speed.down).collect();
+    let up: Vec<u64> = app.speeds.iter().map(|speed| speed.up).collect();
+    let x = SPEED_LABEL + GAP;
+    let style = inner.graph(true);
+    let top = DOWN_ROW + 1 - DOWN_GRAPH_ROWS;
+    for (index, row) in graph_up(&down, cells, DOWN_GRAPH_ROWS).iter().enumerate() {
+        inner.put_style(x, top + index, row, cells, style);
+    }
+    let style = inner.graph(false);
+    for (index, row) in graph_down(&up, cells, UP_GRAPH_ROWS).iter().enumerate() {
+        inner.put_style(x, DOWN_ROW + 1 + index, row, cells, style);
+    }
 }
 
-/// Точки шрифта Брайля снизу вверх: левый и правый столбец ячейки.
+/// Точки шрифта Брайля левого и правого столбца ячейки снизу вверх; сверху вниз — те же
+/// в обратном порядке.
 const BRAILLE_LEFT: [u32; 4] = [0x40, 0x04, 0x02, 0x01];
 const BRAILLE_RIGHT: [u32; 4] = [0x80, 0x20, 0x10, 0x08];
-/// Точек по высоте в двух строках графика.
-const GRAPH_DOTS: u128 = 8;
 
-/// График по последним значениям точками Брайля, как в btop: в ячейке два замера (левый
-/// и правый столбец точек) и четыре точки по высоте, в двух строках — восемь уровней.
-/// Высота относительно самого большого значения; ненулевой замер — хотя бы одна точка.
-/// Возвращает верхнюю и нижнюю строки.
-fn sparkline(values: &[u64], cells: usize) -> (String, String) {
+/// Уровни последних замеров в точках, от 0 до `dots`: высота относительно наибольшего из
+/// показанных, с округлением; ненулевой замер — хотя бы одна точка. В ячейке два замера.
+fn graph_levels(values: &[u64], cells: usize, dots: usize) -> Vec<usize> {
     let shown = &values[values.len().saturating_sub(cells * 2)..];
     let max = u128::from(shown.iter().copied().max().unwrap_or(0));
-    let levels: Vec<usize> = shown
+    let scale = u128::try_from(dots).unwrap_or(0);
+    shown
         .iter()
         .map(|&value| {
             // Все нули: делить не на что, точек нет.
-            let level = (u128::from(value) * GRAPH_DOTS + max / 2)
+            let level = (u128::from(value) * scale + max / 2)
                 .checked_div(max)
-                .map_or(0, |level| usize::try_from(level).unwrap_or(8));
+                .map_or(0, |level| usize::try_from(level).unwrap_or(dots));
             if value > 0 { level.max(1) } else { level }
         })
-        .collect();
+        .collect()
+}
+
+/// График точками Брайля, как в btop, растущий вверх: `rows` строк сверху вниз. В ячейке
+/// два замера (левый и правый столбец) и четыре точки по высоте.
+fn graph_up(values: &[u64], cells: usize, rows: usize) -> Vec<String> {
+    let levels = graph_levels(values, cells, rows * 4);
+    (0..rows)
+        .map(|row| {
+            // Сколько точек графика ниже этой строки.
+            let below = (rows - 1 - row) * 4;
+            braille_row(&levels, below, false)
+        })
+        .collect()
+}
+
+/// То же, растущее вниз от верхнего края: `rows` строк сверху вниз.
+fn graph_down(values: &[u64], cells: usize, rows: usize) -> Vec<String> {
+    let levels = graph_levels(values, cells, rows * 4);
+    (0..rows)
+        .map(|row| braille_row(&levels, row * 4, true))
+        .collect()
+}
+
+/// Одна строка графика: в каждой строке видны точки уровня выше `skip`, не больше четырёх.
+fn braille_row(levels: &[usize], skip: usize, downward: bool) -> String {
     levels
         .chunks(2)
         .map(|pair| {
-            let left = pair.first().copied().unwrap_or(0);
-            let right = pair.get(1).copied().unwrap_or(0);
-            let lower = dots(&BRAILLE_LEFT, left) | dots(&BRAILLE_RIGHT, right);
-            let upper = dots(&BRAILLE_LEFT, left.saturating_sub(4))
-                | dots(&BRAILLE_RIGHT, right.saturating_sub(4));
-            (braille(upper), braille(lower))
+            let left = pair.first().map_or(0, |level| level.saturating_sub(skip));
+            let right = pair.get(1).map_or(0, |level| level.saturating_sub(skip));
+            let left = dots(&BRAILLE_LEFT, left, downward);
+            let right = dots(&BRAILLE_RIGHT, right, downward);
+            braille(left | right)
         })
-        .unzip()
+        .collect()
 }
 
-/// Нижние `count` точек столбца (не больше четырёх).
-fn dots(column: &[u32; 4], count: usize) -> u32 {
-    column.iter().take(count).fold(0, |bits, dot| bits | dot)
+/// `count` точек столбца (не больше четырёх) от нижнего края или, если `downward`, от
+/// верхнего.
+fn dots(column: &[u32; 4], count: usize, downward: bool) -> u32 {
+    let take = count.min(4);
+    if downward {
+        column
+            .iter()
+            .rev()
+            .take(take)
+            .fold(0, |bits, dot| bits | dot)
+    } else {
+        column.iter().take(take).fold(0, |bits, dot| bits | dot)
+    }
 }
 
 /// Символ Брайля по точкам; пустая ячейка — пробел.
@@ -1730,17 +1790,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_speed_graph_has_five_levels_in_two_rows_and_keeps_the_latest_values() {
-        let pair = |upper: &str, lower: &str| (upper.to_owned(), lower.to_owned());
+    fn the_download_graph_grows_up_in_two_rows_and_keeps_the_latest_values() {
         // Полный левый столбец и половина правого: внизу всё, вверху только левый.
-        assert_eq!(sparkline(&[8, 4], 1), pair("⡇", "⣿"));
-        assert_eq!(sparkline(&[0, 0], 1), pair(" ", " "));
+        assert_eq!(graph_up(&[8, 4], 1, 2), ["⡇", "⣿"]);
+        assert_eq!(graph_up(&[0, 0], 1, 2), [" ", " "]);
         // Маленький замер рядом с большим — одна точка, а не пустота.
-        assert_eq!(sparkline(&[1, 100], 1), pair("⢸", "⣸"));
+        assert_eq!(graph_up(&[1, 100], 1, 2), ["⢸", "⣸"]);
         // Видны только последние замеры: по два на ячейку.
-        assert_eq!(sparkline(&[8, 0, 0, 8, 8], 1), pair("⣿", "⣿"));
+        assert_eq!(graph_up(&[8, 0, 0, 8, 8], 1, 2), ["⣿", "⣿"]);
         // Нечётное число замеров: последняя ячейка с одним левым столбцом.
-        assert_eq!(sparkline(&[8, 8, 8], 2), pair("⣿⡇", "⣿⡇"));
+        assert_eq!(graph_up(&[8, 8, 8], 2, 2), ["⣿⡇", "⣿⡇"]);
+    }
+
+    #[test]
+    fn the_upload_graph_grows_down_from_the_top_of_its_row() {
+        // Левый столбец целиком, правый — две верхние точки.
+        assert_eq!(graph_down(&[4, 2], 1, 1), ["⡟"]);
+        // Одна точка сверху слева и полный правый столбец.
+        assert_eq!(graph_down(&[1, 4], 1, 1), ["⢹"]);
+        assert_eq!(graph_down(&[0, 0], 1, 1), [" "]);
     }
 
     #[test]
