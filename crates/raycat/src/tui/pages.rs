@@ -242,18 +242,22 @@ fn speed_row(inner: &mut Canvas<'_>, row: usize, arrow: &str, bits: Option<u64>)
 /// График справа от скоростей, как сеть в btop, зеркально относительно черты между
 /// строками скорости: приём растёт вверх, отдача вниз, обе на `GRAPH_ROWS` строк. Масштаб
 /// общий, как у btop с синхронизацией: высоты сторон можно сравнивать. Строки у черты
-/// темнее, у края светлее.
+/// темнее, у края светлее. Новые замеры справа, старые уходят влево; пока истории мало,
+/// слева пусто.
 fn speed_graph(inner: &mut Canvas<'_>, app: &App) {
     let cells = inner.width.saturating_sub(SPEED_LABEL + GAP);
     if cells < GRAPH_MIN || app.speeds.is_empty() {
         return;
     }
     let shown = app.speeds.len().saturating_sub(cells * 2);
-    let recent = app.speeds.iter().skip(shown);
+    // Нечётное число замеров: слева нулевой, чтобы последний замер был в правом столбце.
+    let pad = (app.speeds.len() - shown) % 2;
+    let zero = Speed { down: 0, up: 0 };
+    let recent = std::iter::repeat_n(zero, pad).chain(app.speeds.iter().skip(shown).copied());
     let down: Vec<u64> = recent.clone().map(|speed| speed.down).collect();
     let up: Vec<u64> = recent.map(|speed| speed.up).collect();
     let max = down.iter().chain(&up).copied().max().unwrap_or(0);
-    let x = SPEED_LABEL + GAP;
+    let x = SPEED_LABEL + GAP + cells.saturating_sub(down.len() / 2);
     let top = DOWN_ROW + 1 - GRAPH_ROWS;
     for (index, row) in graph_up(&down, cells, GRAPH_ROWS, max).iter().enumerate() {
         let style = inner.graph(true, index == 0);
