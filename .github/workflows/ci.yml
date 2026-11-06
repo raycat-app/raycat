@@ -80,30 +80,81 @@ jobs:
         with:
           config: .github/typos.toml
 
-  lockfile:
-    name: Cargo.lock
+  # Быстрые проверки без сборки в одном задании: у бесплатного тарифа 20 заданий
+  # одновременно, а каждое отдельное задание тратит 10–20 с на запуск. Шаги идут все, даже
+  # если упал предыдущий: в итоге видны все проблемы сразу.
+  scripts:
+    name: Скрипты и конфиги
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: shellcheck
       # Для проверки хватает cargo с образа раннера: rustup не качает тулчейн из rust-toolchain.toml.
       - id: lock
+        name: Cargo.lock
         env:
           RUSTUP_TOOLCHAIN: stable
         run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Обновлённый Cargo.lock
-        if: ${{ failure() && steps.lock.outcome == 'failure' }}
+        if: ${{ !cancelled() && steps.lock.outcome == 'failure' }}
+        env:
+          RUSTUP_TOOLCHAIN: stable
         run: cargo metadata --format-version 1 > /dev/null
-      - if: ${{ failure() && steps.lock.outcome == 'failure' }}
+      - if: ${{ !cancelled() && steps.lock.outcome == 'failure' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Cargo.lock
           path: Cargo.lock
           retention-days: 7
+      - name: "Установщик: shellcheck"
+        if: ${{ !cancelled() }}
+        run: |
+          shellcheck --shell=sh deploy/install.sh .github/e2e/installer/container.sh
+          shellcheck --shell=bash .github/e2e/installer/release.sh .github/e2e/installer/systemd.sh
+      - name: "Установщик: разбор dash и bash"
+        if: ${{ !cancelled() }}
+        run: |
+          dash -n deploy/install.sh
+          dash -n .github/e2e/installer/container.sh
+          bash -n .github/e2e/installer/release.sh
+          bash -n .github/e2e/installer/systemd.sh
+      - name: Скрипты выпуска
+        if: ${{ !cancelled() }}
+        run: bash .github/release/test.sh
+      - name: Скрипты обновления xray
+        if: ${{ !cancelled() }}
+        run: bash .github/xray/test.sh
+      - name: Скрипты зависимостей
+        if: ${{ !cancelled() }}
+        run: bash .github/deps/test.sh
+      - name: Скрипты ботов
+        if: ${{ !cancelled() }}
+        run: bash .github/bots/test.sh
+      # Архив xray по версии из versions.toml: не качать его с GitHub в каждом задании.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: ${{ !cancelled() }}
+        with:
+          path: ~/.cache/raycat-xray
+          key: xray-${{ hashFiles('.github/versions.toml') }}
+      - id: xray
+        name: Скачивание xray
+        if: ${{ !cancelled() }}
+        run: XRAY_CACHE="$HOME/.cache/raycat-xray" bash .github/build/fetch-xray.sh
+      - name: Конфиги xray (xray run -test)
+        if: ${{ !cancelled() && steps.xray.outcome == 'success' }}
+        run: |
+          for config in crates/xray/tests/golden/*.json; do
+            echo "::group::${config}"
+            ./xray run -test -c "$config"
+            echo "::endgroup::"
+          done
 
   schema:
     name: Схема настроек
@@ -598,26 +649,6 @@ jobs:
             echo "::endgroup::"
           done
 
-  xray-config:
-    name: Проверка конфигов xray
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Скачивание xray
-        run: bash .github/build/fetch-xray.sh
-      - name: xray run -test
-        run: |
-          for config in crates/xray/tests/golden/*.json; do
-            echo "::group::${config}"
-            ./xray run -test -c "$config"
-            echo "::endgroup::"
-          done
-
   xray-api:
     name: API xray
     needs: changes
@@ -635,8 +666,13 @@ jobs:
           shared-key: dev
           save-if: false
           add-rust-environment-hash-key: false
+      # Архив xray по версии из versions.toml: не качать его с GitHub в каждом задании.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/raycat-xray
+          key: xray-${{ hashFiles('.github/versions.toml') }}
       - name: Скачивание xray
-        run: bash .github/build/fetch-xray.sh
+        run: XRAY_CACHE="$HOME/.cache/raycat-xray" bash .github/build/fetch-xray.sh
       - name: Тесты клиента с настоящим xray
         env:
           XRAY_BIN: ./xray
@@ -661,8 +697,13 @@ jobs:
           add-rust-environment-hash-key: false
       - name: Сборка
         run: cargo build --locked
+      # Архив xray по версии из versions.toml: не качать его с GitHub в каждом задании.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/raycat-xray
+          key: xray-${{ hashFiles('.github/versions.toml') }}
       - name: Скачивание xray
-        run: bash .github/build/fetch-xray.sh
+        run: XRAY_CACHE="$HOME/.cache/raycat-xray" bash .github/build/fetch-xray.sh
       - name: Стенд
         run: bash .github/e2e/proxy.sh
 
@@ -724,30 +765,6 @@ jobs:
           MODE: ${{ matrix.mode }}
         run: bash .github/e2e/gateway.sh "$MODE"
 
-  installer-lint:
-    name: "Установщик: shellcheck"
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
-        with:
-          tool: shellcheck
-      - name: shellcheck
-        run: |
-          shellcheck --shell=sh deploy/install.sh .github/e2e/installer/container.sh
-          shellcheck --shell=bash .github/e2e/installer/release.sh .github/e2e/installer/systemd.sh
-      - name: Разбор dash и bash
-        run: |
-          dash -n deploy/install.sh
-          dash -n .github/e2e/installer/container.sh
-          bash -n .github/e2e/installer/release.sh
-          bash -n .github/e2e/installer/systemd.sh
-
   installer:
     name: "Установщик: ${{ matrix.image }}"
     needs: build-x86_64
@@ -769,8 +786,13 @@ jobs:
         with:
           name: raycat-x86_64-unknown-linux-musl
           path: dist
+      # Архив xray по версии из versions.toml: не качать его с GitHub в каждом задании.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/raycat-xray
+          key: xray-${{ hashFiles('.github/versions.toml') }}
       - name: Скачивание xray
-        run: bash .github/build/fetch-xray.sh
+        run: XRAY_CACHE="$HOME/.cache/raycat-xray" bash .github/build/fetch-xray.sh
       - name: Ресурсы выпуска
         run: |
           chmod +x dist/raycat
@@ -800,8 +822,13 @@ jobs:
         with:
           name: raycat-x86_64-unknown-linux-musl
           path: dist
+      # Архив xray по версии из versions.toml: не качать его с GitHub в каждом задании.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/raycat-xray
+          key: xray-${{ hashFiles('.github/versions.toml') }}
       - name: Скачивание xray
-        run: bash .github/build/fetch-xray.sh
+        run: XRAY_CACHE="$HOME/.cache/raycat-xray" bash .github/build/fetch-xray.sh
       - name: nftables
         run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends nftables
       - name: Ресурсы выпуска
@@ -838,61 +865,13 @@ jobs:
       - name: Стенд
         run: bash .github/e2e/lan.sh
 
-  release-scripts:
-    name: Скрипты выпуска
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: bash .github/release/test.sh
-
-  xray-scripts:
-    name: Скрипты обновления xray
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: bash .github/xray/test.sh
-
-  deps-scripts:
-    name: Скрипты зависимостей
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: bash .github/deps/test.sh
-
-  bots-scripts:
-    name: Скрипты ботов
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - run: bash .github/bots/test.sh
-
   result:
     name: Итог
     if: ${{ always() }}
     needs:
       - changes
       - lint
-      - lockfile
+      - scripts
       - schema
       - test
       - msrv
@@ -906,19 +885,13 @@ jobs:
       - image-amd64
       - image-arm64
       - xray-noaes-armv7
-      - xray-config
       - xray-api
       - e2e-proxy
       - nftables
       - e2e-gateway
       - e2e-lan
-      - installer-lint
       - installer
       - installer-systemd
-      - release-scripts
-      - xray-scripts
-      - deps-scripts
-      - bots-scripts
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
