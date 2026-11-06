@@ -232,20 +232,21 @@ fn speed_row(
     }
 }
 
-/// Столбики `▁▂▃▄▅▆▇` по последним значениям: высота относительно самого большого из них.
+/// Столбики по последним значениям: высота относительно самого большого из них, с
+/// округлением. Три уровня `_ ▄ █`: из тонких столбиков `▁▂▃▅▆▇` в шрифте консоли Windows
+/// нет ни одного, вместо них там квадраты.
 fn sparkline(values: &[u64], cells: usize) -> String {
-    const BARS: [char; 7] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇'];
+    const BARS: [char; 3] = ['_', '▄', '█'];
     let shown = &values[values.len().saturating_sub(cells)..];
-    let max = shown.iter().copied().max().unwrap_or(0);
+    let max = u128::from(shown.iter().copied().max().unwrap_or(0));
     shown
         .iter()
         .map(|&value| {
-            let level = if max == 0 {
-                0
-            } else {
-                usize::try_from(u128::from(value) * 6 / u128::from(max)).unwrap_or(6)
-            };
-            BARS[level.min(6)]
+            // Все нули: делить не на что, график на нижнем уровне.
+            let level = (u128::from(value) * 2 + max / 2)
+                .checked_div(max)
+                .map_or(0, |level| usize::try_from(level).unwrap_or(2));
+            BARS[level.min(2)]
         })
         .collect()
 }
@@ -1695,6 +1696,13 @@ fn settings_text(canvas: &mut Canvas<'_>, app: &App, top: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_speed_graph_has_three_levels_and_keeps_the_latest_values() {
+        assert_eq!(sparkline(&[0, 50, 100], 10), "_▄█");
+        assert_eq!(sparkline(&[0, 0], 10), "__");
+        assert_eq!(sparkline(&[100, 0, 20, 100], 2), "_█");
+    }
 
     #[test]
     fn the_overview_columns_do_not_overlap_in_40_62_and_80_column_panels() {
