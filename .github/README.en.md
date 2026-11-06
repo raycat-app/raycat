@@ -22,7 +22,7 @@ For chosen containers, the whole server or your home network.
 
 <br>
 
-<img src="assets/tui.png" alt="raycat tui: overview" width="820">
+<img src="assets/tui.png" alt="raycat tui: overview" width="100%">
 
 </div>
 

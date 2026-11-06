@@ -22,7 +22,7 @@
 
 <br>
 
-<img src="assets/tui.png" alt="raycat tui: обзор" width="820">
+<img src="assets/tui.png" alt="raycat tui: обзор" width="100%">
 
 </div>
 
