@@ -325,6 +325,7 @@ check "dev-версия: следующая stable и номер запуска"
 check "dev-версия: тег" "tag=v0.11.0-dev.57" "$(grep '^tag=' "$work/gh-output")"
 check "dev-версия: прошлая stable" "last_tag=v0.10.0" "$(grep '^last_tag=' "$work/gh-output")"
 check "dev-версия: прошлая dev" "previous=v0.10.1-dev.2" "$(grep '^previous=' "$work/gh-output")"
+check "следующая версия: та же, что в dev-версии" "0.11.0" "$(in_repo bash "$dir/next-version.sh")"
 
 # Архивы
 

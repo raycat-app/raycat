@@ -306,7 +306,7 @@ fn request_headers(url: &Url) -> Vec<(String, String)> {
         ("Host".to_owned(), url.host_header()),
         (
             "User-Agent".to_owned(),
-            format!("raycat/{}", env!("CARGO_PKG_VERSION")),
+            format!("raycat/{}", crate::VERSION),
         ),
         ("Accept".to_owned(), "*/*".to_owned()),
         ("Accept-Encoding".to_owned(), "identity".to_owned()),

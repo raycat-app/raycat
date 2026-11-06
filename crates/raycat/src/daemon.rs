@@ -85,7 +85,7 @@ fn initial_status(config: &Config) -> Status {
         Mode::Gateway { kill_switch, .. } => (ApiMode::Gateway, Some(kill_switch)),
     };
     Status {
-        version: env!("CARGO_PKG_VERSION").to_owned(),
+        version: crate::VERSION.to_owned(),
         mode,
         uptime_secs: 0,
         kill_switch,
@@ -143,7 +143,7 @@ async fn serve(config: Config, file: ConfigFile, store: Store, socket: PathBuf) 
     }
     info!(
         "raycat {} запущен: {}, подписок: {}, состояние: {}, API: {}",
-        env!("CARGO_PKG_VERSION"),
+        crate::VERSION,
         plan::describe_mode(&daemon.config),
         daemon.subs.len(),
         daemon.store.root().display(),

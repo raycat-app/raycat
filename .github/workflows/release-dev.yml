@@ -62,6 +62,19 @@ jobs:
         with:
           name: xray-noaes-armv7
           path: artifacts/xray-noaes-armv7
+      # Программа называет себя номером, под которым выйдет в stable: X.Y.Z из X.Y.Z-dev.N.
+      - name: Номер версии в программе
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          bin=artifacts/bin/raycat-x86_64-unknown-linux-musl/raycat
+          chmod +x "$bin"
+          line=$("$bin" --version)
+          echo "$line"
+          [[ "$line" == "raycat ${VERSION%-dev.*} (${GITHUB_SHA:0:7})" ]] || {
+            echo "::error::в программе «$line», ожидался номер ${VERSION%-dev.*}"
+            exit 1
+          }
       - name: Файлы для архивов
         run: bash .github/release/inputs.sh artifacts inputs
       - name: Архивы

@@ -437,7 +437,7 @@ async fn events(
 ) -> Sse<impl tokio_stream::Stream<Item = Result<SseEvent, Infallible>>> {
     let receiver = shared.subscribe();
     let hello = Event::Hello {
-        version: env!("CARGO_PKG_VERSION").to_owned(),
+        version: crate::VERSION.to_owned(),
     };
     let live = BroadcastStream::new(receiver)
         .filter_map(Result::ok)

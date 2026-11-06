@@ -231,7 +231,7 @@ impl Client {
         };
         let request = format!(
             "{method} {path} HTTP/1.1\r\nHost: raycat\r\nUser-Agent: raycat/{}\r\nAccept: {accept}\r\nConnection: close\r\n{payload}",
-            env!("CARGO_PKG_VERSION")
+            crate::VERSION
         );
         stream.write_all(request.as_bytes()).await.map_err(map_io)?;
         read_head(BufReader::new(stream)).await
