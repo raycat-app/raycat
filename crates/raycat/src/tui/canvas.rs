@@ -28,8 +28,12 @@ const SECONDARY: u8 = 245;
 const GREEN: u8 = 114;
 const YELLOW: u8 = 222;
 const RED: u8 = 210;
-/// График отдачи: приглушённый лавандовый, рядом с акцентом приёма.
-const UPLOAD: u8 = 146;
+/// График скорости, как в btop: у черты темнее, к краю светлее. Приём в цвет акцента,
+/// отдача приглушённым лавандовым.
+const DOWN_INNER: u8 = 68;
+const DOWN_OUTER: u8 = ACCENT;
+const UP_INNER: u8 = 103;
+const UP_OUTER: u8 = 146;
 /// Клавиши в подсказках.
 const BRIGHT: u8 = 255;
 
@@ -113,9 +117,16 @@ impl Palette {
         )
     }
 
-    /// График скорости обычным начертанием: приём акцентом, отдача своим цветом.
-    fn graph(self, down: bool) -> Style {
-        self.tint(Style::new(), if down { ACCENT } else { UPLOAD })
+    /// Строка графика скорости обычным начертанием: `down` — приём, иначе отдача;
+    /// `outer` — строка у края графика, иначе у черты.
+    fn graph(self, down: bool, outer: bool) -> Style {
+        let color = match (down, outer) {
+            (true, false) => DOWN_INNER,
+            (true, true) => DOWN_OUTER,
+            (false, false) => UP_INNER,
+            (false, true) => UP_OUTER,
+        };
+        self.tint(Style::new(), color)
     }
 
     /// Клавиша в подсказке: ярко-белая и жирная. Подпись рядом — серая.
@@ -312,9 +323,9 @@ impl<'a> Canvas<'a> {
         self.palette.active_tab()
     }
 
-    /// График скорости: `down` — приём, иначе отдача.
-    pub(super) fn graph(&self, down: bool) -> Style {
-        let style = self.palette.graph(down);
+    /// Строка графика скорости: `down` — приём, иначе отдача; `outer` — у края графика.
+    pub(super) fn graph(&self, down: bool, outer: bool) -> Style {
+        let style = self.palette.graph(down, outer);
         if self.dim {
             style.add_modifier(Modifier::DIM)
         } else {
@@ -723,14 +734,17 @@ mod tests {
     }
 
     #[test]
-    fn the_speed_graph_has_a_color_per_direction_and_is_never_bold() {
+    fn the_speed_graph_is_darker_at_the_middle_and_never_bold() {
         let colored = Palette::new(true);
-        assert_eq!(colored.graph(true).fg, Some(Color::Indexed(111)));
-        assert_eq!(colored.graph(false).fg, Some(Color::Indexed(146)));
-        for down in [true, false] {
-            let style = colored.graph(down);
-            assert!(!style.add_modifier.contains(Modifier::BOLD), "{down}");
-            assert_eq!(Palette::new(false).graph(down), Style::new());
+        let fg = |down, outer| colored.graph(down, outer).fg;
+        assert_eq!(fg(true, false), Some(Color::Indexed(68)));
+        assert_eq!(fg(true, true), Some(Color::Indexed(111)));
+        assert_eq!(fg(false, false), Some(Color::Indexed(103)));
+        assert_eq!(fg(false, true), Some(Color::Indexed(146)));
+        for (down, outer) in [(true, true), (true, false), (false, true), (false, false)] {
+            let style = colored.graph(down, outer);
+            assert!(!style.add_modifier.contains(Modifier::BOLD));
+            assert_eq!(Palette::new(false).graph(down, outer), Style::new());
         }
     }
 

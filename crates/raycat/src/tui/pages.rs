@@ -241,7 +241,8 @@ fn speed_row(inner: &mut Canvas<'_>, row: usize, arrow: &str, bits: Option<u64>)
 
 /// График справа от скоростей, как сеть в btop, зеркально относительно черты между
 /// строками скорости: приём растёт вверх, отдача вниз, обе на `GRAPH_ROWS` строк. Масштаб
-/// общий, как у btop с синхронизацией: высоты сторон можно сравнивать.
+/// общий, как у btop с синхронизацией: высоты сторон можно сравнивать. Строки у черты
+/// темнее, у края светлее.
 fn speed_graph(inner: &mut Canvas<'_>, app: &App) {
     let cells = inner.width.saturating_sub(SPEED_LABEL + GAP);
     if cells < GRAPH_MIN || app.speeds.is_empty() {
@@ -254,12 +255,12 @@ fn speed_graph(inner: &mut Canvas<'_>, app: &App) {
     let max = down.iter().chain(&up).copied().max().unwrap_or(0);
     let x = SPEED_LABEL + GAP;
     let top = DOWN_ROW + 1 - GRAPH_ROWS;
-    let style = inner.graph(true);
     for (index, row) in graph_up(&down, cells, GRAPH_ROWS, max).iter().enumerate() {
+        let style = inner.graph(true, index == 0);
         inner.put_style(x, top + index, row, cells, style);
     }
-    let style = inner.graph(false);
     for (index, row) in graph_down(&up, cells, GRAPH_ROWS, max).iter().enumerate() {
+        let style = inner.graph(false, index + 1 == GRAPH_ROWS);
         inner.put_style(x, DOWN_ROW + 1 + index, row, cells, style);
     }
 }
