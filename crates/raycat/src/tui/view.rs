@@ -1027,7 +1027,9 @@ mod tests {
         let lines = screen(&mut app, 100, 30);
         assert!(has_line(&lines, "↓ "), "{lines:?}");
         assert!(has_line(&lines, "Мбит/с"), "{lines:?}");
-        assert!(has_line(&lines, "⣿"), "{lines:?}");
+        // Один замер — левый столбец точек на всю высоту в обеих строках.
+        let full = lines.iter().filter(|line| line.contains("⡇")).count();
+        assert_eq!(full, 2, "{lines:?}");
     }
 
     #[test]
