@@ -6,7 +6,8 @@
 #
 # Вид как у README проекта: изменения в раскрывающемся блоке, каждая группа («Новое»,
 # «Исправления»…) свёрнута отдельно и показывает число пунктов; установка — команды и
-# таблица на всю ширину; проверка подлинности свёрнута.
+# таблица на всю ширину (страница выпуска шире README, поэтому колонки с запасом);
+# проверка подлинности свёрнута.
 set -euo pipefail
 
 kind=${1:?не указан вид выпуска}
@@ -63,7 +64,7 @@ curl -fsSL https://raw.githubusercontent.com/@REPO@/main/deploy/install.sh | sud
 ```
 
 <table>
-<tr><th width="300">Что</th><th width="700">Где взять</th></tr>
+<tr><th width="500">Что</th><th width="1500">Где взять</th></tr>
 <tr><td><b>Образ Docker</b></td><td><code>@IMAGE@:@VERSION@</code>@ALSO@</td></tr>
 <tr><td><b>Образ без аппаратного AES</b></td><td><code>@IMAGE@:@VERSION@-noaes</code>@ALSO_NOAES@ — для Raspberry Pi 3 и 4 и других процессоров без AES</td></tr>
 <tr><td><b>Архивы</b></td><td>файлы выпуска ниже: x86_64, aarch64 и armv7; для процессоров без AES — с <code>-noaes</code> в имени</td></tr>@NOAES_ROW@
