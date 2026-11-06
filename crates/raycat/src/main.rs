@@ -35,6 +35,10 @@ use raycat_config::Config;
 
 use store::Store;
 
+/// Номер выпуска: его вычисляет CI и передаёт сборке (`RAYCAT_RELEASE_VERSION`), без CI —
+/// версия из Cargo.toml. Один номер для `--version`, API, журнала и User-Agent.
+const VERSION: &str = env!("RAYCAT_RELEASE");
+
 fn main() -> ExitCode {
     let matches = match cli::command().try_get_matches() {
         Ok(matches) => matches,

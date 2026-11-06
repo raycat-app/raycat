@@ -12,8 +12,7 @@ run_number=${RUN_NUMBER:?не задан RUN_NUMBER}
 }
 
 last_tag=$(bash "$dir/stable-tag.sh" HEAD)
-last=${last_tag#v}
-next=$(bash "$dir/collect.sh" "$last_tag" HEAD | bash "$dir/version.sh" "${last:-0.0.0}")
+next=$(bash "$dir/next-version.sh" HEAD)
 version="${next}-dev.${run_number}"
 previous=$(git describe --tags --abbrev=0 --match 'v*-dev.*' HEAD 2>/dev/null || true)
 

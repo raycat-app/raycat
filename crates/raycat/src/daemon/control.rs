@@ -380,7 +380,7 @@ impl Daemon {
         );
         let now = now_unix();
         Status {
-            version: env!("CARGO_PKG_VERSION").to_owned(),
+            version: crate::VERSION.to_owned(),
             mode,
             uptime_secs: 0,
             kill_switch,
