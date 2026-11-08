@@ -18,6 +18,9 @@ jobs:
   codeql:
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-24.04
+    # Обычно анализ занимает до 6 минут. Без предела зависший раннер держит запуск сутки:
+    # так было 8.11.2026, когда GitHub отдавал 504 и терял раннеры.
+    timeout-minutes: 30
     permissions:
       actions: read
       contents: read
