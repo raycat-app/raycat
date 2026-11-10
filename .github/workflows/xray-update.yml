@@ -93,7 +93,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/xray"
           for archive in Xray-linux-64.zip Xray-linux-arm64-v8a.zip Xray-linux-arm32-v7a.zip; do
             for file in "$archive" "$archive.dgst"; do
-              curl -fsSL --retry 3 -o "$RUNNER_TEMP/xray/$file" "https://github.com/XTLS/Xray-core/releases/download/v$VERSION/$file"
+              curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/xray/$file" "https://github.com/XTLS/Xray-core/releases/download/v$VERSION/$file"
             done
           done
       - name: .github/versions.toml

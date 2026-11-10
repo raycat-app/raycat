@@ -940,3 +940,5 @@ jobs:
     uses: ./.github/workflows/release-dev.yml # zizmor: ignore[self-repository] actionlint не знает синтаксиса $/
     with:
       dry_run: ${{ github.ref != 'refs/heads/main' }}
+    secrets:
+      RELEASE_APP_KEY: ${{ secrets.RELEASE_APP_KEY }}
