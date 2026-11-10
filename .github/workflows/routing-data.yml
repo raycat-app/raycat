@@ -52,7 +52,7 @@ jobs:
         env:
           SOURCE: https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest
         run: |
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/delegated" "$SOURCE"
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/delegated" "$SOURCE"
           [ -s "$RUNNER_TEMP/delegated" ] || { echo "::error::пустой файл статистики"; exit 1; }
           grep -F 'ripencc|*|ipv4|*|' "$RUNNER_TEMP/delegated" | grep -qF '|summary' || { echo "::error::в статистике нет строки summary для ipv4"; exit 1; }
       - name: Подсети и изменения
