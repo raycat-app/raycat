@@ -675,24 +675,32 @@ fn node_or_dash(node: Option<&str>) -> String {
     )
 }
 
-/// Итог перечитывания: что применилось и что ждёт перезапуска raycat.
+/// Итог перечитывания: что применилось и что ждёт перезапуска raycat. «Изменений нет»
+/// только когда ждать нечего: ключи, которые действуют лишь после перезапуска, тоже
+/// изменения, хотя на лету они не применяются.
 pub(crate) fn reloaded(reloaded: &Reloaded) -> String {
-    let mut lines = vec![if reloaded.changed {
-        "Настройки применены".to_owned()
-    } else {
-        "Изменений нет: настройки уже действуют".to_owned()
-    }];
+    let restart = !reloaded.restart_required.is_empty();
+    let headline = match (reloaded.changed, restart) {
+        (true, false) => "Настройки применены",
+        (true, true) => "Часть настроек применена, остальное — после перезапуска raycat",
+        (false, true) => "Изменения вступят в силу после перезапуска raycat",
+        (false, false) => "Изменений нет: настройки уже действуют",
+    };
+    let mut lines = vec![headline.to_owned()];
     if reloaded.xray_restart {
         lines.push("конфиг xray изменился: xray перезапустится".to_owned());
     }
     for key in &reloaded.restart_required {
-        lines.push(format!(
-            "нужен перезапуск raycat (systemctl restart raycat или docker compose restart): ключ «{}»",
-            sanitize(key)
-        ));
+        lines.push(format!("  ждёт перезапуска: {}", sanitize(key)));
+    }
+    if restart {
+        lines.push(RESTART_HINT.to_owned());
     }
     lines.join("\n")
 }
+
+const RESTART_HINT: &str = "Перезапуск: sudo systemctl restart raycat, \
+    в Docker — docker compose restart в каталоге с compose.yml";
 
 /// Текст события без времени и его тон. Весь текст, включая имена узлов, проходит ту же
 /// нормализацию, что и имена: флаги становятся кодами стран, эмодзи убираются.
@@ -789,6 +797,36 @@ mod tests {
     use raycat_proto::UpdateResult;
 
     use super::*;
+
+    fn reload(changed: bool, keys: &[&str]) -> String {
+        reloaded(&Reloaded {
+            changed,
+            xray_restart: false,
+            restart_required: keys.iter().map(|key| (*key).to_owned()).collect(),
+        })
+    }
+
+    #[test]
+    fn a_reload_that_needs_a_restart_does_not_say_nothing_changed() {
+        let text = reload(false, &["subscription (состав)"]);
+        assert!(!text.contains("Изменений нет"), "{text}");
+        assert!(
+            text.starts_with("Изменения вступят в силу после перезапуска raycat"),
+            "{text}"
+        );
+        let key = "ждёт перезапуска: subscription (состав)";
+        assert!(text.contains(key), "{text}");
+        assert!(text.contains("docker compose restart"), "{text}");
+    }
+
+    #[test]
+    fn a_reload_reports_what_was_applied_and_what_waits() {
+        assert_eq!(reload(false, &[]), "Изменений нет: настройки уже действуют");
+        assert_eq!(reload(true, &[]), "Настройки применены");
+        let partly = reload(true, &["mode.type"]);
+        assert!(partly.starts_with("Часть настроек применена"), "{partly}");
+        assert!(!partly.contains("Изменений нет"), "{partly}");
+    }
 
     const NOW: u64 = 1_790_596_800;
 
