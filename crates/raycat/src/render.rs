@@ -821,10 +821,7 @@ mod tests {
 
     #[test]
     fn a_reload_reports_what_was_applied_and_what_waits() {
-        assert_eq!(
-            reload(false, &[]),
-            "Изменений нет: настройки уже действуют"
-        );
+        assert_eq!(reload(false, &[]), "Изменений нет: настройки уже действуют");
         assert_eq!(reload(true, &[]), "Настройки применены");
         let partly = reload(true, &["mode.type"]);
         assert!(partly.starts_with("Часть настроек применена"), "{partly}");
