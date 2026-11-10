@@ -2,9 +2,9 @@ name: Подсети РФ для маршрутизации
 
 # Раз в неделю скачивает статистику RIPE NCC, пересобирает crates/routing/data/ru-ipv4.txt
 # инструментом update-ru-ipv4 и открывает PR бота с меткой «маршрутизация». Обязательные
-# проверки бот запускает сам, как в client-update.yml, и публикует статусы «Итог» и
-# «Заголовок PR». Если число подсетей изменилось больше чем на 20 %, PR не сливается сам:
-# такой скачок почти всегда означает ошибку источника. Ручной запуск с dry_run только
+# проверки идут на PR сами (PR открыт токеном приложения, как в client-update.yml), бот ждёт
+# «Итог» и «Заголовок PR» и сливает PR. Если число подсетей изменилось больше чем на 20 %,
+# PR не сливается сам: такой скачок почти всегда означает ошибку источника. Ручной запуск с dry_run только
 # собирает файл в артефакт ru-ipv4 и не создаёт ветку. Если проверки упали, заводится issue
 # «Не удалось обновить подсети РФ» (одно, при повторе сбоя обновляется комментарий), а после
 # слияния он закрывается.
@@ -94,10 +94,22 @@ jobs:
           path: crates/routing/data/ru-ipv4.txt
           if-no-files-found: error
           retention-days: 14
+      # Ветку, PR и слияние бот делает токеном приложения: в отличие от событий
+      # GITHUB_TOKEN, его события запускают обычные проверки PR и CI на main после слияния.
+      - id: app
+        if: ${{ steps.build.outputs.changed == 'true' && !inputs.dry_run }}
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
       - name: Коммит и ветка бота
         id: commit
         if: ${{ steps.build.outputs.changed == 'true' && !inputs.dry_run }}
         env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
           DATE: ${{ steps.build.outputs.date }}
           OLD: ${{ steps.build.outputs.old }}
           NEW: ${{ steps.build.outputs.new }}
@@ -133,6 +145,7 @@ jobs:
         id: pr
         if: ${{ steps.build.outputs.changed == 'true' && !inputs.dry_run }}
         env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
           BRANCH: ${{ steps.commit.outputs.branch }}
           TITLE: ${{ steps.commit.outputs.title }}
         run: |
@@ -167,10 +180,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
-      actions: write
-      contents: write
-      pull-requests: write
-      statuses: write
+      checks: read
+      contents: read
+      pull-requests: read
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -178,64 +190,44 @@ jobs:
       SHA: ${{ needs.update.outputs.sha }}
       BRANCH: ${{ needs.update.outputs.branch }}
     steps:
-      - name: Запуск обязательных проверок
+      # Ветку, PR и слияние бот делает токеном приложения: в отличие от событий
+      # GITHUB_TOKEN, его события запускают обычные проверки PR и CI на main после слияния.
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+      - name: Ожидание проверок PR
         run: |
-          gh workflow run ci.yml -R "$REPO" --ref "$BRANCH"
-          gh workflow run pr-title.yml -R "$REPO" --ref "$BRANCH" -f "pr=$PR"
-      - name: Ожидание проверок
-        run: |
-          find_run() {
-            local id
-            for _ in $(seq 1 30); do
-              id=$(gh run list -R "$REPO" --workflow "$1" --branch "$BRANCH" --event workflow_dispatch --limit 20 --json databaseId,headSha |
-                jq -r --arg sha "$SHA" '[.[] | select(.headSha == $sha)][0].databaseId // empty')
-              if [ -n "$id" ]; then
-                echo "$id"
-                return 0
-              fi
-              sleep 10
-            done
-            return 1
+          # PR открыт токеном приложения, на нём идут обычные проверки. Бот ждёт
+          # обязательные из ruleset — «Заголовок PR» и «Итог» — на своём коммите.
+          state() {
+            gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" |
+              jq -r --arg name "$1" '[.check_runs[] | select(.name == $name)] | sort_by(.started_at) | last | if . == null then "нет" else "\(.status) \(.conclusion)" end'
           }
-          # Проверки ручных запусков к PR не привязываются, а ruleset ждёт проверки с
-          # именами «Итог» и «Заголовок PR»: результат прогона бот публикует статусом
-          # коммита с тем же именем.
-          publish() {
-            local url
-            url=$(gh run view "$2" -R "$REPO" --json url --jq .url)
-            gh api -X POST "repos/$REPO/statuses/$SHA" -f state="$3" -f context="$1" \
-              -f description="Результат ручного запуска workflow" -f target_url="$url" --jq .state
-          }
-          title_run=$(find_run pr-title.yml)
-          ci_run=$(find_run ci.yml)
-          echo "заголовок PR: прогон $title_run, CI: прогон $ci_run"
-          failed=0
-          title_state=success
-          ci_state=success
-          gh run watch "$title_run" -R "$REPO" --exit-status --interval 20 > /dev/null || title_state=failure
-          gh run watch "$ci_run" -R "$REPO" --exit-status --interval 30 > /dev/null || ci_state=failure
-          publish "Заголовок PR" "$title_run" "$title_state"
-          publish "Итог" "$ci_run" "$ci_state"
-          [ "$title_state" = success ] && [ "$ci_state" = success ] || failed=1
-          exit "$failed"
-      - name: Ruleset засчитывает проверки
-        run: |
-          for _ in $(seq 1 20); do
-            if gh pr checks "$PR" -R "$REPO" --required; then
-              exit 0
+          for _ in $(seq 1 160); do
+            title=$(state "Заголовок PR")
+            total=$(state "Итог")
+            echo "Заголовок PR: $title; Итог: $total"
+            if [[ $title == completed* && $total == completed* ]]; then
+              [ "$title" = "completed success" ] && [ "$total" = "completed success" ]
+              exit
             fi
-            sleep 15
+            sleep 30
           done
+          echo "::error::проверки PR не закончились за 80 минут"
           exit 1
       - name: Слияние
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
         if: ${{ needs.update.outputs.jump != 'true' }}
         run: |
           title=$(gh pr view "$PR" -R "$REPO" --json title --jq .title)
           body=$(gh pr view "$PR" -R "$REPO" --json body --jq .body)
           gh pr merge "$PR" -R "$REPO" --squash --delete-branch --match-head-commit "$SHA" --subject "$title (#$PR)" --body "$body"
-      - name: Выпуск после слияния
-        if: ${{ needs.update.outputs.jump != 'true' }}
-        run: gh workflow run ci.yml -R "$REPO" --ref main
       - name: Слияние отключено скачком
         if: ${{ needs.update.outputs.jump == 'true' }}
         run: echo "::notice::проверки зелёные, но число подсетей изменилось больше чем на 20 %, PR $PR остаётся открытым"
