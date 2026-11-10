@@ -60,6 +60,7 @@ jobs:
     # Синтаксис $/ из совета zizmor actionlint не разбирает, поэтому ./
     uses: ./.github/workflows/client-update.yml # zizmor: ignore[self-repository]
     permissions:
+      checks: read
       actions: write
       contents: write
       issues: write
@@ -70,3 +71,5 @@ jobs:
       platform: ${{ matrix.platform }}
       release: ${{ matrix.release }}
       merge: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.merge) }}
+    secrets:
+      RELEASE_APP_KEY: ${{ secrets.RELEASE_APP_KEY }}
