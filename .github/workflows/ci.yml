@@ -76,7 +76,7 @@ jobs:
           path: rustfmt.patch
           retention-days: 7
       - run: cargo clippy --workspace --all-targets --all-features --locked
-      - uses: crate-ci/typos@4c8b7f51ca60df14e3c5ca82770dfbbe6c3dae85 # v1.52.0
+      - uses: crate-ci/typos@276087d9a4f06398b3e04825487805e2d7375888 # v1.52.2
         with:
           config: .github/typos.toml
 
@@ -93,7 +93,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           tool: shellcheck
       # Для проверки хватает cargo с образа раннера: rustup не качает тулчейн из rust-toolchain.toml.
@@ -210,7 +210,7 @@ jobs:
           save-if: ${{ env.CACHE_SAVE }}
           cache-on-failure: true
           add-rust-environment-hash-key: false
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           tool: cargo-nextest
       - run: cargo nextest run --workspace --all-features --locked
@@ -256,7 +256,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           tool: cargo-deny
       - run: cargo deny --config .cargo/deny.toml --log-level warn --manifest-path ./Cargo.toml --all-features check
@@ -277,7 +277,7 @@ jobs:
         with:
           persist-credentials: false
       # actionlint проверяет run-скрипты через shellcheck, если он есть.
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           tool: shellcheck
       - name: actionlint
