@@ -40,7 +40,7 @@ permissions: {}
 
 jobs:
   happ-windows:
-    name: Happ Windows ${{ matrix.arch }}${{ matrix.next && ' (следующий день)' || '' }}
+    name: Happ Windows ${{ matrix.arch }}${{ matrix.next && ' (другой день)' || '' }}
     if: ${{ inputs.happ_windows != 'none' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -52,10 +52,11 @@ jobs:
         include:
           # Две даты нужны, чтобы поймать обе чётности маркера дня в User-Agent.
           # Даты берутся около текущей, а не фиксированные: TLS-сертификаты GitHub
-          # проверяются по системным часам, и прошлое время ломает загрузку артефактов.
+          # проверяются по системным часам, и далёкое прошлое ломает загрузку артефактов.
+          # Второй захват — вчера, а не завтра: Happ с будущей датой не открывает окно.
           - {arch: x64, runner: windows-latest, shift: 0}
           - {arch: arm64, runner: windows-11-arm, shift: 0}
-          - {arch: x64, runner: windows-latest, shift: 1, next: true}
+          - {arch: x64, runner: windows-latest, shift: -1, next: true}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
