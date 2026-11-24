@@ -76,23 +76,46 @@ if (-not $app) { "приложение не найдено после устан
 (Get-Item $app).VersionInfo | Format-List | Out-File "$Out\version.txt"
 
 # Ссылки открываются через обработчик протокола, найденный exe может быть вспомогательным.
-if ($Date) {
-    # Службы синхронизации времени возвращают часы за секунды, поэтому отключаем обе.
-    foreach ($name in "w32time", "vmictimesync") {
-        Stop-Service $name -Force -ErrorAction SilentlyContinue
-        Set-Service $name -StartupType Disabled -ErrorAction SilentlyContinue
+# Часы меняются только на время запуска приложения и возвращаются сразу: GitHub проверяет
+# TLS-сертификаты по системным часам, и оставленное прошлое время ломает загрузку артефактов
+# и журнала. Оригинал сохраняется в файл: если шаг прервётся, его вернёт отдельный шаг.
+$original = Get-Date
+$clock_file = Join-Path $Out "clock-original.txt"
+$services = @()
+$clock_changed = $false
+try {
+    if ($Date) {
+        $original.ToString("o") | Out-File -Encoding utf8 $clock_file
+        # Службы синхронизации времени возвращают часы за секунды, поэтому отключаем обе.
+        foreach ($name in "w32time", "vmictimesync") {
+            if (Get-Service $name -ErrorAction SilentlyContinue) {
+                Stop-Service $name -Force -ErrorAction SilentlyContinue
+                Set-Service $name -StartupType Disabled -ErrorAction SilentlyContinue
+                $services += $name
+            }
+        }
+        $clock_changed = $true
+        Set-Date -Date $Date | Out-Null
     }
-    Set-Date -Date $Date | Out-Null
+    "before link: $([DateTime]::UtcNow.ToString('o'))" | Out-File -Encoding utf8 "$Out\clock.txt"
+    Start-Process $Link
+    # Ждём первый запрос приложения (не дольше 25 с) и ещё 3 с на повторные.
+    $deadline = (Get-Date).AddSeconds(25)
+    while ((Get-Date) -lt $deadline -and -not (Get-ChildItem $Out -Filter *.http -ErrorAction SilentlyContinue)) {
+        Start-Sleep -Milliseconds 500
+    }
+    Start-Sleep 3
+    "after wait: $([DateTime]::UtcNow.ToString('o'))" | Out-File -Append -Encoding utf8 "$Out\clock.txt"
+} finally {
+    if ($clock_changed) {
+        Set-Date -Date $original | Out-Null
+    }
+    foreach ($name in $services) {
+        Set-Service $name -StartupType Manual -ErrorAction SilentlyContinue
+        Start-Service $name -ErrorAction SilentlyContinue
+    }
+    Remove-Item $clock_file -Force -ErrorAction SilentlyContinue
 }
-"before link: $([DateTime]::UtcNow.ToString('o'))" | Out-File -Encoding utf8 "$Out\clock.txt"
-Start-Process $Link
-# Ждём первый запрос приложения (не дольше 25 с) и ещё 3 с на повторные.
-$deadline = (Get-Date).AddSeconds(25)
-while ((Get-Date) -lt $deadline -and -not (Get-ChildItem $Out -Filter *.http -ErrorAction SilentlyContinue)) {
-    Start-Sleep -Milliseconds 500
-}
-Start-Sleep 3
-"after wait: $([DateTime]::UtcNow.ToString('o'))" | Out-File -Append -Encoding utf8 "$Out\clock.txt"
 Save-Screen "protocol"
 Get-Process | Where-Object { $_.Path -eq $app } | Stop-Process -Force
 Get-ChildItem $Out
