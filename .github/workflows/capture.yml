@@ -40,7 +40,7 @@ permissions: {}
 
 jobs:
   happ-windows:
-    name: Happ Windows ${{ matrix.arch }}${{ matrix.odd && ' (нечётный день)' || '' }}
+    name: Happ Windows ${{ matrix.arch }}${{ matrix.next && ' (другой день)' || '' }}
     if: ${{ inputs.happ_windows != 'none' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -50,15 +50,29 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Часы ставятся всегда: чётное число по Москве даёт маркер «6», нечётное — «5»,
-          # и по паре запросов видно, где в User-Agent маркер. Дата не зависит от дня запуска.
-          - {arch: x64, runner: windows-latest, date: "2026-09-28 12:00:00"}
-          - {arch: arm64, runner: windows-11-arm, date: "2026-09-28 12:00:00"}
-          - {arch: x64, runner: windows-latest, date: "2026-09-29 12:00:00", odd: true}
+          # Две даты нужны, чтобы поймать обе чётности маркера дня в User-Agent.
+          # Даты берутся около текущей, а не фиксированные: TLS-сертификаты GitHub
+          # проверяются по системным часам, и далёкое прошлое ломает загрузку артефактов.
+          # Второй захват — вчера, а не завтра: Happ с будущей датой не открывает окно.
+          - {arch: x64, runner: windows-latest, shift: 0}
+          - {arch: arm64, runner: windows-11-arm, shift: 0}
+          - {arch: x64, runner: windows-latest, shift: -1, next: true}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Дата захвата
+        id: date
+        shell: pwsh
+        env:
+          SHIFT: ${{ matrix.shift }}
+        run: |
+          # Полдень UTC: дата по Москве и UTC совпадает, маркер не зависит от часа запуска.
+          $when = (Get-Date).ToUniversalTime().Date.AddHours(12).AddDays([int]$env:SHIFT)
+          $moscow = $when.AddHours(3)
+          $odd = if ($moscow.Day % 2 -eq 1) { 'true' } else { 'false' }
+          "date=$($when.ToString('yyyy-MM-dd HH:mm:ss'))" >> $env:GITHUB_OUTPUT
+          "odd=$odd" >> $env:GITHUB_OUTPUT
       - name: Установщик
         id: app
         shell: bash
@@ -76,9 +90,10 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Захват
         shell: pwsh
+        timeout-minutes: 20
         env:
           ARCH: ${{ matrix.arch }}
-          CAPTURE_DATE: ${{ matrix.date }}
+          CAPTURE_DATE: ${{ steps.date.outputs.date }}
         run: |
           $server = Start-Process python -ArgumentList ".github/capture/capture_server.py", "--host", "127.0.0.1", "--port", "18080", "--out", "captures" -PassThru -RedirectStandardOutput server.log
           Start-Sleep 2
@@ -86,10 +101,26 @@ jobs:
           Stop-Process $server -Force
           Get-Content server.log
           Copy-Item server.log captures/
+      - name: Вернуть часы
+        if: ${{ always() }}
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          # Если шаг захвата прервался, его finally не выполнился: возвращаем часы здесь,
+          # иначе TLS к GitHub отвергнет сертификат как «ещё не действительный».
+          $file = "captures/clock-original.txt"
+          if (Test-Path $file) {
+            $original = (Get-Content $file -Raw).Trim()
+            Set-Date -Date $original | Out-Null
+            Remove-Item $file -Force
+            "часы восстановлены: $original"
+          } else {
+            "часы не менялись или уже восстановлены"
+          }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ always() }}
         with:
-          name: capture-happ-windows-${{ matrix.arch }}-${{ steps.app.outputs.version }}${{ matrix.odd && '-odd-day' || '' }}
+          name: capture-happ-windows-${{ matrix.arch }}-${{ steps.app.outputs.version }}${{ steps.date.outputs.odd == 'true' && '-odd-day' || '' }}
           path: captures
           if-no-files-found: error
       - name: Есть ли захват
