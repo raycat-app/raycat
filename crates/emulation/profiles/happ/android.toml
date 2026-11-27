@@ -1,6 +1,6 @@
 app = "happ"
 platform = "android"
-version = "4.11.2"
+version = "4.12.0"
 marker = "device-local-day-parity"
 user_agent = "Happ/{app_version}/{os}/{build}{marker}{tail}"
 
@@ -12,8 +12,8 @@ hwid = "android-id"
 locale = "android"
 
 [builds.any]
-build = "17948118661831751"
-tail = "11"
+build = "17950749872241759"
+tail = "10"
 
 [[headers]]
 name = "Connection"
